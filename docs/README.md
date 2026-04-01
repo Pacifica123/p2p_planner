@@ -46,3 +46,5 @@
 Документы в этом каталоге являются **docs v2**: они уточняют границы между MVP и
 future-ready архитектурой, фиксируют термины и снимают двусмысленность вокруг
 local-first, sync и optional p2p.
+
+- `docs/architecture/web-frontend-core-ui-v1.md` — web frontend core UI v1: app shell, screen composition, shared primitives, backend CRUD wiring.
