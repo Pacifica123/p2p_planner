@@ -14,7 +14,7 @@
 - `adr/` — принятые архитектурные решения.
 - `domain/` — доменная модель, инварианты, права доступа, жизненный цикл и термины.
 - `sync/` — glossary, протокол синхронизации и conflict policy.
-- `architecture/` — структура каталогов, карта backend-модулей, карта БД и auth/identity решения.
+- `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance и activity/history/audit решения.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
 
 ## Зафиксированные принципы
@@ -36,8 +36,8 @@
 3. Затем `adr/`.
 4. После этого `domain/entities.md`, `domain/invariants.md`, `domain/permissions.md`.
 5. Затем `architecture/database.md`, `architecture/backend-modules.md`,
-   `architecture/auth-and-identity-v1.md`, `architecture/appearance-customization-v1.md`
-   и `architecture/project-structure.md`.
+   `architecture/auth-and-identity-v1.md`, `architecture/appearance-customization-v1.md`,
+   `architecture/activity-history-audit-v1.md` и `architecture/project-structure.md`.
 6. И только потом `api/openapi.yaml`, `sync/protocol.md` и
    `sync/conflict-resolution.md`.
 

@@ -33,6 +33,19 @@ checklists и comments.
 как обязательного требования.
 
 
+### Activity entry
+Пользовательская запись истории изменений, пригодная для показа на экране board
+или card. Это не sync-event и не технический audit.
+
+### History
+User-facing хронологический список `activity entry` в рамках конкретной board или
+card. History нужна для понимания контекста изменений, а не для восстановления
+всей модели данных.
+
+### Audit log
+Технический server-side журнал действий и запросов. Он нужен для admin/security/
+diagnostic use-cases и не тождественен обычной пользовательской истории.
+
 ### User appearance preferences
 Персональные настройки внешнего вида клиента: app theme, density, reduce motion.
 
@@ -117,5 +130,6 @@ future-ready и по умолчанию выключен.
 2. **Optional p2p != обязательный transport первого релиза.**
 3. **Archive != delete.**
 4. **Completed != archived.**
-5. **Sync-ready foundation != полный пользовательский sync surface.**
-6. **Future-ready сущность != обещанная MVP-фича.**
+5. **Activity history != audit log.**
+6. **Sync-ready foundation != полный пользовательский sync surface.**
+7. **Future-ready сущность != обещанная MVP-фича.**

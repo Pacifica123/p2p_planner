@@ -56,6 +56,7 @@
 - `checklists`
 - `comments`
 - `appearance`
+- `activity`
 - `sync`
 
 ### 2.2. Infra / shared
@@ -70,7 +71,6 @@
 ### 2.3. Future-ready, но не обязательные для skeleton v1
 - `attachments`
 - `custom_fields`
-- `activity`
 - `integrations`
 - `invitations`
 
@@ -283,7 +283,25 @@
 - reject/duplicate/conflict bookkeeping;
 - optional snapshot manifest later.
 
-## 3.10. audit
+## 3.10. activity
+
+**Отвечает за:**
+- user-facing history для `boards` и `cards`;
+- чтение `activity_entries`;
+- cursor pagination и filters по history feed;
+- преобразование domain events/hooks в activity read model.
+
+**Таблица:**
+- `activity_entries`
+
+**Ownership HTTP routes:**
+- `GET /boards/{boardId}/activity`
+- `GET /cards/{cardId}/activity`
+
+**Замечание:**
+`activity` не владеет бизнес-логикой `boards/cards/comments/checklists`; он владеет только read model и history-query surface.
+
+## 3.11. audit
 
 **Отвечает за:**
 - технический server-side аудит;
@@ -294,7 +312,7 @@
 - `audit_log`
 
 **Замечание:**
-в MVP это не user-facing `activity` модуль. Его не надо смешивать с экраном истории.
+`audit` и `activity` — разные модули. `audit` не надо смешивать с экраном пользовательской истории.
 
 ---
 
@@ -346,6 +364,7 @@ auth ------> users
 | `checklists` | `cards`, `common`, `db`, `audit` | `labels`, `comments`, `sync` repo internals |
 | `comments` | `cards`, `users`, `common`, `db`, `audit` | `labels`, `checklists`, `sync` repo internals |
 | `sync` | публичные application ports всех sync-visible модулей, `common`, `db`, `audit` | прямые cross-module repo calls как основной путь |
+| `activity` | `boards`, `cards`, `comments`, `checklists`, `labels`, `common`, `db`, `audit` | прямой ownership бизнес-логики workspaces/boards/cards/comments |
 | `audit` | `common`, `db` | доменные модули как hard dependency |
 
 ### 5.2. Практическое правило
@@ -616,7 +635,25 @@ auth ------> users
 - `sync_cursor_repo`
 - `tombstone_repo`
 
-## 6.10. audit
+## 6.10. activity
+
+### dto
+- `activity_entry_response`
+- `activity_list_response`
+
+### handler
+- `get_board_activity`
+- `get_card_activity`
+
+### service
+- `board_activity_service`
+- `card_activity_service`
+- `activity_projection_service`
+
+### repo
+- `activity_entry_repo`
+
+## 6.11. audit
 
 ### service
 - `audit_service`
@@ -718,12 +755,31 @@ PATCH  /api/v1/comments/{commentId}
 DELETE /api/v1/comments/{commentId}
 ```
 
-## 7.9. sync routes
+## 7.9. appearance routes
+```text
+GET    /api/v1/me/appearance
+PUT    /api/v1/me/appearance
+GET    /api/v1/boards/{boardId}/appearance
+PUT    /api/v1/boards/{boardId}/appearance
+```
+
+## 7.10. activity routes
+```text
+GET    /api/v1/boards/{boardId}/activity
+GET    /api/v1/cards/{cardId}/activity
+```
+
+## 7.11. sync routes
 ```text
 POST   /api/v1/sync/replicas
 POST   /api/v1/sync/push
 POST   /api/v1/sync/pull
 GET    /api/v1/sync/status
+```
+
+## 7.12. audit routes
+```text
+GET    /api/v1/workspaces/{workspaceId}/audit-log
 ```
 
 ### Правило маршрутизации
@@ -761,6 +817,8 @@ main.rs
 - labels services;
 - checklists services;
 - comments services;
+- appearance services;
+- activity services;
 - sync services;
 - audit service;
 - clock / id generator / request context helpers.
@@ -928,6 +986,7 @@ backend/src/
 - `checklists`
 - `comments`
 - `appearance`
+- `activity`
 - `sync`
 - `audit` как infra-support
 

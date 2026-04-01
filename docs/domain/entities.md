@@ -20,12 +20,14 @@
 - Comment
 - UserAppearancePreferences
 - BoardAppearanceSettings
+- ActivityEntry
 
 ### Обязательная инфраструктурная основа v1
 - User
 - Device
 - Replica
 - ChangeEvent / SyncCursor / Tombstone как sync-ready внутренняя модель
+- AuditLog как server-side технический журнал
 
 ### Future-ready, но не обязательные для MVP
 - WorkspaceInvitation
@@ -37,7 +39,7 @@
 - IntegrationProvider
 - IntegrationConnection
 - IntegrationLink
-- ActivityLog как отдельная сущность пользовательской истории
+- WorkspaceInvitation UI flows beyond minimal membership
 
 ## 1. Workspace
 
@@ -216,7 +218,52 @@ attachments, custom fields и dependencies.
 - updated_at
 - deleted_at
 
-## 12. Attachment
+## 12. ActivityEntry
+
+Пользовательская запись истории изменений для board/card UX.
+
+### Основные поля
+- id
+- workspace_id
+- board_id
+- card_id nullable
+- actor_user_id nullable
+- kind
+- entity_type
+- entity_id
+- field_mask
+- payload_jsonb
+- request_id nullable
+- source_change_event_id nullable
+- source_audit_log_id nullable
+- created_at
+
+### Комментарий
+`ActivityEntry` — это read model для user-facing history. Она не заменяет
+`ChangeEvent` и не тождественна `AuditLog`.
+
+## 13. AuditLog
+
+Техническая server-side запись аудита.
+
+### Основные поля
+- id
+- workspace_id nullable
+- actor_user_id nullable
+- actor_device_id nullable
+- actor_replica_id nullable
+- action_type
+- target_entity_type nullable
+- target_entity_id nullable
+- request_id nullable
+- metadata_jsonb
+- created_at
+
+### Комментарий
+`AuditLog` нужен для admin/security/diagnostic use-cases и не обязан быть удобным
+как основной пользовательский feed.
+
+## 14. Attachment
 
 Future-ready вложение карточки.
 В MVP не является обязательной сущностью.

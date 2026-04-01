@@ -14,6 +14,8 @@ tags:
 - name: auth
 - name: users
 - name: appearance
+- name: activity
+- name: audit
 - name: workspaces
 - name: boards
 - name: cards
@@ -162,6 +164,51 @@ components:
         type:
         - string
         - 'null'
+    ActivityKinds:
+      name: kinds
+      in: query
+      required: false
+      description: Optional repeated filter for activity event kinds.
+      schema:
+        type: array
+        items:
+          type: string
+      style: form
+      explode: true
+    ActorUserId:
+      name: actorUserId
+      in: query
+      required: false
+      schema:
+        type:
+        - string
+        - 'null'
+        format: uuid
+    ActionType:
+      name: actionType
+      in: query
+      required: false
+      schema:
+        type:
+        - string
+        - 'null'
+    TargetEntityType:
+      name: targetEntityType
+      in: query
+      required: false
+      schema:
+        type:
+        - string
+        - 'null'
+    TargetEntityId:
+      name: targetEntityId
+      in: query
+      required: false
+      schema:
+        type:
+        - string
+        - 'null'
+        format: uuid
   responses:
     BadRequest:
       description: Bad request
@@ -1983,6 +2030,151 @@ components:
         customProperties:
           type: object
           additionalProperties: true
+    ActivityActor:
+      type: object
+      required:
+      - userId
+      - displayName
+      properties:
+        userId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        displayName:
+          type:
+          - string
+          - 'null'
+    ActivityEntry:
+      type: object
+      required:
+      - id
+      - createdAt
+      - kind
+      - workspaceId
+      - boardId
+      - cardId
+      - entityType
+      - entityId
+      - actor
+      - fieldMask
+      - payload
+      - requestId
+      properties:
+        id:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        kind:
+          type: string
+        workspaceId:
+          type: string
+          format: uuid
+        boardId:
+          type: string
+          format: uuid
+        cardId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        entityType:
+          type: string
+        entityId:
+          type: string
+          format: uuid
+        actor:
+          $ref: '#/components/schemas/ActivityActor'
+        fieldMask:
+          type: array
+          items:
+            type: string
+        payload:
+          type: object
+          additionalProperties: true
+        requestId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+    ActivityListResponse:
+      type: object
+      required:
+      - items
+      - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityEntry'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+    AuditLogEntry:
+      type: object
+      required:
+      - id
+      - createdAt
+      - actionType
+      - workspaceId
+      - actorUserId
+      - targetEntityType
+      - targetEntityId
+      - requestId
+      - metadata
+      properties:
+        id:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        actionType:
+          type: string
+        workspaceId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        actorUserId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        targetEntityType:
+          type:
+          - string
+          - 'null'
+        targetEntityId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        requestId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        metadata:
+          type: object
+          additionalProperties: true
+    AuditLogListResponse:
+      type: object
+      required:
+      - items
+      - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogEntry'
+        nextCursor:
+          type:
+          - string
+          - 'null'
 paths:
   /auth/sign-up:
     post:
@@ -2486,6 +2678,34 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /workspaces/{workspaceId}/audit-log:
+    get:
+      tags:
+      - audit
+      summary: List workspace audit log
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/ActionType'
+      - $ref: '#/components/parameters/ActorUserId'
+      - $ref: '#/components/parameters/TargetEntityType'
+      - $ref: '#/components/parameters/TargetEntityId'
+      responses:
+        '200':
+          description: Workspace audit log
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /boards/{boardId}:
     get:
       tags:
@@ -2884,6 +3104,32 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /cards/{cardId}/activity:
+    get:
+      tags:
+      - activity
+      summary: List card history timeline
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/ActivityKinds'
+      - $ref: '#/components/parameters/ActorUserId'
+      responses:
+        '200':
+          description: Card activity timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /cards/{cardId}/move:
     post:
       tags:
@@ -3602,6 +3848,32 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /boards/{boardId}/activity:
+    get:
+      tags:
+      - activity
+      summary: List board activity feed
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/ActivityKinds'
+      - $ref: '#/components/parameters/ActorUserId'
+      responses:
+        '200':
+          description: Board activity feed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /boards/{boardId}/appearance:
     get:
       tags:

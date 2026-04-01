@@ -4,7 +4,7 @@
 - Дата: 2026-04-01
 - Назначение: зафиксировать **конечную data model v2** для first migrations MVP и sync-ready foundation.
 
-> Этот документ сужает и конкретизирует прежний `docs/architecture/database.md` под реальную первую волну миграций. Он исходит из уже принятого MVP: `workspace / board / column / card`, `labels`, `checklists`, `comments`, минимальная коллаборация, local-first web UX и backend-coordinated sync foundation. Отдельный advanced activity surface, attachments, custom fields, integrations и full p2p в first migrations не входят.
+> Этот документ сужает и конкретизирует прежний `docs/architecture/database.md` под реальную первую волну миграций. Он исходит из уже принятого MVP: `workspace / board / column / card`, `labels`, `checklists`, `comments`, минимальная коллаборация, local-first web UX и backend-coordinated sync foundation. Первая волна миграций сознательно включала только `audit_log`, а минимальный user-facing activity slice теперь фиксируется как следующий шаг поверх этой базы; attachments, custom fields, integrations и full p2p по-прежнему не входят.
 
 ## 1. Базовые решения
 
@@ -512,10 +512,41 @@
 - `(target_entity_type, target_entity_id, created_at desc)`
 - `(actor_user_id, created_at desc)`
 
-### Что не включаем как отдельную таблицу v1
-Отдельный `activity_feed_items` / `activity_log` как продуктовый экран:
-- **не входит** в first migrations;
-- позже может строиться как projection из `change_events`, `audit_log` и domain hooks.
+### activity_entries
+После этапа Activity / history / audit фиксируем минимальную read-model таблицу:
+- `id uuid pk`
+- `workspace_id uuid not null fk -> workspaces`
+- `board_id uuid not null fk -> boards`
+- `card_id uuid null fk -> cards`
+- `actor_user_id uuid null fk -> users`
+- `kind text not null`
+- `entity_type text not null`
+- `entity_id uuid not null`
+- `field_mask text[] not null default '{}'`
+- `payload_jsonb jsonb not null default '{}'::jsonb`
+- `request_id uuid null`
+- `source_change_event_id uuid null fk -> change_events`
+- `source_audit_log_id uuid null fk -> audit_log`
+- `created_at timestamptz not null`
+
+Индексы:
+- `(workspace_id, created_at desc)`
+- `(board_id, created_at desc, id desc)`
+- `(card_id, created_at desc, id desc)` where `card_id is not null`
+- `(actor_user_id, created_at desc)` where `actor_user_id is not null`
+- `(kind, created_at desc)`
+
+Назначение:
+- отдельная read model для board/card history;
+- user-facing слой поверх доменных изменений;
+- не замена `change_events` и не замена `audit_log`.
+
+### Почему это отдельная таблица, а не прямое чтение из `change_events`
+Потому что user-facing history:
+- требует noise suppression;
+- требует board/card-scoped semantics;
+- требует snapshots, удобные для UI;
+- не должна показывать rejected/duplicate/conflict технические записи.
 
 ## 4. Связи и правила ссылочной целостности
 
@@ -577,9 +608,7 @@
 - `attachments`
 - `custom_fields`
 - `card_custom_field_values`
-- `board_appearance_*`
 - `integration_*`
-- product-level `activity_feed_items`
 - compaction / GC scheduler tables
 
 ## 7. Итоговое решение
@@ -589,8 +618,8 @@
 - **soft delete + tombstone** для sync-visible удаления;
 - **change_events** как технический журнал, но не как полный event sourcing;
 - **audit_log** как минимальный серверный аудит;
-- `activity` как отдельный user-facing слой откладываем;
-- first migrations держим достаточно узкими, чтобы уже после них переходить к backend module map и реальному skeleton.
+- **activity_entries** как отдельную user-facing read model поверх domain hooks и sync/audit foundation;
+- migration-слой остается projection-first и не превращается в full event sourcing.
 
 
 ## Appearance / customization additions

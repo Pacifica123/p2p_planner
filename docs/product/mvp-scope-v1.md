@@ -174,6 +174,11 @@ Workspace/board/card можно не только создавать, но и п
 состояние или удалять так, чтобы это корректно отражалось в модели и sync-ready
 инфраструктуре.
 
+### UC-08. Понимание недавних изменений без ручного расследования
+Пользователь открывает board или card и видит минимальную, но понятную историю:
+кто создал карточку, кто перенес ее между колонками, кто добавил comment или
+отметил checklist item.
+
 ## Что сознательно не берем в v1
 
 ### 1. Full p2p / relay / bootstrap / discovery
@@ -243,13 +248,21 @@ Workspace/board/card можно не только создавать, но и п
 - backup/restore UX;
 - service accounts и внешние adapter flows.
 
-### 9. Отдельный продвинутый activity/audit product surface
-Не входит:
-- отдельная развитая история действий для пользователя как самостоятельный экран;
-- расширенный audit trail с продвинутой фильтрацией.
+### 9. Продвинутый activity/audit surface за пределами минимального history slice
+Входит ограниченный, но реальный activity slice:
+- board-level recent activity;
+- card-level history timeline;
+- workspace-level technical audit log для admin use-case.
 
-Минимальные технические следы изменений в данных допустимы, но это не часть
-обязательного пользовательского value v1.
+Не входит:
+- отдельный глобальный activity center на весь workspace;
+- расширенный audit trail с продвинутой фильтрацией и поиском;
+- compliance/security analytics dashboard;
+- rich diff viewer для больших текстов;
+- notifications/subscriptions, построенные поверх activity.
+
+То есть в v1 берем **history для board/card**, но не берем отдельный большой
+product surface вокруг activity/audit.
 
 ## Границы v1 в терминах сущностей
 
@@ -283,4 +296,5 @@ Workspace/board/card можно не только создавать, но и п
 - IntegrationProvider
 - IntegrationConnection
 - IntegrationLink
-- ActivityLog
+- ActivityEntry
+- AuditLog
