@@ -1,0 +1,3183 @@
+
+openapi: 3.1.0
+info:
+  title: P2P Planner Backend API
+  version: 0.2.0
+  description: >
+    HTTP API v1 для web-first local-first Kanban planner с sync-ready foundation.
+    Контракт выровнен с MVP scope: workspace / board / column / card плюс labels,
+    checklists, comments, минимальная коллаборация, session/device/replica-aware auth.
+servers:
+  - url: /api/v1
+
+tags:
+  - name: auth
+  - name: users
+  - name: workspaces
+  - name: boards
+  - name: cards
+  - name: labels
+  - name: checklists
+  - name: comments
+  - name: sync
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Короткоживущий access token для обычных защищенных вызовов API.
+    refreshTokenCookie:
+      type: apiKey
+      in: cookie
+      name: refresh_token
+      description: >
+        HttpOnly refresh token cookie для обновления сессии и завершения текущего сеанса.
+
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      description: UUIDv7 workspace
+      schema:
+        type: string
+        format: uuid
+    MemberId:
+      name: memberId
+      in: path
+      required: true
+      description: UUIDv7 membership record
+      schema:
+        type: string
+        format: uuid
+    BoardId:
+      name: boardId
+      in: path
+      required: true
+      description: UUIDv7 board
+      schema:
+        type: string
+        format: uuid
+    ColumnId:
+      name: columnId
+      in: path
+      required: true
+      description: UUIDv7 column
+      schema:
+        type: string
+        format: uuid
+    CardId:
+      name: cardId
+      in: path
+      required: true
+      description: UUIDv7 card
+      schema:
+        type: string
+        format: uuid
+    LabelId:
+      name: labelId
+      in: path
+      required: true
+      description: UUIDv7 label
+      schema:
+        type: string
+        format: uuid
+    ChecklistId:
+      name: checklistId
+      in: path
+      required: true
+      description: UUIDv7 checklist
+      schema:
+        type: string
+        format: uuid
+    ChecklistItemId:
+      name: itemId
+      in: path
+      required: true
+      description: UUIDv7 checklist item
+      schema:
+        type: string
+        format: uuid
+    CommentId:
+      name: commentId
+      in: path
+      required: true
+      description: UUIDv7 comment
+      schema:
+        type: string
+        format: uuid
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      description: UUIDv7 device
+      schema:
+        type: string
+        format: uuid
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: >
+        Максимум элементов в ответе. Если параметр не передан, backend использует дефолт.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor for cursor-based pagination.
+      schema:
+        type:
+          - string
+          - 'null'
+    Archived:
+      name: archived
+      in: query
+      required: false
+      description: >
+        Фильтр по архивности. false = только активные, true = только архивные, null = обе группы.
+      schema:
+        type:
+          - boolean
+          - 'null'
+    SearchQuery:
+      name: q
+      in: query
+      required: false
+      description: Free-text search query.
+      schema:
+        type:
+          - string
+          - 'null'
+
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication required or invalid token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Authenticated but lacks required access
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Conflict or duplicate operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnprocessableEntity:
+      description: Semantic validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    PageInfo:
+      type: object
+      required: [hasNextPage, nextCursor]
+      properties:
+        hasNextPage:
+          type: boolean
+        nextCursor:
+          type:
+            - string
+            - 'null'
+
+    ErrorDetail:
+      type: object
+      required: [field, code, message]
+      properties:
+        field:
+          type:
+            - string
+            - 'null'
+        code:
+          type: string
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+              examples: [validation_error, unauthorized, forbidden, not_found, conflict]
+            message:
+              type: string
+            requestId:
+              type: string
+            details:
+              type:
+                - array
+                - 'null'
+              items:
+                $ref: '#/components/schemas/ErrorDetail'
+
+    User:
+      type: object
+      required: [id, email, displayName, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        username:
+          type:
+            - string
+            - 'null'
+        displayName:
+          type: string
+        avatarUrl:
+          type:
+            - string
+            - 'null'
+          format: uri
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Device:
+      type: object
+      required: [id, platform, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          type: string
+          enum: [web, desktop, android, ios, server]
+        clientDeviceId:
+          type:
+            - string
+            - 'null'
+        label:
+          type:
+            - string
+            - 'null'
+        appVersion:
+          type:
+            - string
+            - 'null'
+        lastSeenAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        status:
+          type: string
+          enum: [active, revoked]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Session:
+      type: object
+      required: [id, userId, status, createdAt, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        deviceId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        replicaId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        status:
+          type: string
+          enum: [active, revoked, expired]
+        createdAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+
+    AuthTokens:
+      type: object
+      required: [accessToken, tokenType, expiresAt]
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresAt:
+          type: string
+          format: date-time
+
+    CurrentSessionResponse:
+      type: object
+      required: [user, session]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        session:
+          $ref: '#/components/schemas/Session'
+        device:
+          oneOf:
+            - $ref: '#/components/schemas/Device'
+            - type: 'null'
+        replica:
+          oneOf:
+            - $ref: '#/components/schemas/Replica'
+            - type: 'null'
+
+    SignUpRequest:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        displayName:
+          type: string
+        device:
+          oneOf:
+            - $ref: '#/components/schemas/UpsertDeviceRequest'
+            - type: 'null'
+
+    SignInRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        device:
+          oneOf:
+            - $ref: '#/components/schemas/UpsertDeviceRequest'
+            - type: 'null'
+
+    SignInResponse:
+      type: object
+      required: [user, session, tokens]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        session:
+          $ref: '#/components/schemas/Session'
+        device:
+          oneOf:
+            - $ref: '#/components/schemas/Device'
+            - type: 'null'
+        tokens:
+          $ref: '#/components/schemas/AuthTokens'
+
+    RefreshSessionRequest:
+      type: object
+      properties:
+        device:
+          oneOf:
+            - $ref: '#/components/schemas/UpsertDeviceRequest'
+            - type: 'null'
+
+    RefreshSessionResponse:
+      type: object
+      required: [session, tokens]
+      properties:
+        session:
+          $ref: '#/components/schemas/Session'
+        device:
+          oneOf:
+            - $ref: '#/components/schemas/Device'
+            - type: 'null'
+        tokens:
+          $ref: '#/components/schemas/AuthTokens'
+
+    UpsertDeviceRequest:
+      type: object
+      required: [platform]
+      properties:
+        platform:
+          type: string
+          enum: [web, desktop, android, ios, server]
+        clientDeviceId:
+          type:
+            - string
+            - 'null'
+        label:
+          type:
+            - string
+            - 'null'
+        appVersion:
+          type:
+            - string
+            - 'null'
+        userAgent:
+          type:
+            - string
+            - 'null'
+
+    UpdateMeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName:
+          type:
+            - string
+            - 'null'
+        username:
+          type:
+            - string
+            - 'null'
+        avatarUrl:
+          type:
+            - string
+            - 'null'
+          format: uri
+
+    Workspace:
+      type: object
+      required: [id, name, visibility, ownerUserId, createdAt, updatedAt, isArchived]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type:
+            - string
+            - 'null'
+        description:
+          type:
+            - string
+            - 'null'
+        visibility:
+          type: string
+          enum: [private, shared]
+        ownerUserId:
+          type: string
+          format: uuid
+        memberCount:
+          type: integer
+          minimum: 0
+        isArchived:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        archivedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+
+    WorkspaceMember:
+      type: object
+      required: [id, workspaceId, userId, role, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [owner, admin, member]
+        status:
+          type: string
+          enum: [active, removed]
+        invitedByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        removedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+
+    WorkspaceWithMembers:
+      allOf:
+        - $ref: '#/components/schemas/Workspace'
+        - type: object
+          properties:
+            currentUserRole:
+              type:
+                - string
+                - 'null'
+              enum: [owner, admin, member, null]
+            members:
+              type: array
+              items:
+                $ref: '#/components/schemas/WorkspaceMember'
+
+    WorkspaceListResponse:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Workspace'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    WorkspaceMembersListResponse:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceMember'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        slug:
+          type:
+            - string
+            - 'null'
+        description:
+          type:
+            - string
+            - 'null'
+        visibility:
+          type: string
+          enum: [private, shared]
+          default: private
+
+    UpdateWorkspaceRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type:
+            - string
+            - 'null'
+        slug:
+          type:
+            - string
+            - 'null'
+        description:
+          type:
+            - string
+            - 'null'
+        visibility:
+          type:
+            - string
+            - 'null'
+          enum: [private, shared, null]
+
+    AddWorkspaceMemberRequest:
+      type: object
+      required: [userId, role]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [admin, member]
+
+    UpdateWorkspaceMemberRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        role:
+          type:
+            - string
+            - 'null'
+          enum: [admin, member, null]
+
+    Board:
+      type: object
+      required: [id, workspaceId, name, boardType, isArchived, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        boardType:
+          type: string
+          enum: [kanban]
+        isArchived:
+          type: boolean
+        labelIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        checklistCount:
+          type: integer
+          minimum: 0
+        checklistCompletedItemCount:
+          type: integer
+          minimum: 0
+        commentCount:
+          type: integer
+          minimum: 0
+        createdByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        archivedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+
+    BoardListResponse:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Board'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    CreateBoardRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        boardType:
+          type: string
+          enum: [kanban]
+          default: kanban
+
+    UpdateBoardRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type:
+            - string
+            - 'null'
+        description:
+          type:
+            - string
+            - 'null'
+
+    BoardColumn:
+      type: object
+      required: [id, boardId, name, position, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        boardId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        position:
+          type: number
+        colorToken:
+          type:
+            - string
+            - 'null'
+        wipLimit:
+          type:
+            - integer
+            - 'null'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ColumnListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BoardColumn'
+
+    CreateColumnRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        position:
+          type:
+            - number
+            - 'null'
+        colorToken:
+          type:
+            - string
+            - 'null'
+        wipLimit:
+          type:
+            - integer
+            - 'null'
+
+    UpdateColumnRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type:
+            - string
+            - 'null'
+        description:
+          type:
+            - string
+            - 'null'
+        position:
+          type:
+            - number
+            - 'null'
+        colorToken:
+          type:
+            - string
+            - 'null'
+        wipLimit:
+          type:
+            - integer
+            - 'null'
+
+    ReorderColumnsRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [columnId, position]
+            properties:
+              columnId:
+                type: string
+                format: uuid
+              position:
+                type: number
+
+    Card:
+      type: object
+      required: [id, boardId, columnId, title, position, isArchived, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        boardId:
+          type: string
+          format: uuid
+        columnId:
+          type: string
+          format: uuid
+        parentCardId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        title:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        status:
+          type:
+            - string
+            - 'null'
+          enum: [todo, in_progress, blocked, done, null]
+        priority:
+          type:
+            - string
+            - 'null'
+          enum: [low, medium, high, urgent, null]
+        position:
+          type: number
+        startAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        isArchived:
+          type: boolean
+        labelIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        checklistCount:
+          type: integer
+          minimum: 0
+        checklistCompletedItemCount:
+          type: integer
+          minimum: 0
+        commentCount:
+          type: integer
+          minimum: 0
+        createdByUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        archivedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+
+    CardListResponse:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Card'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    CreateCardRequest:
+      type: object
+      required: [title, columnId]
+      properties:
+        title:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        columnId:
+          type: string
+          format: uuid
+        parentCardId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        position:
+          type:
+            - number
+            - 'null'
+        status:
+          type:
+            - string
+            - 'null'
+          enum: [todo, in_progress, blocked, done, null]
+        priority:
+          type:
+            - string
+            - 'null'
+          enum: [low, medium, high, urgent, null]
+        startAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+
+    UpdateCardRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type:
+            - string
+            - 'null'
+        description:
+          type:
+            - string
+            - 'null'
+        columnId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        parentCardId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        status:
+          type:
+            - string
+            - 'null'
+          enum: [todo, in_progress, blocked, done, null]
+        priority:
+          type:
+            - string
+            - 'null'
+          enum: [low, medium, high, urgent, null]
+        position:
+          type:
+            - number
+            - 'null'
+        startAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        isArchived:
+          type:
+            - boolean
+            - 'null'
+
+    MoveCardRequest:
+      type: object
+      required: [targetColumnId]
+      properties:
+        targetColumnId:
+          type: string
+          format: uuid
+        position:
+          type:
+            - number
+            - 'null'
+
+    ReorderColumnCardsRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [cardId, position]
+            properties:
+              cardId:
+                type: string
+                format: uuid
+              position:
+                type: number
+
+    BoardLabel:
+      type: object
+      required: [id, boardId, name, colorToken, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        boardId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        colorToken:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+
+    BoardLabelListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BoardLabel'
+
+    CreateBoardLabelRequest:
+      type: object
+      required: [name, colorToken]
+      properties:
+        name:
+          type: string
+        colorToken:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+
+    UpdateBoardLabelRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type:
+            - string
+            - 'null'
+        colorToken:
+          type:
+            - string
+            - 'null'
+        description:
+          type:
+            - string
+            - 'null'
+
+    AttachLabelToCardRequest:
+      type: object
+      required: [labelId]
+      properties:
+        labelId:
+          type: string
+          format: uuid
+
+    Checklist:
+      type: object
+      required: [id, cardId, title, position, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        cardId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        position:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ChecklistItem:
+      type: object
+      required: [id, checklistId, title, position, isDone, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        checklistId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        position:
+          type: number
+        isDone:
+          type: boolean
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ChecklistWithItems:
+      allOf:
+        - $ref: '#/components/schemas/Checklist'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ChecklistItem'
+
+    ChecklistListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChecklistWithItems'
+
+    CreateChecklistRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        position:
+          type:
+            - number
+            - 'null'
+
+    UpdateChecklistRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type:
+            - string
+            - 'null'
+        position:
+          type:
+            - number
+            - 'null'
+
+    CreateChecklistItemRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        position:
+          type:
+            - number
+            - 'null'
+
+    UpdateChecklistItemRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type:
+            - string
+            - 'null'
+        position:
+          type:
+            - number
+            - 'null'
+        isDone:
+          type:
+            - boolean
+            - 'null'
+
+    ReorderChecklistItemsRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [itemId, position]
+            properties:
+              itemId:
+                type: string
+                format: uuid
+              position:
+                type: number
+
+    Comment:
+      type: object
+      required: [id, cardId, body, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        cardId:
+          type: string
+          format: uuid
+        authorUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        editedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        deletedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+
+    CommentListResponse:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    CreateCommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+
+    UpdateCommentRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        body:
+          type:
+            - string
+            - 'null'
+
+    Replica:
+      type: object
+      required: [id, replicaKey, kind, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        replicaKey:
+          type: string
+        kind:
+          type: string
+          enum: [device, browser_profile, import_worker]
+        status:
+          type: string
+          enum: [active, disabled]
+        userId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        deviceId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        lastSeenAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UpsertReplicaRequest:
+      type: object
+      required: [replicaKey, kind]
+      properties:
+        replicaKey:
+          type: string
+        kind:
+          type: string
+          enum: [device, browser_profile, import_worker]
+        deviceId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        appVersion:
+          type:
+            - string
+            - 'null'
+        metadata:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+
+    UpsertReplicaResponse:
+      type: object
+      required: [replica]
+      properties:
+        replica:
+          $ref: '#/components/schemas/Replica'
+
+    SyncScope:
+      type: object
+      required: [scope]
+      properties:
+        scope:
+          type: string
+          enum: [global, workspace]
+        workspaceId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+
+    SyncCursor:
+      type: object
+      required: [scope, replicaId]
+      properties:
+        scope:
+          $ref: '#/components/schemas/SyncScope'
+        replicaId:
+          type: string
+          format: uuid
+        lastServerOrder:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+        lastEventId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+
+    ClientChangeEvent:
+      type: object
+      required:
+        [eventId, replicaId, entityType, entityId, operation, logicalClock, payload, occurredAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        replicaId:
+          type: string
+          format: uuid
+        entityType:
+          type: string
+          enum:
+            - workspace
+            - workspace_member
+            - board
+            - column
+            - card
+            - board_label
+            - card_label
+            - checklist
+            - checklist_item
+            - comment
+        entityId:
+          type: string
+          format: uuid
+        operation:
+          type: string
+          enum: [create, update, delete, archive, restore, move, complete]
+        logicalClock:
+          type: integer
+          minimum: 1
+        occurredAt:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
+        idempotencyKey:
+          type:
+            - string
+            - 'null'
+
+    ServerChangeEvent:
+      allOf:
+        - $ref: '#/components/schemas/ClientChangeEvent'
+        - type: object
+          required: [serverOrder, acceptedAt]
+          properties:
+            serverOrder:
+              type: integer
+              minimum: 1
+            acceptedAt:
+              type: string
+              format: date-time
+            actorUserId:
+              type:
+                - string
+                - 'null'
+              format: uuid
+            actorDeviceId:
+              type:
+                - string
+                - 'null'
+              format: uuid
+
+    PushEventsRequest:
+      type: object
+      required: [replicaId, events]
+      properties:
+        replicaId:
+          type: string
+          format: uuid
+        workspaceId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        events:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/ClientChangeEvent'
+
+    PushEventResult:
+      type: object
+      required: [eventId, status]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [accepted, duplicate, rejected, conflict]
+        serverOrder:
+          type:
+            - integer
+            - 'null'
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/ErrorResponse'
+            - type: 'null'
+
+    PushEventsResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PushEventResult'
+
+    PullEventsRequest:
+      type: object
+      required: [replicaId, cursor]
+      properties:
+        replicaId:
+          type: string
+          format: uuid
+        cursor:
+          $ref: '#/components/schemas/SyncCursor'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 200
+
+    PullEventsResponse:
+      type: object
+      required: [events, nextCursor, hasMore]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServerChangeEvent'
+        nextCursor:
+          $ref: '#/components/schemas/SyncCursor'
+        hasMore:
+          type: boolean
+
+    SyncStatusResponse:
+      type: object
+      required: [healthy, serverTime]
+      properties:
+        healthy:
+          type: boolean
+        serverTime:
+          type: string
+          format: date-time
+        maxServerOrder:
+          type:
+            - integer
+            - 'null'
+        replica:
+          oneOf:
+            - $ref: '#/components/schemas/Replica'
+            - type: 'null'
+
+paths:
+  /auth/sign-up:
+    post:
+      tags: [auth]
+      summary: Create user account and start initial session
+      description: >
+        Endpoint optional at deployment level. Self-hosted instances may disable public sign-up.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignUpRequest'
+      responses:
+        '201':
+          description: Signed up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignInResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/sign-in:
+    post:
+      tags: [auth]
+      summary: Sign in with email/password and start or continue a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignInResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotate refresh token and issue a new access token
+      security:
+        - refreshTokenCookie: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshSessionRequest'
+      responses:
+        '200':
+          description: Refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/sign-out:
+    post:
+      tags: [auth]
+      summary: Revoke current session
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Signed out
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/sign-out-all:
+    post:
+      tags: [auth]
+      summary: Revoke all sessions of current user
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: All sessions revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/session:
+    get:
+      tags: [auth]
+      summary: Get current authenticated session including device and replica context
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /me:
+    get:
+      tags: [users]
+      summary: Get current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [users]
+      summary: Update current user profile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMeRequest'
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /me/devices:
+    get:
+      tags: [users]
+      summary: List current user devices
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Device list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, pageInfo]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Device'
+                  pageInfo:
+                    $ref: '#/components/schemas/PageInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me/devices/{deviceId}/revoke:
+    post:
+      tags: [users]
+      summary: Revoke current user's device and all sessions bound to it
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '204':
+          description: Device revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /workspaces:
+    get:
+      tags: [workspaces]
+      summary: List workspaces visible to current user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Archived'
+        - $ref: '#/components/parameters/SearchQuery'
+      responses:
+        '200':
+          description: Workspace list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [workspaces]
+      summary: Create workspace
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+      responses:
+        '201':
+          description: Created workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /workspaces/{workspaceId}:
+    get:
+      tags: [workspaces]
+      summary: Get workspace by id
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Workspace detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceWithMembers'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [workspaces]
+      summary: Update workspace metadata
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspaceRequest'
+      responses:
+        '200':
+          description: Updated workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /workspaces/{workspaceId}/archive:
+    post:
+      tags: [workspaces]
+      summary: Archive workspace
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Archived workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /workspaces/{workspaceId}/members:
+    get:
+      tags: [workspaces]
+      summary: List workspace members
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Member list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceMembersListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [workspaces]
+      summary: Add member to workspace
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddWorkspaceMemberRequest'
+      responses:
+        '201':
+          description: Added member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceMember'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /workspaces/{workspaceId}/members/{memberId}:
+    patch:
+      tags: [workspaces]
+      summary: Update workspace member role
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/MemberId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspaceMemberRequest'
+      responses:
+        '200':
+          description: Updated member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceMember'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [workspaces]
+      summary: Remove member from workspace
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/MemberId'
+      responses:
+        '204':
+          description: Member removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /workspaces/{workspaceId}/boards:
+    get:
+      tags: [boards]
+      summary: List boards in workspace
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Archived'
+        - $ref: '#/components/parameters/SearchQuery'
+      responses:
+        '200':
+          description: Board list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [boards]
+      summary: Create board in workspace
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBoardRequest'
+      responses:
+        '201':
+          description: Created board
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Board'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /boards/{boardId}:
+    get:
+      tags: [boards]
+      summary: Get board detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      responses:
+        '200':
+          description: Board
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Board'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [boards]
+      summary: Update board metadata
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBoardRequest'
+      responses:
+        '200':
+          description: Updated board
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Board'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /boards/{boardId}/archive:
+    post:
+      tags: [boards]
+      summary: Archive board
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      responses:
+        '200':
+          description: Archived board
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Board'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /boards/{boardId}/columns:
+    get:
+      tags: [boards]
+      summary: List columns in stable board order
+      description: >
+        Для колонок пагинация не используется, потому что колонок у одной доски мало,
+        а клиенту обычно нужен полный ordered snapshot.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      responses:
+        '200':
+          description: Column list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ColumnListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [boards]
+      summary: Create column
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateColumnRequest'
+      responses:
+        '201':
+          description: Created column
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardColumn'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /boards/{boardId}/columns/{columnId}:
+    patch:
+      tags: [boards]
+      summary: Update column metadata or position
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+        - $ref: '#/components/parameters/ColumnId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateColumnRequest'
+      responses:
+        '200':
+          description: Updated column
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardColumn'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [boards]
+      summary: Delete column
+      description: >
+        Удаление разрешено только если бизнес-правила позволяют безопасно обработать карточки,
+        например колонка пуста или указан migration path в backend-логике.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+        - $ref: '#/components/parameters/ColumnId'
+      responses:
+        '204':
+          description: Column deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /boards/{boardId}/columns/reorder:
+    post:
+      tags: [boards]
+      summary: Reorder columns
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderColumnsRequest'
+      responses:
+        '200':
+          description: Reordered columns
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ColumnListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /boards/{boardId}/cards:
+    get:
+      tags: [cards]
+      summary: List cards in board
+      description: >
+        Для карточек используется cursor pagination. Сортировка по умолчанию:
+        position asc внутри column, а если columnId не задан — updatedAt desc.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SearchQuery'
+        - name: columnId
+          in: query
+          schema:
+            type:
+              - string
+              - 'null'
+            format: uuid
+        - name: labelId
+          in: query
+          schema:
+            type:
+              - string
+              - 'null'
+            format: uuid
+        - name: completed
+          in: query
+          schema:
+            type:
+              - boolean
+              - 'null'
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+            enum: [position, createdAt, updatedAt, dueAt, priority]
+            default: updatedAt
+        - name: sortDir
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Card list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CardListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [cards]
+      summary: Create card
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCardRequest'
+      responses:
+        '201':
+          description: Created card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /cards/{cardId}:
+    get:
+      tags: [cards]
+      summary: Get card detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      responses:
+        '200':
+          description: Card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [cards]
+      summary: Update card
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCardRequest'
+      responses:
+        '200':
+          description: Updated card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+    delete:
+      tags: [cards]
+      summary: Delete card
+      description: >
+        На уровне реализации удаление tombstone-aware и sync-visible, хотя наружу оформлено
+        как обычный DELETE.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      responses:
+        '204':
+          description: Card deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /cards/{cardId}/move:
+    post:
+      tags: [cards]
+      summary: Move card between columns
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveCardRequest'
+      responses:
+        '200':
+          description: Moved card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /columns/{columnId}/cards/reorder:
+    post:
+      tags: [cards]
+      summary: Reorder cards inside a column
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ColumnId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderColumnCardsRequest'
+      responses:
+        '200':
+          description: Reordered cards
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CardListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /cards/{cardId}/complete:
+    post:
+      tags: [cards]
+      summary: Mark card as completed
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      responses:
+        '200':
+          description: Completed card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /cards/{cardId}/restore:
+    post:
+      tags: [cards]
+      summary: Restore archived or completed card depending on state
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      responses:
+        '200':
+          description: Restored card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /boards/{boardId}/labels:
+    get:
+      tags: [labels]
+      summary: List board labels
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      responses:
+        '200':
+          description: Label list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardLabelListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [labels]
+      summary: Create board label
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBoardLabelRequest'
+      responses:
+        '201':
+          description: Created label
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardLabel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /boards/{boardId}/labels/{labelId}:
+    patch:
+      tags: [labels]
+      summary: Update board label
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+        - $ref: '#/components/parameters/LabelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBoardLabelRequest'
+      responses:
+        '200':
+          description: Updated label
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardLabel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [labels]
+      summary: Delete board label
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+        - $ref: '#/components/parameters/LabelId'
+      responses:
+        '204':
+          description: Label deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /cards/{cardId}/labels:
+    post:
+      tags: [labels]
+      summary: Attach label to card
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachLabelToCardRequest'
+      responses:
+        '204':
+          description: Label attached to card
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /cards/{cardId}/labels/{labelId}:
+    delete:
+      tags: [labels]
+      summary: Detach label from card
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+        - $ref: '#/components/parameters/LabelId'
+      responses:
+        '204':
+          description: Label detached from card
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /cards/{cardId}/checklists:
+    get:
+      tags: [checklists]
+      summary: List card checklists with items
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      responses:
+        '200':
+          description: Checklist list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [checklists]
+      summary: Create checklist on card
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChecklistRequest'
+      responses:
+        '201':
+          description: Created checklist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistWithItems'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /checklists/{checklistId}:
+    patch:
+      tags: [checklists]
+      summary: Update checklist
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChecklistId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChecklistRequest'
+      responses:
+        '200':
+          description: Updated checklist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Checklist'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [checklists]
+      summary: Delete checklist
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChecklistId'
+      responses:
+        '204':
+          description: Checklist deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /checklists/{checklistId}/items:
+    post:
+      tags: [checklists]
+      summary: Create checklist item
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChecklistId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChecklistItemRequest'
+      responses:
+        '201':
+          description: Created checklist item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /checklists/items/{itemId}:
+    patch:
+      tags: [checklists]
+      summary: Update checklist item
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChecklistItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChecklistItemRequest'
+      responses:
+        '200':
+          description: Updated checklist item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [checklists]
+      summary: Delete checklist item
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChecklistItemId'
+      responses:
+        '204':
+          description: Checklist item deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /checklists/{checklistId}/items/reorder:
+    post:
+      tags: [checklists]
+      summary: Reorder checklist items
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChecklistId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderChecklistItemsRequest'
+      responses:
+        '200':
+          description: Updated checklist with reordered items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistWithItems'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /cards/{cardId}/comments:
+    get:
+      tags: [comments]
+      summary: List comments on card
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Comment list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [comments]
+      summary: Create comment on card
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: Created comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /comments/{commentId}:
+    patch:
+      tags: [comments]
+      summary: Update comment body
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CommentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCommentRequest'
+      responses:
+        '200':
+          description: Updated comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [comments]
+      summary: Delete comment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CommentId'
+      responses:
+        '204':
+          description: Comment deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sync/replicas:
+    post:
+      tags: [sync]
+      summary: Register or update current replica
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertReplicaRequest'
+      responses:
+        '200':
+          description: Replica registered or updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpsertReplicaResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /sync/push:
+    post:
+      tags: [sync]
+      summary: Push local replica events to backend
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushEventsRequest'
+      responses:
+        '200':
+          description: Push processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushEventsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /sync/pull:
+    post:
+      tags: [sync]
+      summary: Pull server-side events after known cursor
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PullEventsRequest'
+      responses:
+        '200':
+          description: Event batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullEventsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /sync/status:
+    get:
+      tags: [sync]
+      summary: Get sync health and current replica status
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: replicaId
+          in: query
+          required: false
+          schema:
+            type:
+              - string
+              - 'null'
+            format: uuid
+      responses:
+        '200':
+          description: Sync status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
