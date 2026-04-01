@@ -143,3 +143,15 @@
 - repo-слой под каждую таблицу;
 - сервисы, которые транслируют CRUD в change-aware mutations;
 - первые интеграционные тесты на `boards`, `cards`, `sync`.
+
+
+## 0006_appearance_and_customization.sql
+
+Добавляет минимальный customization slice поверх core MVP:
+- `user_appearance_preferences`
+- `board_appearance_settings`
+
+Почему отдельной миграцией:
+- customization появляется после core CRUD и не должна смешиваться с базовой board/card моделью;
+- это облегчает откат и проверку реального влияния customization на backend;
+- migration отделяет shared board appearance от будущих assets/theme registry решений.

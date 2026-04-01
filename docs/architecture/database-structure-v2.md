@@ -591,3 +591,36 @@
 - **audit_log** как минимальный серверный аудит;
 - `activity` как отдельный user-facing слой откладываем;
 - first migrations держим достаточно узкими, чтобы уже после них переходить к backend module map и реальному skeleton.
+
+
+## Appearance / customization additions
+
+### `user_appearance_preferences`
+Персональные UI-настройки пользователя.
+
+Ключевые поля:
+- `user_id` PK/FK -> `users.id`
+- `app_theme`
+- `density`
+- `reduce_motion`
+- `created_at`
+- `updated_at`
+
+### `board_appearance_settings`
+Shared-настройки отображения доски.
+
+Ключевые поля:
+- `board_id` PK/FK -> `boards.id`
+- `theme_preset`
+- `wallpaper_kind`
+- `wallpaper_value`
+- `column_density`
+- `card_preview_mode`
+- `show_card_description`
+- `show_card_dates`
+- `show_checklist_progress`
+- `custom_properties_jsonb`
+- `created_at`
+- `updated_at`
+
+Ключевой принцип: preset ids и lightweight config хранятся в БД, но не полный theme registry и не файловые ассеты.

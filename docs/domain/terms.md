@@ -33,6 +33,15 @@ checklists и comments.
 как обязательного требования.
 
 
+### User appearance preferences
+Персональные настройки внешнего вида клиента: app theme, density, reduce motion.
+
+### Board appearance settings
+Общие для доски настройки внешнего вида: theme preset, wallpaper config и display toggles.
+
+### Wallpaper config
+Пара `kind + value`, описывающая фон доски без обязательной привязки к файловому asset.
+
 ### User
 Глобальная серверная identity. Именно user является субъектом владения,
 membership и аутентификации.

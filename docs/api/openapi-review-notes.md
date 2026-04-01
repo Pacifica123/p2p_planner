@@ -35,3 +35,8 @@
   self-hosted инстанс может держать `auth/sign-up`, а может выключить его.
 - Спека синтаксически парсится и все внутренние `$ref` разрешаются,
   но полноценный внешний OpenAPI validator в этой среде я не запускал.
+
+
+## Appearance / customization follow-up
+
+После отдельного customization-этапа в v1 добавлены endpoints `GET/PUT /me/appearance` и `GET/PUT /boards/{boardId}/appearance`, а также соответствующие схемы для user preferences и board appearance settings. Image-wallpapers и theme registry по-прежнему остаются за пределами текущего API slice.

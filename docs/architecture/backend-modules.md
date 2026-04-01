@@ -55,6 +55,7 @@
 - `labels`
 - `checklists`
 - `comments`
+- `appearance`
 - `sync`
 
 ### 2.2. Infra / shared
@@ -67,7 +68,6 @@
 - `audit` как infra-support модуль или `common/audit`
 
 ### 2.3. Future-ready, но не обязательные для skeleton v1
-- `board_appearance`
 - `attachments`
 - `custom_fields`
 - `activity`
@@ -241,7 +241,24 @@
 - delete own/admin-visible comment;
 - list card comments.
 
-## 3.9. sync
+
+## 3.9. appearance
+
+**Отвечает за:**
+- персональные user appearance preferences;
+- board appearance settings;
+- валидацию wallpaper/theme preset shape;
+- future-ready границу для workspace defaults и theme registry.
+
+**Таблицы:**
+- `user_appearance_preferences`
+- `board_appearance_settings`
+
+**Основные операции:**
+- get/update current user appearance preferences;
+- get/update board appearance settings.
+
+## 3.10. sync
 
 **Отвечает за:**
 - replica registration/update;
@@ -910,6 +927,7 @@ backend/src/
 - `labels`
 - `checklists`
 - `comments`
+- `appearance`
 - `sync`
 - `audit` как infra-support
 

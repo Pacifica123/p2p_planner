@@ -217,14 +217,18 @@ Workspace/board/card можно не только создавать, но и п
 - notifications/reminders;
 - календарные режимы и timeline-представления.
 
-### 6. Advanced customization
-Не входит:
-- board wallpapers как обязательная пользовательская фича v1;
-- сложные themes/palettes/token packs;
-- пресеты внешнего вида карточек и колонок;
-- импорт внешних тем.
+### 6. Minimal customization / appearance
+Входит ограниченный, но реальный customization slice:
+- пользовательская тема приложения (`system | light | dark`);
+- board appearance settings;
+- preset/solid/gradient wallpapers без файловых ассетов;
+- плотность отображения и базовые display toggles для board.
 
-Архитектурная готовность допускается, но реализация откладывается.
+Не входит:
+- uploaded image wallpapers;
+- arbitrary palette/token editors;
+- импорт внешних тем;
+- сложные per-column/per-card style presets.
 
 ### 7. Custom fields
 Не входит:
@@ -272,6 +276,7 @@ Workspace/board/card можно не только создавать, но и п
 - Attachment
 - CustomField
 - CardCustomFieldValue
+- UserAppearancePreferences
 - Theme
 - Wallpaper
 - BoardAppearanceSettings

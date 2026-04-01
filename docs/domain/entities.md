@@ -18,6 +18,8 @@
 - Checklist
 - ChecklistItem
 - Comment
+- UserAppearancePreferences
+- BoardAppearanceSettings
 
 ### Обязательная инфраструктурная основа v1
 - User
@@ -30,9 +32,8 @@
 - Attachment
 - CustomField
 - CardCustomFieldValue
-- Theme
-- Wallpaper
-- BoardAppearanceSettings
+- Theme catalog / theme registry
+- Wallpaper asset
 - IntegrationProvider
 - IntegrationConnection
 - IntegrationLink
@@ -421,3 +422,38 @@ Future-ready связь внешнего объекта с нашей сущно
 - action
 - payload_json
 - created_at
+
+
+## 12. UserAppearancePreferences
+
+Персональные визуальные предпочтения пользователя.
+
+### Основные поля
+- user_id
+- app_theme
+- density
+- reduce_motion
+- created_at
+- updated_at
+
+## 13. BoardAppearanceSettings
+
+Shared-настройки внешнего вида доски.
+
+### Основные поля
+- board_id
+- theme_preset
+- wallpaper_kind
+- wallpaper_value nullable
+- column_density
+- card_preview_mode
+- show_card_description
+- show_card_dates
+- show_checklist_progress
+- custom_properties_jsonb
+- created_at
+- updated_at
+
+### Комментарий
+В v1 это не theme-builder и не asset storage. Настройки хранят preset ids,
+базовые display flags и ограниченный JSON object для future-ready расширения.

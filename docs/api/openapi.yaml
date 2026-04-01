@@ -1,41 +1,43 @@
-
 openapi: 3.1.0
 info:
   title: P2P Planner Backend API
   version: 0.2.0
-  description: >
-    HTTP API v1 для web-first local-first Kanban planner с sync-ready foundation.
-    Контракт выровнен с MVP scope: workspace / board / column / card плюс labels,
-    checklists, comments, минимальная коллаборация, session/device/replica-aware auth.
+  description: 'HTTP API v1 для web-first local-first Kanban planner с sync-ready
+    foundation. Контракт выровнен с MVP scope: workspace / board / column / card плюс
+    labels, checklists, comments, минимальная коллаборация, session/device/replica-aware
+    auth.
+
+    '
 servers:
-  - url: /api/v1
-
+- url: /api/v1
 tags:
-  - name: auth
-  - name: users
-  - name: workspaces
-  - name: boards
-  - name: cards
-  - name: labels
-  - name: checklists
-  - name: comments
-  - name: sync
-
+- name: auth
+- name: users
+- name: appearance
+- name: workspaces
+- name: boards
+- name: cards
+- name: labels
+- name: checklists
+- name: comments
+- name: sync
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: >
-        Короткоживущий access token для обычных защищенных вызовов API.
+      description: 'Короткоживущий access token для обычных защищенных вызовов API.
+
+        '
     refreshTokenCookie:
       type: apiKey
       in: cookie
       name: refresh_token
-      description: >
-        HttpOnly refresh token cookie для обновления сессии и завершения текущего сеанса.
+      description: 'HttpOnly refresh token cookie для обновления сессии и завершения
+        текущего сеанса.
 
+        '
   parameters:
     WorkspaceId:
       name: workspaceId
@@ -121,8 +123,10 @@ components:
       name: limit
       in: query
       required: false
-      description: >
-        Максимум элементов в ответе. Если параметр не передан, backend использует дефолт.
+      description: 'Максимум элементов в ответе. Если параметр не передан, backend
+        использует дефолт.
+
+        '
       schema:
         type: integer
         minimum: 1
@@ -135,18 +139,20 @@ components:
       description: Opaque cursor for cursor-based pagination.
       schema:
         type:
-          - string
-          - 'null'
+        - string
+        - 'null'
     Archived:
       name: archived
       in: query
       required: false
-      description: >
-        Фильтр по архивности. false = только активные, true = только архивные, null = обе группы.
+      description: 'Фильтр по архивности. false = только активные, true = только архивные,
+        null = обе группы.
+
+        '
       schema:
         type:
-          - boolean
-          - 'null'
+        - boolean
+        - 'null'
     SearchQuery:
       name: q
       in: query
@@ -154,10 +160,8 @@ components:
       description: Free-text search query.
       schema:
         type:
-          - string
-          - 'null'
-
-
+        - string
+        - 'null'
   responses:
     BadRequest:
       description: Bad request
@@ -207,57 +211,72 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-
   schemas:
     PageInfo:
       type: object
-      required: [hasNextPage, nextCursor]
+      required:
+      - hasNextPage
+      - nextCursor
       properties:
         hasNextPage:
           type: boolean
         nextCursor:
           type:
-            - string
-            - 'null'
-
+          - string
+          - 'null'
     ErrorDetail:
       type: object
-      required: [field, code, message]
+      required:
+      - field
+      - code
+      - message
       properties:
         field:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         code:
           type: string
         message:
           type: string
-
     ErrorResponse:
       type: object
-      required: [error]
+      required:
+      - error
       properties:
         error:
           type: object
-          required: [code, message, requestId]
+          required:
+          - code
+          - message
+          - requestId
           properties:
             code:
               type: string
-              examples: [validation_error, unauthorized, forbidden, not_found, conflict]
+              examples:
+              - validation_error
+              - unauthorized
+              - forbidden
+              - not_found
+              - conflict
             message:
               type: string
             requestId:
               type: string
             details:
               type:
-                - array
-                - 'null'
+              - array
+              - 'null'
               items:
                 $ref: '#/components/schemas/ErrorDetail'
-
     User:
       type: object
-      required: [id, email, displayName, createdAt, updatedAt]
+      required:
+      - id
+      - email
+      - displayName
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -267,14 +286,14 @@ components:
           format: email
         username:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         displayName:
           type: string
         avatarUrl:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uri
         createdAt:
           type: string
@@ -282,47 +301,62 @@ components:
         updatedAt:
           type: string
           format: date-time
-
     Device:
       type: object
-      required: [id, platform, status, createdAt, updatedAt]
+      required:
+      - id
+      - platform
+      - status
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
           format: uuid
         platform:
           type: string
-          enum: [web, desktop, android, ios, server]
+          enum:
+          - web
+          - desktop
+          - android
+          - ios
+          - server
         clientDeviceId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         label:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         appVersion:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         lastSeenAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         status:
           type: string
-          enum: [active, revoked]
+          enum:
+          - active
+          - revoked
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
-
     Session:
       type: object
-      required: [id, userId, status, createdAt, expiresAt]
+      required:
+      - id
+      - userId
+      - status
+      - createdAt
+      - expiresAt
       properties:
         id:
           type: string
@@ -332,50 +366,57 @@ components:
           format: uuid
         deviceId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         replicaId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         status:
           type: string
-          enum: [active, revoked, expired]
+          enum:
+          - active
+          - revoked
+          - expired
         createdAt:
           type: string
           format: date-time
         lastSeenAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         expiresAt:
           type: string
           format: date-time
         revokedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
-
     AuthTokens:
       type: object
-      required: [accessToken, tokenType, expiresAt]
+      required:
+      - accessToken
+      - tokenType
+      - expiresAt
       properties:
         accessToken:
           type: string
         tokenType:
           type: string
-          enum: [Bearer]
+          enum:
+          - Bearer
         expiresAt:
           type: string
           format: date-time
-
     CurrentSessionResponse:
       type: object
-      required: [user, session]
+      required:
+      - user
+      - session
       properties:
         user:
           $ref: '#/components/schemas/User'
@@ -383,16 +424,18 @@ components:
           $ref: '#/components/schemas/Session'
         device:
           oneOf:
-            - $ref: '#/components/schemas/Device'
-            - type: 'null'
+          - $ref: '#/components/schemas/Device'
+          - type: 'null'
         replica:
           oneOf:
-            - $ref: '#/components/schemas/Replica'
-            - type: 'null'
-
+          - $ref: '#/components/schemas/Replica'
+          - type: 'null'
     SignUpRequest:
       type: object
-      required: [email, password, displayName]
+      required:
+      - email
+      - password
+      - displayName
       properties:
         email:
           type: string
@@ -404,12 +447,13 @@ components:
           type: string
         device:
           oneOf:
-            - $ref: '#/components/schemas/UpsertDeviceRequest'
-            - type: 'null'
-
+          - $ref: '#/components/schemas/UpsertDeviceRequest'
+          - type: 'null'
     SignInRequest:
       type: object
-      required: [email, password]
+      required:
+      - email
+      - password
       properties:
         email:
           type: string
@@ -419,12 +463,14 @@ components:
           minLength: 8
         device:
           oneOf:
-            - $ref: '#/components/schemas/UpsertDeviceRequest'
-            - type: 'null'
-
+          - $ref: '#/components/schemas/UpsertDeviceRequest'
+          - type: 'null'
     SignInResponse:
       type: object
-      required: [user, session, tokens]
+      required:
+      - user
+      - session
+      - tokens
       properties:
         user:
           $ref: '#/components/schemas/User'
@@ -432,77 +478,87 @@ components:
           $ref: '#/components/schemas/Session'
         device:
           oneOf:
-            - $ref: '#/components/schemas/Device'
-            - type: 'null'
+          - $ref: '#/components/schemas/Device'
+          - type: 'null'
         tokens:
           $ref: '#/components/schemas/AuthTokens'
-
     RefreshSessionRequest:
       type: object
       properties:
         device:
           oneOf:
-            - $ref: '#/components/schemas/UpsertDeviceRequest'
-            - type: 'null'
-
+          - $ref: '#/components/schemas/UpsertDeviceRequest'
+          - type: 'null'
     RefreshSessionResponse:
       type: object
-      required: [session, tokens]
+      required:
+      - session
+      - tokens
       properties:
         session:
           $ref: '#/components/schemas/Session'
         device:
           oneOf:
-            - $ref: '#/components/schemas/Device'
-            - type: 'null'
+          - $ref: '#/components/schemas/Device'
+          - type: 'null'
         tokens:
           $ref: '#/components/schemas/AuthTokens'
-
     UpsertDeviceRequest:
       type: object
-      required: [platform]
+      required:
+      - platform
       properties:
         platform:
           type: string
-          enum: [web, desktop, android, ios, server]
+          enum:
+          - web
+          - desktop
+          - android
+          - ios
+          - server
         clientDeviceId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         label:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         appVersion:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         userAgent:
           type:
-            - string
-            - 'null'
-
+          - string
+          - 'null'
     UpdateMeRequest:
       type: object
       additionalProperties: false
       properties:
         displayName:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         username:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         avatarUrl:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uri
-
     Workspace:
       type: object
-      required: [id, name, visibility, ownerUserId, createdAt, updatedAt, isArchived]
+      required:
+      - id
+      - name
+      - visibility
+      - ownerUserId
+      - createdAt
+      - updatedAt
+      - isArchived
       properties:
         id:
           type: string
@@ -511,15 +567,17 @@ components:
           type: string
         slug:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         visibility:
           type: string
-          enum: [private, shared]
+          enum:
+          - private
+          - shared
         ownerUserId:
           type: string
           format: uuid
@@ -536,13 +594,19 @@ components:
           format: date-time
         archivedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
-
     WorkspaceMember:
       type: object
-      required: [id, workspaceId, userId, role, status, createdAt, updatedAt]
+      required:
+      - id
+      - workspaceId
+      - userId
+      - role
+      - status
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -555,14 +619,19 @@ components:
           format: uuid
         role:
           type: string
-          enum: [owner, admin, member]
+          enum:
+          - owner
+          - admin
+          - member
         status:
           type: string
-          enum: [active, removed]
+          enum:
+          - active
+          - removed
         invitedByUserId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         createdAt:
           type: string
@@ -572,28 +641,32 @@ components:
           format: date-time
         removedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
-
     WorkspaceWithMembers:
       allOf:
-        - $ref: '#/components/schemas/Workspace'
-        - type: object
-          properties:
-            currentUserRole:
-              type:
-                - string
-                - 'null'
-              enum: [owner, admin, member, null]
-            members:
-              type: array
-              items:
-                $ref: '#/components/schemas/WorkspaceMember'
-
+      - $ref: '#/components/schemas/Workspace'
+      - type: object
+        properties:
+          currentUserRole:
+            type:
+            - string
+            - 'null'
+            enum:
+            - owner
+            - admin
+            - member
+            - null
+          members:
+            type: array
+            items:
+              $ref: '#/components/schemas/WorkspaceMember'
     WorkspaceListResponse:
       type: object
-      required: [items, pageInfo]
+      required:
+      - items
+      - pageInfo
       properties:
         items:
           type: array
@@ -601,10 +674,11 @@ components:
             $ref: '#/components/schemas/Workspace'
         pageInfo:
           $ref: '#/components/schemas/PageInfo'
-
     WorkspaceMembersListResponse:
       type: object
-      required: [items, pageInfo]
+      required:
+      - items
+      - pageInfo
       properties:
         items:
           type: array
@@ -612,10 +686,10 @@ components:
             $ref: '#/components/schemas/WorkspaceMember'
         pageInfo:
           $ref: '#/components/schemas/PageInfo'
-
     CreateWorkspaceRequest:
       type: object
-      required: [name]
+      required:
+      - name
       properties:
         name:
           type: string
@@ -623,63 +697,78 @@ components:
           maxLength: 120
         slug:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         visibility:
           type: string
-          enum: [private, shared]
+          enum:
+          - private
+          - shared
           default: private
-
     UpdateWorkspaceRequest:
       type: object
       additionalProperties: false
       properties:
         name:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         slug:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         visibility:
           type:
-            - string
-            - 'null'
-          enum: [private, shared, null]
-
+          - string
+          - 'null'
+          enum:
+          - private
+          - shared
+          - null
     AddWorkspaceMemberRequest:
       type: object
-      required: [userId, role]
+      required:
+      - userId
+      - role
       properties:
         userId:
           type: string
           format: uuid
         role:
           type: string
-          enum: [admin, member]
-
+          enum:
+          - admin
+          - member
     UpdateWorkspaceMemberRequest:
       type: object
       additionalProperties: false
       properties:
         role:
           type:
-            - string
-            - 'null'
-          enum: [admin, member, null]
-
+          - string
+          - 'null'
+          enum:
+          - admin
+          - member
+          - null
     Board:
       type: object
-      required: [id, workspaceId, name, boardType, isArchived, createdAt, updatedAt]
+      required:
+      - id
+      - workspaceId
+      - name
+      - boardType
+      - isArchived
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -691,11 +780,12 @@ components:
           type: string
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         boardType:
           type: string
-          enum: [kanban]
+          enum:
+          - kanban
         isArchived:
           type: boolean
         labelIds:
@@ -714,8 +804,8 @@ components:
           minimum: 0
         createdByUserId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         createdAt:
           type: string
@@ -725,13 +815,14 @@ components:
           format: date-time
         archivedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
-
     BoardListResponse:
       type: object
-      required: [items, pageInfo]
+      required:
+      - items
+      - pageInfo
       properties:
         items:
           type: array
@@ -739,38 +830,43 @@ components:
             $ref: '#/components/schemas/Board'
         pageInfo:
           $ref: '#/components/schemas/PageInfo'
-
     CreateBoardRequest:
       type: object
-      required: [name]
+      required:
+      - name
       properties:
         name:
           type: string
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         boardType:
           type: string
-          enum: [kanban]
+          enum:
+          - kanban
           default: kanban
-
     UpdateBoardRequest:
       type: object
       additionalProperties: false
       properties:
         name:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         description:
           type:
-            - string
-            - 'null'
-
+          - string
+          - 'null'
     BoardColumn:
       type: object
-      required: [id, boardId, name, position, createdAt, updatedAt]
+      required:
+      - id
+      - boardId
+      - name
+      - position
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -782,102 +878,110 @@ components:
           type: string
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         position:
           type: number
         colorToken:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         wipLimit:
           type:
-            - integer
-            - 'null'
+          - integer
+          - 'null'
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
-
     ColumnListResponse:
       type: object
-      required: [items]
+      required:
+      - items
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/BoardColumn'
-
     CreateColumnRequest:
       type: object
-      required: [name]
+      required:
+      - name
       properties:
         name:
           type: string
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         position:
           type:
-            - number
-            - 'null'
+          - number
+          - 'null'
         colorToken:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         wipLimit:
           type:
-            - integer
-            - 'null'
-
+          - integer
+          - 'null'
     UpdateColumnRequest:
       type: object
       additionalProperties: false
       properties:
         name:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         position:
           type:
-            - number
-            - 'null'
+          - number
+          - 'null'
         colorToken:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         wipLimit:
           type:
-            - integer
-            - 'null'
-
+          - integer
+          - 'null'
     ReorderColumnsRequest:
       type: object
-      required: [items]
+      required:
+      - items
       properties:
         items:
           type: array
           minItems: 1
           items:
             type: object
-            required: [columnId, position]
+            required:
+            - columnId
+            - position
             properties:
               columnId:
                 type: string
                 format: uuid
               position:
                 type: number
-
     Card:
       type: object
-      required: [id, boardId, columnId, title, position, isArchived, createdAt, updatedAt]
+      required:
+      - id
+      - boardId
+      - columnId
+      - title
+      - position
+      - isArchived
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -890,41 +994,51 @@ components:
           format: uuid
         parentCardId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         title:
           type: string
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         status:
           type:
-            - string
-            - 'null'
-          enum: [todo, in_progress, blocked, done, null]
+          - string
+          - 'null'
+          enum:
+          - todo
+          - in_progress
+          - blocked
+          - done
+          - null
         priority:
           type:
-            - string
-            - 'null'
-          enum: [low, medium, high, urgent, null]
+          - string
+          - 'null'
+          enum:
+          - low
+          - medium
+          - high
+          - urgent
+          - null
         position:
           type: number
         startAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         dueAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         completedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         isArchived:
           type: boolean
@@ -944,8 +1058,8 @@ components:
           minimum: 0
         createdByUserId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         createdAt:
           type: string
@@ -955,13 +1069,14 @@ components:
           format: date-time
         archivedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
-
     CardListResponse:
       type: object
-      required: [items, pageInfo]
+      required:
+      - items
+      - pageInfo
       properties:
         items:
           type: array
@@ -969,138 +1084,165 @@ components:
             $ref: '#/components/schemas/Card'
         pageInfo:
           $ref: '#/components/schemas/PageInfo'
-
     CreateCardRequest:
       type: object
-      required: [title, columnId]
+      required:
+      - title
+      - columnId
       properties:
         title:
           type: string
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         columnId:
           type: string
           format: uuid
         parentCardId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         position:
           type:
-            - number
-            - 'null'
+          - number
+          - 'null'
         status:
           type:
-            - string
-            - 'null'
-          enum: [todo, in_progress, blocked, done, null]
+          - string
+          - 'null'
+          enum:
+          - todo
+          - in_progress
+          - blocked
+          - done
+          - null
         priority:
           type:
-            - string
-            - 'null'
-          enum: [low, medium, high, urgent, null]
+          - string
+          - 'null'
+          enum:
+          - low
+          - medium
+          - high
+          - urgent
+          - null
         startAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         dueAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
-
     UpdateCardRequest:
       type: object
       additionalProperties: false
       properties:
         title:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         columnId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         parentCardId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         status:
           type:
-            - string
-            - 'null'
-          enum: [todo, in_progress, blocked, done, null]
+          - string
+          - 'null'
+          enum:
+          - todo
+          - in_progress
+          - blocked
+          - done
+          - null
         priority:
           type:
-            - string
-            - 'null'
-          enum: [low, medium, high, urgent, null]
+          - string
+          - 'null'
+          enum:
+          - low
+          - medium
+          - high
+          - urgent
+          - null
         position:
           type:
-            - number
-            - 'null'
+          - number
+          - 'null'
         startAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         dueAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         completedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         isArchived:
           type:
-            - boolean
-            - 'null'
-
+          - boolean
+          - 'null'
     MoveCardRequest:
       type: object
-      required: [targetColumnId]
+      required:
+      - targetColumnId
       properties:
         targetColumnId:
           type: string
           format: uuid
         position:
           type:
-            - number
-            - 'null'
-
+          - number
+          - 'null'
     ReorderColumnCardsRequest:
       type: object
-      required: [items]
+      required:
+      - items
       properties:
         items:
           type: array
           minItems: 1
           items:
             type: object
-            required: [cardId, position]
+            required:
+            - cardId
+            - position
             properties:
               cardId:
                 type: string
                 format: uuid
               position:
                 type: number
-
     BoardLabel:
       type: object
-      required: [id, boardId, name, colorToken, createdAt, updatedAt]
+      required:
+      - id
+      - boardId
+      - name
+      - colorToken
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -1114,8 +1256,8 @@ components:
           type: string
         description:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         createdAt:
           type: string
           format: date-time
@@ -1124,22 +1266,23 @@ components:
           format: date-time
         deletedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
-
     BoardLabelListResponse:
       type: object
-      required: [items]
+      required:
+      - items
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/BoardLabel'
-
     CreateBoardLabelRequest:
       type: object
-      required: [name, colorToken]
+      required:
+      - name
+      - colorToken
       properties:
         name:
           type: string
@@ -1147,37 +1290,41 @@ components:
           type: string
         description:
           type:
-            - string
-            - 'null'
-
+          - string
+          - 'null'
     UpdateBoardLabelRequest:
       type: object
       additionalProperties: false
       properties:
         name:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         colorToken:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         description:
           type:
-            - string
-            - 'null'
-
+          - string
+          - 'null'
     AttachLabelToCardRequest:
       type: object
-      required: [labelId]
+      required:
+      - labelId
       properties:
         labelId:
           type: string
           format: uuid
-
     Checklist:
       type: object
-      required: [id, cardId, title, position, createdAt, updatedAt]
+      required:
+      - id
+      - cardId
+      - title
+      - position
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -1195,10 +1342,16 @@ components:
         updatedAt:
           type: string
           format: date-time
-
     ChecklistItem:
       type: object
-      required: [id, checklistId, title, position, isDone, createdAt, updatedAt]
+      required:
+      - id
+      - checklistId
+      - title
+      - position
+      - isDone
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -1214,8 +1367,8 @@ components:
           type: boolean
         completedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         createdAt:
           type: string
@@ -1223,99 +1376,103 @@ components:
         updatedAt:
           type: string
           format: date-time
-
     ChecklistWithItems:
       allOf:
-        - $ref: '#/components/schemas/Checklist'
-        - type: object
-          required: [items]
-          properties:
+      - $ref: '#/components/schemas/Checklist'
+      - type: object
+        required:
+        - items
+        properties:
+          items:
+            type: array
             items:
-              type: array
-              items:
-                $ref: '#/components/schemas/ChecklistItem'
-
+              $ref: '#/components/schemas/ChecklistItem'
     ChecklistListResponse:
       type: object
-      required: [items]
+      required:
+      - items
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/ChecklistWithItems'
-
     CreateChecklistRequest:
       type: object
-      required: [title]
+      required:
+      - title
       properties:
         title:
           type: string
         position:
           type:
-            - number
-            - 'null'
-
+          - number
+          - 'null'
     UpdateChecklistRequest:
       type: object
       additionalProperties: false
       properties:
         title:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         position:
           type:
-            - number
-            - 'null'
-
+          - number
+          - 'null'
     CreateChecklistItemRequest:
       type: object
-      required: [title]
+      required:
+      - title
       properties:
         title:
           type: string
         position:
           type:
-            - number
-            - 'null'
-
+          - number
+          - 'null'
     UpdateChecklistItemRequest:
       type: object
       additionalProperties: false
       properties:
         title:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         position:
           type:
-            - number
-            - 'null'
+          - number
+          - 'null'
         isDone:
           type:
-            - boolean
-            - 'null'
-
+          - boolean
+          - 'null'
     ReorderChecklistItemsRequest:
       type: object
-      required: [items]
+      required:
+      - items
       properties:
         items:
           type: array
           minItems: 1
           items:
             type: object
-            required: [itemId, position]
+            required:
+            - itemId
+            - position
             properties:
               itemId:
                 type: string
                 format: uuid
               position:
                 type: number
-
     Comment:
       type: object
-      required: [id, cardId, body, createdAt, updatedAt]
+      required:
+      - id
+      - cardId
+      - body
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -1325,8 +1482,8 @@ components:
           format: uuid
         authorUserId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         body:
           type: string
@@ -1338,18 +1495,19 @@ components:
           format: date-time
         editedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         deletedAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
-
     CommentListResponse:
       type: object
-      required: [items, pageInfo]
+      required:
+      - items
+      - pageInfo
       properties:
         items:
           type: array
@@ -1357,27 +1515,31 @@ components:
             $ref: '#/components/schemas/Comment'
         pageInfo:
           $ref: '#/components/schemas/PageInfo'
-
     CreateCommentRequest:
       type: object
-      required: [body]
+      required:
+      - body
       properties:
         body:
           type: string
           minLength: 1
-
     UpdateCommentRequest:
       type: object
       additionalProperties: false
       properties:
         body:
           type:
-            - string
-            - 'null'
-
+          - string
+          - 'null'
     Replica:
       type: object
-      required: [id, replicaKey, kind, status, createdAt, updatedAt]
+      required:
+      - id
+      - replicaKey
+      - kind
+      - status
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -1386,24 +1548,29 @@ components:
           type: string
         kind:
           type: string
-          enum: [device, browser_profile, import_worker]
+          enum:
+          - device
+          - browser_profile
+          - import_worker
         status:
           type: string
-          enum: [active, disabled]
+          enum:
+          - active
+          - disabled
         userId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         deviceId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         lastSeenAt:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: date-time
         createdAt:
           type: string
@@ -1411,54 +1578,61 @@ components:
         updatedAt:
           type: string
           format: date-time
-
     UpsertReplicaRequest:
       type: object
-      required: [replicaKey, kind]
+      required:
+      - replicaKey
+      - kind
       properties:
         replicaKey:
           type: string
         kind:
           type: string
-          enum: [device, browser_profile, import_worker]
+          enum:
+          - device
+          - browser_profile
+          - import_worker
         deviceId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         appVersion:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
         metadata:
           type:
-            - object
-            - 'null'
+          - object
+          - 'null'
           additionalProperties: true
-
     UpsertReplicaResponse:
       type: object
-      required: [replica]
+      required:
+      - replica
       properties:
         replica:
           $ref: '#/components/schemas/Replica'
-
     SyncScope:
       type: object
-      required: [scope]
+      required:
+      - scope
       properties:
         scope:
           type: string
-          enum: [global, workspace]
+          enum:
+          - global
+          - workspace
         workspaceId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
-
     SyncCursor:
       type: object
-      required: [scope, replicaId]
+      required:
+      - scope
+      - replicaId
       properties:
         scope:
           $ref: '#/components/schemas/SyncScope'
@@ -1467,19 +1641,25 @@ components:
           format: uuid
         lastServerOrder:
           type:
-            - integer
-            - 'null'
+          - integer
+          - 'null'
           minimum: 0
         lastEventId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
-
     ClientChangeEvent:
       type: object
       required:
-        [eventId, replicaId, entityType, entityId, operation, logicalClock, payload, occurredAt]
+      - eventId
+      - replicaId
+      - entityType
+      - entityId
+      - operation
+      - logicalClock
+      - payload
+      - occurredAt
       properties:
         eventId:
           type: string
@@ -1490,22 +1670,29 @@ components:
         entityType:
           type: string
           enum:
-            - workspace
-            - workspace_member
-            - board
-            - column
-            - card
-            - board_label
-            - card_label
-            - checklist
-            - checklist_item
-            - comment
+          - workspace
+          - workspace_member
+          - board
+          - column
+          - card
+          - board_label
+          - card_label
+          - checklist
+          - checklist_item
+          - comment
         entityId:
           type: string
           format: uuid
         operation:
           type: string
-          enum: [create, update, delete, archive, restore, move, complete]
+          enum:
+          - create
+          - update
+          - delete
+          - archive
+          - restore
+          - move
+          - complete
         logicalClock:
           type: integer
           minimum: 1
@@ -1517,43 +1704,45 @@ components:
           additionalProperties: true
         idempotencyKey:
           type:
-            - string
-            - 'null'
-
+          - string
+          - 'null'
     ServerChangeEvent:
       allOf:
-        - $ref: '#/components/schemas/ClientChangeEvent'
-        - type: object
-          required: [serverOrder, acceptedAt]
-          properties:
-            serverOrder:
-              type: integer
-              minimum: 1
-            acceptedAt:
-              type: string
-              format: date-time
-            actorUserId:
-              type:
-                - string
-                - 'null'
-              format: uuid
-            actorDeviceId:
-              type:
-                - string
-                - 'null'
-              format: uuid
-
+      - $ref: '#/components/schemas/ClientChangeEvent'
+      - type: object
+        required:
+        - serverOrder
+        - acceptedAt
+        properties:
+          serverOrder:
+            type: integer
+            minimum: 1
+          acceptedAt:
+            type: string
+            format: date-time
+          actorUserId:
+            type:
+            - string
+            - 'null'
+            format: uuid
+          actorDeviceId:
+            type:
+            - string
+            - 'null'
+            format: uuid
     PushEventsRequest:
       type: object
-      required: [replicaId, events]
+      required:
+      - replicaId
+      - events
       properties:
         replicaId:
           type: string
           format: uuid
         workspaceId:
           type:
-            - string
-            - 'null'
+          - string
+          - 'null'
           format: uuid
         events:
           type: array
@@ -1561,38 +1750,44 @@ components:
           maxItems: 500
           items:
             $ref: '#/components/schemas/ClientChangeEvent'
-
     PushEventResult:
       type: object
-      required: [eventId, status]
+      required:
+      - eventId
+      - status
       properties:
         eventId:
           type: string
           format: uuid
         status:
           type: string
-          enum: [accepted, duplicate, rejected, conflict]
+          enum:
+          - accepted
+          - duplicate
+          - rejected
+          - conflict
         serverOrder:
           type:
-            - integer
-            - 'null'
+          - integer
+          - 'null'
         error:
           oneOf:
-            - $ref: '#/components/schemas/ErrorResponse'
-            - type: 'null'
-
+          - $ref: '#/components/schemas/ErrorResponse'
+          - type: 'null'
     PushEventsResponse:
       type: object
-      required: [results]
+      required:
+      - results
       properties:
         results:
           type: array
           items:
             $ref: '#/components/schemas/PushEventResult'
-
     PullEventsRequest:
       type: object
-      required: [replicaId, cursor]
+      required:
+      - replicaId
+      - cursor
       properties:
         replicaId:
           type: string
@@ -1604,10 +1799,12 @@ components:
           minimum: 1
           maximum: 1000
           default: 200
-
     PullEventsResponse:
       type: object
-      required: [events, nextCursor, hasMore]
+      required:
+      - events
+      - nextCursor
+      - hasMore
       properties:
         events:
           type: array
@@ -1617,10 +1814,11 @@ components:
           $ref: '#/components/schemas/SyncCursor'
         hasMore:
           type: boolean
-
     SyncStatusResponse:
       type: object
-      required: [healthy, serverTime]
+      required:
+      - healthy
+      - serverTime
       properties:
         healthy:
           type: boolean
@@ -1629,20 +1827,172 @@ components:
           format: date-time
         maxServerOrder:
           type:
-            - integer
-            - 'null'
+          - integer
+          - 'null'
         replica:
           oneOf:
-            - $ref: '#/components/schemas/Replica'
-            - type: 'null'
-
+          - $ref: '#/components/schemas/Replica'
+          - type: 'null'
+    WallpaperConfig:
+      type: object
+      required:
+      - kind
+      - value
+      properties:
+        kind:
+          type: string
+          enum:
+          - none
+          - solid
+          - gradient
+          - preset
+        value:
+          type:
+          - string
+          - 'null'
+    UserAppearancePreferences:
+      type: object
+      required:
+      - userId
+      - isCustomized
+      - appTheme
+      - density
+      - reduceMotion
+      properties:
+        userId:
+          type: string
+          format: uuid
+        isCustomized:
+          type: boolean
+        appTheme:
+          type: string
+          enum:
+          - system
+          - light
+          - dark
+        density:
+          type: string
+          enum:
+          - comfortable
+          - compact
+        reduceMotion:
+          type: boolean
+        createdAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        updatedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    UpdateUserAppearancePreferencesRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        appTheme:
+          type: string
+          enum:
+          - system
+          - light
+          - dark
+        density:
+          type: string
+          enum:
+          - comfortable
+          - compact
+        reduceMotion:
+          type: boolean
+    BoardAppearanceSettings:
+      type: object
+      required:
+      - boardId
+      - isCustomized
+      - themePreset
+      - wallpaper
+      - columnDensity
+      - cardPreviewMode
+      - showCardDescription
+      - showCardDates
+      - showChecklistProgress
+      - customProperties
+      properties:
+        boardId:
+          type: string
+          format: uuid
+        isCustomized:
+          type: boolean
+        themePreset:
+          type: string
+        wallpaper:
+          $ref: '#/components/schemas/WallpaperConfig'
+        columnDensity:
+          type: string
+          enum:
+          - comfortable
+          - compact
+        cardPreviewMode:
+          type: string
+          enum:
+          - compact
+          - expanded
+        showCardDescription:
+          type: boolean
+        showCardDates:
+          type: boolean
+        showChecklistProgress:
+          type: boolean
+        customProperties:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        updatedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    UpdateBoardAppearanceRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        themePreset:
+          type: string
+        wallpaper:
+          $ref: '#/components/schemas/WallpaperConfig'
+        columnDensity:
+          type: string
+          enum:
+          - comfortable
+          - compact
+        cardPreviewMode:
+          type: string
+          enum:
+          - compact
+          - expanded
+        showCardDescription:
+          type: boolean
+        showCardDates:
+          type: boolean
+        showChecklistProgress:
+          type: boolean
+        customProperties:
+          type: object
+          additionalProperties: true
 paths:
   /auth/sign-up:
     post:
-      tags: [auth]
+      tags:
+      - auth
       summary: Create user account and start initial session
-      description: >
-        Endpoint optional at deployment level. Self-hosted instances may disable public sign-up.
+      description: 'Endpoint optional at deployment level. Self-hosted instances may
+        disable public sign-up.
+
+        '
       requestBody:
         required: true
         content:
@@ -1664,10 +2014,10 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /auth/sign-in:
     post:
-      tags: [auth]
+      tags:
+      - auth
       summary: Sign in with email/password and start or continue a session
       requestBody:
         required: true
@@ -1690,13 +2040,13 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /auth/refresh:
     post:
-      tags: [auth]
+      tags:
+      - auth
       summary: Rotate refresh token and issue a new access token
       security:
-        - refreshTokenCookie: []
+      - refreshTokenCookie: []
       requestBody:
         required: false
         content:
@@ -1714,13 +2064,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /auth/sign-out:
     post:
-      tags: [auth]
+      tags:
+      - auth
       summary: Revoke current session
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       responses:
         '204':
           description: Signed out
@@ -1728,13 +2078,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /auth/sign-out-all:
     post:
-      tags: [auth]
+      tags:
+      - auth
       summary: Revoke all sessions of current user
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       responses:
         '204':
           description: All sessions revoked
@@ -1742,13 +2092,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /auth/session:
     get:
-      tags: [auth]
+      tags:
+      - auth
       summary: Get current authenticated session including device and replica context
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           description: Current session
@@ -1760,13 +2110,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
-
   /me:
     get:
-      tags: [users]
+      tags:
+      - users
       summary: Get current user profile
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           description: Current user
@@ -1777,10 +2127,11 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     patch:
-      tags: [users]
+      tags:
+      - users
       summary: Update current user profile
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1802,16 +2153,16 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
-
   /me/devices:
     get:
-      tags: [users]
+      tags:
+      - users
       summary: List current user devices
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Device list
@@ -1819,7 +2170,9 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, pageInfo]
+                required:
+                - items
+                - pageInfo
                 properties:
                   items:
                     type: array
@@ -1829,15 +2182,15 @@ paths:
                     $ref: '#/components/schemas/PageInfo'
         '401':
           $ref: '#/components/responses/Unauthorized'
-
   /me/devices/{deviceId}/revoke:
     post:
-      tags: [users]
+      tags:
+      - users
       summary: Revoke current user's device and all sessions bound to it
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/DeviceId'
       responses:
         '204':
           description: Device revoked
@@ -1847,18 +2200,18 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /workspaces:
     get:
-      tags: [workspaces]
+      tags:
+      - workspaces
       summary: List workspaces visible to current user
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Archived'
-        - $ref: '#/components/parameters/SearchQuery'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Archived'
+      - $ref: '#/components/parameters/SearchQuery'
       responses:
         '200':
           description: Workspace list
@@ -1869,10 +2222,11 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
-      tags: [workspaces]
+      tags:
+      - workspaces
       summary: Create workspace
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1892,15 +2246,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /workspaces/{workspaceId}:
     get:
-      tags: [workspaces]
+      tags:
+      - workspaces
       summary: Get workspace by id
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/WorkspaceId'
       responses:
         '200':
           description: Workspace detail
@@ -1915,12 +2269,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
-      tags: [workspaces]
+      tags:
+      - workspaces
       summary: Update workspace metadata
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/WorkspaceId'
       requestBody:
         required: true
         content:
@@ -1944,15 +2299,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /workspaces/{workspaceId}/archive:
     post:
-      tags: [workspaces]
+      tags:
+      - workspaces
       summary: Archive workspace
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/WorkspaceId'
       responses:
         '200':
           description: Archived workspace
@@ -1968,17 +2323,17 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /workspaces/{workspaceId}/members:
     get:
-      tags: [workspaces]
+      tags:
+      - workspaces
       summary: List workspace members
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/WorkspaceId'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Member list
@@ -1993,12 +2348,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     post:
-      tags: [workspaces]
+      tags:
+      - workspaces
       summary: Add member to workspace
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/WorkspaceId'
       requestBody:
         required: true
         content:
@@ -2022,16 +2378,16 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /workspaces/{workspaceId}/members/{memberId}:
     patch:
-      tags: [workspaces]
+      tags:
+      - workspaces
       summary: Update workspace member role
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/WorkspaceId'
-        - $ref: '#/components/parameters/MemberId'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/MemberId'
       requestBody:
         required: true
         content:
@@ -2056,13 +2412,14 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
     delete:
-      tags: [workspaces]
+      tags:
+      - workspaces
       summary: Remove member from workspace
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/WorkspaceId'
-        - $ref: '#/components/parameters/MemberId'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/MemberId'
       responses:
         '204':
           description: Member removed
@@ -2074,19 +2431,19 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /workspaces/{workspaceId}/boards:
     get:
-      tags: [boards]
+      tags:
+      - boards
       summary: List boards in workspace
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/WorkspaceId'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/Archived'
-        - $ref: '#/components/parameters/SearchQuery'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Archived'
+      - $ref: '#/components/parameters/SearchQuery'
       responses:
         '200':
           description: Board list
@@ -2101,12 +2458,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     post:
-      tags: [boards]
+      tags:
+      - boards
       summary: Create board in workspace
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/WorkspaceId'
       requestBody:
         required: true
         content:
@@ -2128,15 +2486,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /boards/{boardId}:
     get:
-      tags: [boards]
+      tags:
+      - boards
       summary: Get board detail
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/BoardId'
       responses:
         '200':
           description: Board
@@ -2151,12 +2509,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
-      tags: [boards]
+      tags:
+      - boards
       summary: Update board metadata
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/BoardId'
       requestBody:
         required: true
         content:
@@ -2180,15 +2539,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /boards/{boardId}/archive:
     post:
-      tags: [boards]
+      tags:
+      - boards
       summary: Archive board
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/BoardId'
       responses:
         '200':
           description: Archived board
@@ -2204,18 +2563,19 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /boards/{boardId}/columns:
     get:
-      tags: [boards]
+      tags:
+      - boards
       summary: List columns in stable board order
-      description: >
-        Для колонок пагинация не используется, потому что колонок у одной доски мало,
-        а клиенту обычно нужен полный ordered snapshot.
+      description: 'Для колонок пагинация не используется, потому что колонок у одной
+        доски мало, а клиенту обычно нужен полный ordered snapshot.
+
+        '
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/BoardId'
       responses:
         '200':
           description: Column list
@@ -2230,12 +2590,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     post:
-      tags: [boards]
+      tags:
+      - boards
       summary: Create column
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/BoardId'
       requestBody:
         required: true
         content:
@@ -2257,16 +2618,16 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /boards/{boardId}/columns/{columnId}:
     patch:
-      tags: [boards]
+      tags:
+      - boards
       summary: Update column metadata or position
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
-        - $ref: '#/components/parameters/ColumnId'
+      - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/ColumnId'
       requestBody:
         required: true
         content:
@@ -2291,16 +2652,18 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
     delete:
-      tags: [boards]
+      tags:
+      - boards
       summary: Delete column
-      description: >
-        Удаление разрешено только если бизнес-правила позволяют безопасно обработать карточки,
-        например колонка пуста или указан migration path в backend-логике.
+      description: 'Удаление разрешено только если бизнес-правила позволяют безопасно
+        обработать карточки, например колонка пуста или указан migration path в backend-логике.
+
+        '
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
-        - $ref: '#/components/parameters/ColumnId'
+      - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/ColumnId'
       responses:
         '204':
           description: Column deleted
@@ -2312,15 +2675,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /boards/{boardId}/columns/reorder:
     post:
-      tags: [boards]
+      tags:
+      - boards
       summary: Reorder columns
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/BoardId'
       requestBody:
         required: true
         content:
@@ -2344,53 +2707,61 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /boards/{boardId}/cards:
     get:
-      tags: [cards]
+      tags:
+      - cards
       summary: List cards in board
-      description: >
-        Для карточек используется cursor pagination. Сортировка по умолчанию:
+      description: 'Для карточек используется cursor pagination. Сортировка по умолчанию:
         position asc внутри column, а если columnId не задан — updatedAt desc.
+
+        '
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-        - $ref: '#/components/parameters/SearchQuery'
-        - name: columnId
-          in: query
-          schema:
-            type:
-              - string
-              - 'null'
-            format: uuid
-        - name: labelId
-          in: query
-          schema:
-            type:
-              - string
-              - 'null'
-            format: uuid
-        - name: completed
-          in: query
-          schema:
-            type:
-              - boolean
-              - 'null'
-        - name: sortBy
-          in: query
-          schema:
-            type: string
-            enum: [position, createdAt, updatedAt, dueAt, priority]
-            default: updatedAt
-        - name: sortDir
-          in: query
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
+      - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/SearchQuery'
+      - name: columnId
+        in: query
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: labelId
+        in: query
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: completed
+        in: query
+        schema:
+          type:
+          - boolean
+          - 'null'
+      - name: sortBy
+        in: query
+        schema:
+          type: string
+          enum:
+          - position
+          - createdAt
+          - updatedAt
+          - dueAt
+          - priority
+          default: updatedAt
+      - name: sortDir
+        in: query
+        schema:
+          type: string
+          enum:
+          - asc
+          - desc
+          default: desc
       responses:
         '200':
           description: Card list
@@ -2405,12 +2776,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     post:
-      tags: [cards]
+      tags:
+      - cards
       summary: Create card
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/BoardId'
       requestBody:
         required: true
         content:
@@ -2434,15 +2806,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /cards/{cardId}:
     get:
-      tags: [cards]
+      tags:
+      - cards
       summary: Get card detail
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       responses:
         '200':
           description: Card
@@ -2457,12 +2829,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
-      tags: [cards]
+      tags:
+      - cards
       summary: Update card
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       requestBody:
         required: true
         content:
@@ -2489,15 +2862,17 @@ paths:
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
     delete:
-      tags: [cards]
+      tags:
+      - cards
       summary: Delete card
-      description: >
-        На уровне реализации удаление tombstone-aware и sync-visible, хотя наружу оформлено
-        как обычный DELETE.
+      description: 'На уровне реализации удаление tombstone-aware и sync-visible,
+        хотя наружу оформлено как обычный DELETE.
+
+        '
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       responses:
         '204':
           description: Card deleted
@@ -2509,15 +2884,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /cards/{cardId}/move:
     post:
-      tags: [cards]
+      tags:
+      - cards
       summary: Move card between columns
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       requestBody:
         required: true
         content:
@@ -2541,15 +2916,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /columns/{columnId}/cards/reorder:
     post:
-      tags: [cards]
+      tags:
+      - cards
       summary: Reorder cards inside a column
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ColumnId'
+      - $ref: '#/components/parameters/ColumnId'
       requestBody:
         required: true
         content:
@@ -2573,15 +2948,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /cards/{cardId}/complete:
     post:
-      tags: [cards]
+      tags:
+      - cards
       summary: Mark card as completed
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       responses:
         '200':
           description: Completed card
@@ -2597,15 +2972,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /cards/{cardId}/restore:
     post:
-      tags: [cards]
+      tags:
+      - cards
       summary: Restore archived or completed card depending on state
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       responses:
         '200':
           description: Restored card
@@ -2621,15 +2996,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /boards/{boardId}/labels:
     get:
-      tags: [labels]
+      tags:
+      - labels
       summary: List board labels
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/BoardId'
       responses:
         '200':
           description: Label list
@@ -2644,12 +3019,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     post:
-      tags: [labels]
+      tags:
+      - labels
       summary: Create board label
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/BoardId'
       requestBody:
         required: true
         content:
@@ -2673,16 +3049,16 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /boards/{boardId}/labels/{labelId}:
     patch:
-      tags: [labels]
+      tags:
+      - labels
       summary: Update board label
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
-        - $ref: '#/components/parameters/LabelId'
+      - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/LabelId'
       requestBody:
         required: true
         content:
@@ -2707,13 +3083,14 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
     delete:
-      tags: [labels]
+      tags:
+      - labels
       summary: Delete board label
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/BoardId'
-        - $ref: '#/components/parameters/LabelId'
+      - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/LabelId'
       responses:
         '204':
           description: Label deleted
@@ -2725,15 +3102,15 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /cards/{cardId}/labels:
     post:
-      tags: [labels]
+      tags:
+      - labels
       summary: Attach label to card
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       requestBody:
         required: true
         content:
@@ -2753,16 +3130,16 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /cards/{cardId}/labels/{labelId}:
     delete:
-      tags: [labels]
+      tags:
+      - labels
       summary: Detach label from card
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
-        - $ref: '#/components/parameters/LabelId'
+      - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/LabelId'
       responses:
         '204':
           description: Label detached from card
@@ -2772,15 +3149,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /cards/{cardId}/checklists:
     get:
-      tags: [checklists]
+      tags:
+      - checklists
       summary: List card checklists with items
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       responses:
         '200':
           description: Checklist list
@@ -2795,12 +3172,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     post:
-      tags: [checklists]
+      tags:
+      - checklists
       summary: Create checklist on card
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       requestBody:
         required: true
         content:
@@ -2822,15 +3200,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /checklists/{checklistId}:
     patch:
-      tags: [checklists]
+      tags:
+      - checklists
       summary: Update checklist
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ChecklistId'
+      - $ref: '#/components/parameters/ChecklistId'
       requestBody:
         required: true
         content:
@@ -2853,12 +3231,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
-      tags: [checklists]
+      tags:
+      - checklists
       summary: Delete checklist
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ChecklistId'
+      - $ref: '#/components/parameters/ChecklistId'
       responses:
         '204':
           description: Checklist deleted
@@ -2868,15 +3247,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /checklists/{checklistId}/items:
     post:
-      tags: [checklists]
+      tags:
+      - checklists
       summary: Create checklist item
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ChecklistId'
+      - $ref: '#/components/parameters/ChecklistId'
       requestBody:
         required: true
         content:
@@ -2898,15 +3277,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /checklists/items/{itemId}:
     patch:
-      tags: [checklists]
+      tags:
+      - checklists
       summary: Update checklist item
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ChecklistItemId'
+      - $ref: '#/components/parameters/ChecklistItemId'
       requestBody:
         required: true
         content:
@@ -2929,12 +3308,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
-      tags: [checklists]
+      tags:
+      - checklists
       summary: Delete checklist item
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ChecklistItemId'
+      - $ref: '#/components/parameters/ChecklistItemId'
       responses:
         '204':
           description: Checklist item deleted
@@ -2944,15 +3324,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /checklists/{checklistId}/items/reorder:
     post:
-      tags: [checklists]
+      tags:
+      - checklists
       summary: Reorder checklist items
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/ChecklistId'
+      - $ref: '#/components/parameters/ChecklistId'
       requestBody:
         required: true
         content:
@@ -2974,17 +3354,17 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /cards/{cardId}/comments:
     get:
-      tags: [comments]
+      tags:
+      - comments
       summary: List comments on card
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Comment list
@@ -2999,12 +3379,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     post:
-      tags: [comments]
+      tags:
+      - comments
       summary: Create comment on card
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/CardId'
       requestBody:
         required: true
         content:
@@ -3026,15 +3407,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /comments/{commentId}:
     patch:
-      tags: [comments]
+      tags:
+      - comments
       summary: Update comment body
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CommentId'
+      - $ref: '#/components/parameters/CommentId'
       requestBody:
         required: true
         content:
@@ -3057,12 +3438,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
-      tags: [comments]
+      tags:
+      - comments
       summary: Delete comment
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/CommentId'
+      - $ref: '#/components/parameters/CommentId'
       responses:
         '204':
           description: Comment deleted
@@ -3072,13 +3454,13 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-
   /sync/replicas:
     post:
-      tags: [sync]
+      tags:
+      - sync
       summary: Register or update current replica
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -3098,13 +3480,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /sync/push:
     post:
-      tags: [sync]
+      tags:
+      - sync
       summary: Push local replica events to backend
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -3128,13 +3510,13 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
-
   /sync/pull:
     post:
-      tags: [sync]
+      tags:
+      - sync
       summary: Pull server-side events after known cursor
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -3156,22 +3538,22 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-
   /sync/status:
     get:
-      tags: [sync]
+      tags:
+      - sync
       summary: Get sync health and current replica status
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - name: replicaId
-          in: query
-          required: false
-          schema:
-            type:
-              - string
-              - 'null'
-            format: uuid
+      - name: replicaId
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
       responses:
         '200':
           description: Sync status
@@ -3181,3 +3563,93 @@ paths:
                 $ref: '#/components/schemas/SyncStatusResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /me/appearance:
+    get:
+      tags:
+      - appearance
+      summary: Get current user appearance preferences
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Effective current user appearance preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAppearancePreferences'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags:
+      - appearance
+      summary: Create or update current user appearance preferences
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserAppearancePreferencesRequest'
+      responses:
+        '200':
+          description: Updated current user appearance preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAppearancePreferences'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /boards/{boardId}/appearance:
+    get:
+      tags:
+      - appearance
+      summary: Get board appearance settings
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/BoardId'
+      responses:
+        '200':
+          description: Effective board appearance settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardAppearanceSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+      - appearance
+      summary: Create or update board appearance settings
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/BoardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBoardAppearanceRequest'
+      responses:
+        '200':
+          description: Updated board appearance settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardAppearanceSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
