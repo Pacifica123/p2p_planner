@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { archiveCard, createCard, deleteCard, getCard, getCards, moveCard, unarchiveCard, updateCard } from '@/features/cards/api/cards';
 import { columnsQueryKey } from '@/features/columns/hooks/useColumns';
 import { boardActivityQueryKey, cardActivityQueryKey } from '@/features/activity/hooks/useActivity';
+import type { CardPriority, CardStatus } from '@/shared/types/api';
 
 export const cardsQueryKey = (boardId?: string) => ['cards', boardId];
 export const cardDetailQueryKey = (cardId?: string) => ['card', cardId];
@@ -45,7 +46,7 @@ export function useCreateCardMutation(boardId?: string) {
 export function useUpdateCardMutation(boardId?: string, cardId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { title?: string; description?: string | null; status?: string | null; priority?: string | null }) =>
+    mutationFn: (input: { title?: string; description?: string | null; status?: CardStatus; priority?: CardPriority }) =>
       updateCard(cardId!, input),
     onSuccess: () => {
       invalidateBoardSurface(queryClient, boardId, cardId);

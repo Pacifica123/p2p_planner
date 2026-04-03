@@ -17,6 +17,7 @@ import { ErrorState } from '@/shared/ui/ErrorState';
 import { SelectField, TextAreaField, TextField } from '@/shared/ui/Field';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { formatDateTime } from '@/shared/lib/date';
+import type { CardPriority, CardStatus } from '@/shared/types/api';
 
 const STATUS_OPTIONS = [
   { value: '', label: '—' },
@@ -51,8 +52,8 @@ export function CardDetailsDrawer() {
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [status, setStatus] = useState('');
-  const [priority, setPriority] = useState('');
+  const [status, setStatus] = useState<CardStatus>(null);
+  const [priority, setPriority] = useState<CardPriority>(null);
   const [columnId, setColumnId] = useState('');
 
   useEffect(() => {
@@ -60,8 +61,8 @@ export function CardDetailsDrawer() {
     if (!card) return;
     setTitle(card.title);
     setDescription(card.description || '');
-    setStatus(card.status || '');
-    setPriority(card.priority || '');
+    setStatus(card.status || null);
+    setPriority(card.priority || null);
     setColumnId(card.columnId);
   }, [cardQuery.data]);
 
@@ -125,14 +126,14 @@ export function CardDetailsDrawer() {
             <div className="grid" style={{ gap: 14 }}>
               <TextField label="Title" value={title} onChange={(event) => setTitle(event.target.value)} />
               <TextAreaField label="Description" value={description} onChange={(event) => setDescription(event.target.value)} />
-              <SelectField label="Status" value={status} onChange={(event) => setStatus(event.target.value)}>
+              <SelectField label="Status" value={status ?? ''} onChange={(event) => setStatus(event.target.value ? (event.target.value as CardStatus) : null)}>
                 {STATUS_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>
                 ))}
               </SelectField>
-              <SelectField label="Priority" value={priority} onChange={(event) => setPriority(event.target.value)}>
+              <SelectField label="Priority" value={priority ?? ''} onChange={(event) => setPriority(event.target.value ? (event.target.value as CardPriority) : null)}>
                 {PRIORITY_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}

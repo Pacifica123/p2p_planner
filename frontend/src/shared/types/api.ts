@@ -113,3 +113,56 @@ export interface ActivityListResponse {
   items: ActivityEntry[];
   nextCursor: string | null;
 }
+
+
+export type AppTheme = 'system' | 'light' | 'dark';
+export type Density = 'comfortable' | 'compact';
+export type WallpaperKind = 'none' | 'solid' | 'gradient' | 'preset';
+export type CardPreviewMode = 'compact' | 'expanded';
+
+export interface WallpaperConfig {
+  kind: WallpaperKind;
+  value?: string | null;
+}
+
+export interface UserAppearancePreferences {
+  userId: string;
+  isCustomized: boolean;
+  appTheme: AppTheme;
+  density: Density;
+  reduceMotion: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface UpdateUserAppearancePreferencesRequest {
+  appTheme?: AppTheme;
+  density?: Density;
+  reduceMotion?: boolean;
+}
+
+export interface BoardAppearanceSettings {
+  boardId: string;
+  isCustomized: boolean;
+  themePreset: string;
+  wallpaper: WallpaperConfig;
+  columnDensity: Density;
+  cardPreviewMode: CardPreviewMode;
+  showCardDescription: boolean;
+  showCardDates: boolean;
+  showChecklistProgress: boolean;
+  customProperties: Record<string, unknown>;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface UpdateBoardAppearanceRequest {
+  themePreset?: string;
+  wallpaper?: WallpaperConfig;
+  columnDensity?: Density;
+  cardPreviewMode?: CardPreviewMode;
+  showCardDescription?: boolean;
+  showCardDates?: boolean;
+  showChecklistProgress?: boolean;
+  customProperties?: Record<string, unknown>;
+}

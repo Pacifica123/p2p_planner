@@ -8,7 +8,7 @@ interface ActivityFeedProps {
 }
 
 function humanizeKind(value: string) {
-  return value.replaceAll('.', ' · ');
+  return value.split('.').join(' · ');
 }
 
 export function ActivityFeed({ items, emptyTitle = 'Пока нет событий' }: ActivityFeedProps) {

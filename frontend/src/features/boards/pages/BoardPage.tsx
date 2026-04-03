@@ -3,18 +3,21 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { paths } from '@/app/router/paths';
 import { ActivityFeed } from '@/features/activity/components/ActivityFeed';
 import { useBoardActivityQuery } from '@/features/activity/hooks/useActivity';
+import { useBoardAppearanceQuery } from '@/features/appearance/hooks/useAppearance';
+import { useAppearance } from '@/app/providers/AppearanceProvider';
 import { useBoardQuery, useUpdateBoardMutation } from '@/features/boards/hooks/useBoards';
 import { useColumnsQuery, useCreateColumnMutation, useDeleteColumnMutation, useUpdateColumnMutation } from '@/features/columns/hooks/useColumns';
 import { CardDetailsDrawer } from '@/features/cards/components/CardDetailsDrawer';
 import { useCardsQuery, useCreateCardMutation } from '@/features/cards/hooks/useCards';
+import { getBoardSurfaceStyle } from '@/shared/appearance/theme';
+import { formatDateTime } from '@/shared/lib/date';
 import type { BoardColumn, Card } from '@/shared/types/api';
-import { Button } from '@/shared/ui/Button';
 import { Badge } from '@/shared/ui/Badge';
+import { Button } from '@/shared/ui/Button';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { ErrorState } from '@/shared/ui/ErrorState';
 import { TextField } from '@/shared/ui/Field';
 import { LoadingState } from '@/shared/ui/LoadingState';
-import { formatDateTime } from '@/shared/lib/date';
 
 const statusTone: Record<string, string> = {
   todo: 'default',
@@ -67,10 +70,12 @@ export function BoardPage() {
   const { workspaceId, boardId } = useParams();
   const [, setSearchParams] = useSearchParams();
 
+  const { resolvedTheme } = useAppearance();
   const boardQuery = useBoardQuery(boardId);
   const columnsQuery = useColumnsQuery(boardId);
   const cardsQuery = useCardsQuery(boardId);
   const boardActivityQuery = useBoardActivityQuery(boardId);
+  const boardAppearanceQuery = useBoardAppearanceQuery(boardId);
   const createColumnMutation = useCreateColumnMutation(boardId);
   const updateColumnMutation = useUpdateColumnMutation(boardId);
   const deleteColumnMutation = useDeleteColumnMutation(boardId);
@@ -124,6 +129,7 @@ export function BoardPage() {
 
   const isLoading = boardQuery.isLoading || columnsQuery.isLoading || cardsQuery.isLoading;
   const isError = boardQuery.isError || columnsQuery.isError || cardsQuery.isError;
+  const boardAppearance = boardAppearanceQuery.data;
 
   return (
     <div className="page-shell">
@@ -134,8 +140,9 @@ export function BoardPage() {
         </div>
         <div className="page-header__actions">
           <Button onClick={() => navigate(paths.workspaceBoards(workspaceId))}>К boards list</Button>
+          <Button onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))}>Customize board</Button>
           <Button onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data}>Переименовать board</Button>
-          <Button onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch()])}>Обновить</Button>
+          <Button onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch()])}>Обновить</Button>
         </div>
       </section>
 
@@ -143,106 +150,118 @@ export function BoardPage() {
       {isError ? <ErrorState title="Не удалось собрать board surface" description="Проверь backend и доступность выбранной board." /> : null}
 
       {!isLoading && !isError ? (
-        <div className="board-layout">
-          <div className="grid">
-            <section className="panel">
-              <div className="entity-header">
-                <div>
-                  <h3>Board summary</h3>
-                  <p className="muted">{boardQuery.data?.description || 'Без описания'}</p>
+        <div className="board-themed-surface" style={boardAppearance ? getBoardSurfaceStyle(boardAppearance, resolvedTheme) : undefined}>
+          <div className="board-layout">
+            <div className="grid">
+              <section className="panel">
+                <div className="entity-header">
+                  <div>
+                    <h3>Board summary</h3>
+                    <p className="muted">{boardQuery.data?.description || 'Без описания'}</p>
+                  </div>
+                  <div className="row-actions">
+                    <Badge tone="kanban">kanban</Badge>
+                    <Badge tone="default">columns: {columnsQuery.data?.items.length ?? 0}</Badge>
+                    <Badge tone="default">cards: {cardsQuery.data?.items.length ?? 0}</Badge>
+                    {boardAppearance ? <Badge tone="default">preset: {boardAppearance.themePreset}</Badge> : null}
+                  </div>
                 </div>
-                <div className="row-actions">
-                  <Badge tone="kanban">kanban</Badge>
-                  <Badge tone="default">columns: {columnsQuery.data?.items.length ?? 0}</Badge>
-                  <Badge tone="default">cards: {cardsQuery.data?.items.length ?? 0}</Badge>
+                <div className="grid" style={{ marginTop: 14 }}>
+                  <div className="meta-line">updated: {formatDateTime(boardQuery.data?.updatedAt)}</div>
+                  {boardAppearance ? (
+                    <div className="meta-line">
+                      preview: {boardAppearance.columnDensity} / {boardAppearance.cardPreviewMode} / wallpaper {boardAppearance.wallpaper.kind}
+                    </div>
+                  ) : null}
                 </div>
-              </div>
-              <div className="grid" style={{ marginTop: 14 }}>
-                <div className="meta-line">updated: {formatDateTime(boardQuery.data?.updatedAt)}</div>
-              </div>
-            </section>
+              </section>
 
-            <section className="panel">
-              <div className="entity-header">
-                <div>
-                  <h3>Create column</h3>
-                  <p className="muted">Минимальный add-column UX.</p>
+              <section className="panel">
+                <div className="entity-header">
+                  <div>
+                    <h3>Create column</h3>
+                    <p className="muted">Минимальный add-column UX.</p>
+                  </div>
                 </div>
-              </div>
-              <form className="inline-form__row" onSubmit={handleCreateColumn}>
-                <TextField label="Название колонки" value={newColumnName} onChange={(event) => setNewColumnName(event.target.value)} placeholder="Например, Todo" />
-                <Button type="submit" variant="primary" disabled={createColumnMutation.isPending}>
-                  {createColumnMutation.isPending ? 'Создаем…' : 'Добавить'}
-                </Button>
-              </form>
-            </section>
+                <form className="inline-form__row" onSubmit={handleCreateColumn}>
+                  <TextField label="Название колонки" value={newColumnName} onChange={(event) => setNewColumnName(event.target.value)} placeholder="Например, Todo" />
+                  <Button type="submit" variant="primary" disabled={createColumnMutation.isPending}>
+                    {createColumnMutation.isPending ? 'Создаем…' : 'Добавить'}
+                  </Button>
+                </form>
+              </section>
 
-            {(columnsQuery.data?.items.length ?? 0) ? (
-              <div className="columns-strip">
-                {columnsQuery.data?.items.map((column) => {
-                  const cards = groupedCards.get(column.id) || [];
-                  return (
-                    <section key={column.id} className="column-card">
-                      <div className="column-card__header">
-                        <div>
-                          <h3>{column.name}</h3>
-                          <p className="muted">cards: {cards.length}</p>
+              {(columnsQuery.data?.items.length ?? 0) ? (
+                <div className="columns-strip">
+                  {columnsQuery.data?.items.map((column) => {
+                    const cards = groupedCards.get(column.id) || [];
+                    return (
+                      <section key={column.id} className="column-card">
+                        <div className="column-card__header">
+                          <div>
+                            <h3>{column.name}</h3>
+                            <p className="muted">cards: {cards.length}</p>
+                          </div>
+                          <div className="row-actions">
+                            <Button onClick={() => void handleRenameColumn(column)} disabled={updateColumnMutation.isPending}>Edit</Button>
+                            <Button variant="danger" onClick={() => void handleDeleteColumn(column)} disabled={deleteColumnMutation.isPending}>Delete</Button>
+                          </div>
                         </div>
-                        <div className="row-actions">
-                          <Button onClick={() => void handleRenameColumn(column)} disabled={updateColumnMutation.isPending}>Edit</Button>
-                          <Button variant="danger" onClick={() => void handleDeleteColumn(column)} disabled={deleteColumnMutation.isPending}>Delete</Button>
-                        </div>
-                      </div>
 
-                      <CreateCardInlineForm columnId={column.id} boardId={boardId} />
+                        <CreateCardInlineForm columnId={column.id} boardId={boardId} />
 
-                      {cards.length ? (
-                        <div className="card-list">
-                          {cards.map((card) => (
-                            <article
-                              key={card.id}
-                              className="card-tile"
-                              onClick={() => setSearchParams((prev) => {
-                                const next = new URLSearchParams(prev);
-                                next.set('card', card.id);
-                                return next;
-                              })}
-                            >
-                              <div className="card-tile__header">
-                                <strong>{card.title}</strong>
-                                {card.isArchived ? <Badge tone="warning">archived</Badge> : null}
-                              </div>
-                              {card.description ? <p className="muted">{card.description}</p> : null}
-                              <div className="card-tile__footer">
-                                {card.status ? <Badge tone={statusTone[card.status] || 'default'}>{card.status}</Badge> : null}
-                                {card.priority ? <Badge tone={priorityTone[card.priority] || 'default'}>{card.priority}</Badge> : null}
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      ) : (
-                        <EmptyState title="Здесь пока нет карточек" compact description="Добавь card прямо внутри этой колонки." />
-                      )}
-                    </section>
-                  );
-                })}
-              </div>
-            ) : (
-              <EmptyState title="У board пока нет колонок" description="Сначала создай колонку, после этого появится место для карточек." />
-            )}
-          </div>
-
-          <section className="panel">
-            <div className="entity-header">
-              <div>
-                <h3>Board activity</h3>
-                <p className="muted">Последние user-facing события по board.</p>
-              </div>
+                        {cards.length ? (
+                          <div className="card-list">
+                            {cards.map((card) => (
+                              <article
+                                key={card.id}
+                                className={`card-tile ${boardAppearance?.cardPreviewMode === 'compact' ? 'card-tile--compact' : ''}`}
+                                onClick={() => setSearchParams((prev) => {
+                                  const next = new URLSearchParams(prev);
+                                  next.set('card', card.id);
+                                  return next;
+                                })}
+                              >
+                                <div className="card-tile__header">
+                                  <strong>{card.title}</strong>
+                                  {card.isArchived ? <Badge tone="warning">archived</Badge> : null}
+                                </div>
+                                {(boardAppearance?.showCardDescription ?? true) && boardAppearance?.cardPreviewMode !== 'compact' && card.description ? (
+                                  <p className="muted">{card.description}</p>
+                                ) : null}
+                                <div className="card-tile__footer">
+                                  {card.status ? <Badge tone={statusTone[card.status] || 'default'}>{card.status}</Badge> : null}
+                                  {card.priority ? <Badge tone={priorityTone[card.priority] || 'default'}>{card.priority}</Badge> : null}
+                                  {(boardAppearance?.showCardDates ?? true) && card.dueAt ? <Badge tone="default">due {formatDateTime(card.dueAt)}</Badge> : null}
+                                  {(boardAppearance?.showCardDates ?? true) && !card.dueAt && card.startAt ? <Badge tone="default">start {formatDateTime(card.startAt)}</Badge> : null}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        ) : (
+                          <EmptyState title="Здесь пока нет карточек" compact description="Добавь card прямо внутри этой колонки." />
+                        )}
+                      </section>
+                    );
+                  })}
+                </div>
+              ) : (
+                <EmptyState title="У board пока нет колонок" description="Сначала создай колонку, после этого появится место для карточек." />
+              )}
             </div>
-            {boardActivityQuery.isLoading ? <LoadingState label="Загружаем activity…" compact /> : null}
-            {boardActivityQuery.isError ? <ErrorState title="Не удалось загрузить board activity" compact /> : null}
-            {boardActivityQuery.data ? <ActivityFeed items={boardActivityQuery.data.items} emptyTitle="История board пока пустая" /> : null}
-          </section>
+
+            <section className="panel">
+              <div className="entity-header">
+                <div>
+                  <h3>Board activity</h3>
+                  <p className="muted">Последние user-facing события по board.</p>
+                </div>
+              </div>
+              {boardActivityQuery.isLoading ? <LoadingState label="Загружаем activity…" compact /> : null}
+              {boardActivityQuery.isError ? <ErrorState title="Не удалось загрузить board activity" compact /> : null}
+              {boardActivityQuery.data ? <ActivityFeed items={boardActivityQuery.data.items} emptyTitle="История board пока пустая" /> : null}
+            </section>
+          </div>
         </div>
       ) : null}
 
