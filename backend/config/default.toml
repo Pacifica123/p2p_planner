@@ -1,0 +1,22 @@
+[app]
+name = "p2p-planner-backend"
+env = "local"
+host = "127.0.0.1"
+port = 18080
+log_format = "pretty"
+
+[database]
+url = "postgres://postgres:postgres@localhost:5432/p2p_planner"
+max_connections = 20
+min_connections = 1
+connect_timeout_secs = 5
+
+[http]
+body_limit_mb = 4
+cors_allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+[auth]
+jwt_secret = "change-me-in-real-env"
+access_token_ttl_minutes = 15
+refresh_token_ttl_days = 30
+public_signup_enabled = true
