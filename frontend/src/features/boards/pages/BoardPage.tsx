@@ -1,10 +1,12 @@
 import { DragEvent, FormEvent, ReactNode, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { paths } from '@/app/router/paths';
+import { useAppearance } from '@/app/providers/AppearanceProvider';
 import { ActivityFeed } from '@/features/activity/components/ActivityFeed';
 import { useBoardActivityQuery } from '@/features/activity/hooks/useActivity';
 import { useBoardAppearanceQuery } from '@/features/appearance/hooks/useAppearance';
-import { useAppearance } from '@/app/providers/AppearanceProvider';
+import { BoardColumnSection } from '@/features/boards/components/BoardColumnSection';
+import { BoardOverviewPanel } from '@/features/boards/components/BoardOverviewPanel';
 import { useBoardQuery, useUpdateBoardMutation } from '@/features/boards/hooks/useBoards';
 import {
   buildColumnReorderItems,
@@ -16,7 +18,7 @@ import {
 } from '@/features/boards/lib/cardDnd';
 import { useColumnsQuery, useCreateColumnMutation, useDeleteColumnMutation, useUpdateColumnMutation } from '@/features/columns/hooks/useColumns';
 import { CardDetailsDrawer } from '@/features/cards/components/CardDetailsDrawer';
-import { useCardsQuery, useCreateCardMutation, useMoveCardMutation, useReorderColumnCardsMutation } from '@/features/cards/hooks/useCards';
+import { useCardsQuery, useMoveCardMutation, useReorderColumnCardsMutation } from '@/features/cards/hooks/useCards';
 import { getBoardSurfaceStyle } from '@/shared/appearance/theme';
 import { formatDateTime } from '@/shared/lib/date';
 import type { BoardColumn, Card } from '@/shared/types/api';
@@ -26,6 +28,7 @@ import { EmptyState } from '@/shared/ui/EmptyState';
 import { ErrorState } from '@/shared/ui/ErrorState';
 import { TextField } from '@/shared/ui/Field';
 import { LoadingState } from '@/shared/ui/LoadingState';
+import { Panel } from '@/shared/ui/Panel';
 
 const statusTone: Record<string, string> = {
   todo: 'default',
@@ -44,38 +47,6 @@ const priorityTone: Record<string, string> = {
 interface DragSessionState extends CardMoveIntent {
   overColumnId: string;
   overIndex: number;
-}
-
-function CreateCardInlineForm({ columnId, boardId }: { columnId: string; boardId: string }) {
-  const createCardMutation = useCreateCardMutation(boardId);
-  const [title, setTitle] = useState('');
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!title.trim()) return;
-    createCardMutation.mutate(
-      { title: title.trim(), columnId },
-      {
-        onSuccess: () => setTitle(''),
-      },
-    );
-  }
-
-  return (
-    <form className="inline-form" onSubmit={handleSubmit}>
-      <div className="inline-form__row">
-        <input
-          className="field__input"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="Новая карточка"
-        />
-        <Button type="submit" disabled={createCardMutation.isPending}>
-          +
-        </Button>
-      </div>
-    </form>
-  );
 }
 
 export function BoardPage() {
@@ -103,6 +74,7 @@ export function BoardPage() {
   const dropHandledRef = useRef(false);
 
   const hasPendingCardMove = moveCardMutation.isPending || reorderColumnCardsMutation.isPending;
+  const boardAppearance = boardAppearanceQuery.data;
 
   const orderedColumns = useMemo(
     () => [...(columnsQuery.data?.items || [])].sort((left, right) => left.position - right.position),
@@ -179,8 +151,8 @@ export function BoardPage() {
     event.preventDefault();
     event.stopPropagation();
 
-    const bounds = event.currentTarget?.getBoundingClientRect();
-    const shouldInsertAfter = bounds ? event.clientY > bounds.top + bounds.height / 2 : false;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const shouldInsertAfter = event.clientY > bounds.top + bounds.height / 2;
     const nextIndex = visibleIndex + (shouldInsertAfter ? 1 : 0);
 
     setDragSession((current) => {
@@ -339,14 +311,13 @@ export function BoardPage() {
 
   const isLoading = boardQuery.isLoading || columnsQuery.isLoading || cardsQuery.isLoading;
   const isError = boardQuery.isError || columnsQuery.isError || cardsQuery.isError;
-  const boardAppearance = boardAppearanceQuery.data;
 
   return (
     <div className="page-shell">
       <section className="page-header">
         <div>
           <h2>{boardQuery.data?.name || 'Board screen'}</h2>
-          <p className="muted">Columns + cards + card details + board activity поверх уже подтвержденного backend happy-path.</p>
+          <p className="muted">Рабочая kanban-поверхность с колонками, карточками, drag-and-drop и activity feed.</p>
         </div>
         <div className="page-header__actions">
           <Button onClick={() => navigate(paths.workspaceBoards(workspaceId))}>К boards list</Button>
@@ -370,73 +341,54 @@ export function BoardPage() {
       {!isLoading && !isError ? (
         <div className="board-themed-surface" style={boardAppearance ? getBoardSurfaceStyle(boardAppearance, resolvedTheme) : undefined}>
           <div className="board-layout">
-            <div className="grid">
-              <section className="panel">
-                <div className="entity-header">
-                  <div>
-                    <h3>Board summary</h3>
-                    <p className="muted">{boardQuery.data?.description || 'Без описания'}</p>
-                  </div>
-                  <div className="row-actions">
-                    <Badge tone="kanban">kanban</Badge>
-                    <Badge tone="default">columns: {orderedColumns.length}</Badge>
-                    <Badge tone="default">cards: {currentCards.length}</Badge>
-                    {boardAppearance ? <Badge tone="default">preset: {boardAppearance.themePreset}</Badge> : null}
-                  </div>
-                </div>
-                <div className="grid" style={{ marginTop: 14 }}>
-                  <div className="meta-line">updated: {formatDateTime(boardQuery.data?.updatedAt)}</div>
-                  {boardAppearance ? (
-                    <div className="meta-line">
-                      preview: {boardAppearance.columnDensity} / {boardAppearance.cardPreviewMode} / wallpaper {boardAppearance.wallpaper.kind}
-                    </div>
-                  ) : null}
-                </div>
-              </section>
+            <div className="board-main">
+              <div className="board-top-grid">
+                <BoardOverviewPanel
+                  board={boardQuery.data}
+                  boardAppearance={boardAppearance}
+                  columnCount={orderedColumns.length}
+                  cardCount={currentCards.length}
+                />
 
-              <section className="panel">
-                <div className="entity-header">
-                  <div>
-                    <h3>Create column</h3>
-                    <p className="muted">Минимальный add-column UX.</p>
-                  </div>
-                </div>
-                <form className="inline-form__row" onSubmit={handleCreateColumn}>
-                  <TextField label="Название колонки" value={newColumnName} onChange={(event) => setNewColumnName(event.target.value)} placeholder="Например, Todo" />
-                  <Button type="submit" variant="primary" disabled={createColumnMutation.isPending}>
-                    {createColumnMutation.isPending ? 'Создаем…' : 'Добавить'}
-                  </Button>
-                </form>
-              </section>
+                <Panel
+                  title="Create column"
+                  description="Быстрое добавление новой колонки без ухода со страницы."
+                >
+                  <form className="inline-form__row inline-form__row--stackable" onSubmit={handleCreateColumn}>
+                    <TextField
+                      label="Название колонки"
+                      value={newColumnName}
+                      onChange={(event) => setNewColumnName(event.target.value)}
+                      placeholder="Например, Todo"
+                    />
+                    <Button type="submit" variant="primary" disabled={createColumnMutation.isPending}>
+                      {createColumnMutation.isPending ? 'Создаем…' : 'Добавить'}
+                    </Button>
+                  </form>
+                </Panel>
+              </div>
 
               {orderedColumns.length ? (
-                <div className="columns-strip">
+                <div className="columns-strip columns-strip--board-surface">
                   {orderedColumns.map((column) => {
                     const cards = groupedCards.get(column.id) || [];
                     const cardsWithoutDragged = dragSession ? cards.filter((card) => card.id !== dragSession.cardId) : cards;
-                    const isDropTarget = dragSession?.overColumnId === column.id;
 
                     return (
-                      <section
+                      <BoardColumnSection
                         key={column.id}
-                        className={`column-card ${isDropTarget ? 'column-card--drop-target' : ''}`}
-                        onDragOver={(event) => handleColumnDragOver(column.id, cardsWithoutDragged.length, event)}
+                        boardId={boardId}
+                        column={column}
+                        cards={cards}
+                        cardsWithoutDragged={cardsWithoutDragged}
+                        isDropTarget={dragSession?.overColumnId === column.id}
+                        isMutating={updateColumnMutation.isPending || deleteColumnMutation.isPending}
+                        onRename={(item) => void handleRenameColumn(item)}
+                        onDelete={(item) => void handleDeleteColumn(item)}
+                        onColumnDragOver={handleColumnDragOver}
                         onDrop={(event) => void handleCardDrop(event)}
-                      >
-                        <div className="column-card__header">
-                          <div>
-                            <h3>{column.name}</h3>
-                            <p className="muted">cards: {cards.length}</p>
-                          </div>
-                          <div className="row-actions">
-                            <Button onClick={() => void handleRenameColumn(column)} disabled={updateColumnMutation.isPending}>Edit</Button>
-                            <Button variant="danger" onClick={() => void handleDeleteColumn(column)} disabled={deleteColumnMutation.isPending}>Delete</Button>
-                          </div>
-                        </div>
-
-                        <CreateCardInlineForm columnId={column.id} boardId={boardId} />
-                        {renderColumnCards(column.id, cards)}
-                      </section>
+                        cardsContent={renderColumnCards(column.id, cards)}
+                      />
                     );
                   })}
                 </div>
@@ -445,7 +397,7 @@ export function BoardPage() {
               )}
             </div>
 
-            <section className="panel">
+            <section className="panel board-sidebar-panel">
               <div className="entity-header">
                 <div>
                   <h3>Board activity</h3>

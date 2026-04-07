@@ -1,28 +1,46 @@
-# p2p-planner backend skeleton v1
+# p2p-planner backend
 
-## What is included
-- axum-based bootable HTTP server
-- config loading from `config/default.toml` + environment variables
-- sqlx PostgreSQL pool
-- startup migrations
-- app state + tracing + error envelope
-- modular router skeleton for `auth`, `users`, `workspaces`, `boards`, `cards`, `labels`, `checklists`, `comments`, `sync`, `audit`
+Текущая backend-часть — это Axum + sqlx + PostgreSQL сервис для core kanban flow,
+appearance и activity/audit surface.
 
-## Run locally
-1. Create PostgreSQL database `p2p_planner`
-2. Copy `.env.example` to `.env` and adjust values if needed
-3. Start backend:
-   ```bash
-   cargo run
-   ```
+## Что уже заведено
+
+- bootable HTTP server;
+- config loading from `config/default.toml` + environment variables;
+- PostgreSQL pool;
+- startup migrations;
+- app state + tracing + error envelope;
+- modular router composition;
+- core CRUD для `workspaces / boards / columns / cards`;
+- appearance endpoints;
+- activity / history / audit read-model endpoints.
+
+## Запуск локально
+
+1. Подними PostgreSQL и создай базу `p2p_planner`.
+2. Проверь `.env`.
+3. Запусти backend:
+
+```bash
+cargo run
+```
 
 Health endpoints:
+
 - `GET /health`
 - `GET /api/v1/health`
 
-## Core CRUD during pre-auth stage
-Until full auth/session handlers are implemented, core CRUD endpoints expect an `X-User-Id` header with an existing `users.id` UUID. This is a temporary bridge so workspaces/boards/columns/cards can already be exercised against the real PostgreSQL schema.
+## Dev auth bridge
 
-Smoke tests:
+Пока полноценный auth/session flow не доведен до финального UX,
+core CRUD и frontend dev-flow используют временный `X-User-Id` header.
+
+Из-за этого для web-клиента важно, чтобы CORS разрешал `x-user-id`.
+
+## Smoke tests
+
 - `tests/core_crud_smoke.rs`
-- integration tests are marked `#[ignore]` and require `TEST_DATABASE_URL` or `DATABASE_URL` pointing to PostgreSQL
+- `tests/appearance_smoke.rs`
+- `tests/smoke_core_api.py`
+
+Integration tests требуют `TEST_DATABASE_URL` или `DATABASE_URL`.

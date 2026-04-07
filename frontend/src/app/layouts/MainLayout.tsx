@@ -20,7 +20,7 @@ export function MainLayout() {
           <NavLink to={paths.home} className="brand-link">
             P2P Planner
           </NavLink>
-          <p className="brand-copy">Web customization UI v1</p>
+          <p className="brand-copy">Web client v0 alpha</p>
         </div>
 
         <section className="sidebar-section">
@@ -30,7 +30,7 @@ export function MainLayout() {
           ) : workspacesQuery.isError ? (
             <ErrorState title="Не удалось загрузить workspaces" compact />
           ) : (
-            <nav className="nav-list">
+            <nav className="nav-list nav-list--scroll">
               <NavLink to={paths.home} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`} end>
                 Все workspaces
               </NavLink>
@@ -72,7 +72,7 @@ export function MainLayout() {
             ) : boardsQuery.isError ? (
               <ErrorState title="Не удалось загрузить boards" compact />
             ) : (
-              <nav className="nav-list">
+              <nav className="nav-list nav-list--scroll">
                 {boardsQuery.data?.items.map((board) => (
                   <NavLink
                     key={board.id}
@@ -92,8 +92,8 @@ export function MainLayout() {
       <div className="app-main">
         <header className="topbar">
           <div>
-            <h1 className="topbar__title">Customization surface: user appearance + board appearance</h1>
-            <p className="topbar__subtitle">Отдельный UI-слой поверх существующего backend surface, без смешивания с core kanban editing.</p>
+            <h1 className="topbar__title">P2P Planner: workspaces, boards and appearance</h1>
+            <p className="topbar__subtitle">Текущий web-клиент поверх подтвержденного backend API: core kanban flow + appearance + activity.</p>
           </div>
 
           <div className="topbar__controls">
