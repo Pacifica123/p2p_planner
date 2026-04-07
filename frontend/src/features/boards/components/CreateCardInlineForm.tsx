@@ -32,8 +32,8 @@ export function CreateCardInlineForm({ boardId, columnId }: CreateCardInlineForm
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Новая карточка"
         />
-        <Button type="submit" disabled={createCardMutation.isPending}>
-          {createCardMutation.isPending ? '...' : '+'}
+        <Button type="submit" iconOnly disabled={createCardMutation.isPending} title="Добавить карточку" aria-label="Добавить карточку">
+          {createCardMutation.isPending ? '…' : '＋'}
         </Button>
       </div>
     </form>

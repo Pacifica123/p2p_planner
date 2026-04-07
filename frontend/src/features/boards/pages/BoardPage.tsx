@@ -151,7 +151,9 @@ export function BoardPage() {
     event.preventDefault();
     event.stopPropagation();
 
-    const bounds = event.currentTarget.getBoundingClientRect();
+    const bounds = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect();
+    if (!bounds) return;
+
     const shouldInsertAfter = event.clientY > bounds.top + bounds.height / 2;
     const nextIndex = visibleIndex + (shouldInsertAfter ? 1 : 0);
 
@@ -321,9 +323,9 @@ export function BoardPage() {
         </div>
         <div className="page-header__actions">
           <Button onClick={() => navigate(paths.workspaceBoards(workspaceId))}>К boards list</Button>
-          <Button onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))}>Customize board</Button>
-          <Button onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data}>Переименовать board</Button>
-          <Button onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch()])}>Обновить</Button>
+          <Button iconOnly onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))} title="Настроить board" aria-label="Настроить board">🎨</Button>
+          <Button iconOnly onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data} title="Переименовать board" aria-label="Переименовать board">✏️</Button>
+          <Button iconOnly onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch()])} title="Обновить board" aria-label="Обновить board">↻</Button>
         </div>
       </section>
 
@@ -331,7 +333,7 @@ export function BoardPage() {
         <div className="inline-banner inline-banner--error">
           <strong>Перемещение карточки не сохранилось.</strong>
           <span>{moveError}</span>
-          <Button variant="ghost" onClick={() => setMoveError(null)}>Скрыть</Button>
+          <Button variant="ghost" iconOnly onClick={() => setMoveError(null)} title="Скрыть сообщение" aria-label="Скрыть сообщение">✕</Button>
         </div>
       ) : null}
 
@@ -362,7 +364,7 @@ export function BoardPage() {
                       placeholder="Например, Todo"
                     />
                     <Button type="submit" variant="primary" disabled={createColumnMutation.isPending}>
-                      {createColumnMutation.isPending ? 'Создаем…' : 'Добавить'}
+                      {createColumnMutation.isPending ? 'Создаем…' : '＋ Колонка'}
                     </Button>
                   </form>
                 </Panel>

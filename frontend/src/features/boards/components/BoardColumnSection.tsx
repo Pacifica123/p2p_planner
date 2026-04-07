@@ -42,11 +42,11 @@ export function BoardColumnSection({
           <p className="muted">cards: {cards.length}</p>
         </div>
         <div className="row-actions">
-          <Button onClick={() => onRename(column)} disabled={isMutating}>
-            Edit
+          <Button iconOnly onClick={() => onRename(column)} disabled={isMutating} title="Переименовать колонку" aria-label="Переименовать колонку">
+            ✏️
           </Button>
-          <Button variant="danger" onClick={() => onDelete(column)} disabled={isMutating}>
-            Delete
+          <Button iconOnly variant="danger" onClick={() => onDelete(column)} disabled={isMutating} title="Удалить колонку" aria-label="Удалить колонку">
+            🗑️
           </Button>
         </div>
       </div>

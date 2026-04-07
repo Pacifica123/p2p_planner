@@ -84,7 +84,7 @@ export function WorkspaceBoardsPage() {
           </div>
           <div className="inline-actions">
             <Button type="submit" variant="primary" disabled={createBoardMutation.isPending}>
-              {createBoardMutation.isPending ? 'Создаем…' : 'Создать board'}
+              {createBoardMutation.isPending ? 'Создаем…' : '＋ Board'}
             </Button>
           </div>
         </form>
@@ -117,12 +117,25 @@ export function WorkspaceBoardsPage() {
                   <Button variant="primary" onClick={() => navigate(paths.board(workspaceId, board.id))}>
                     Открыть board
                   </Button>
-                  <Button onClick={() => void handleRename(board.id, board.name)} disabled={updateBoardMutation.isPending}>
-                    Переименовать
+                  <Button
+                    iconOnly
+                    onClick={() => void handleRename(board.id, board.name)}
+                    disabled={updateBoardMutation.isPending}
+                    title="Переименовать board"
+                    aria-label="Переименовать board"
+                  >
+                    ✏️
                   </Button>
                   {!board.isArchived ? (
-                    <Button variant="danger" onClick={() => void handleArchive(board.id, board.name)} disabled={archiveBoardMutation.isPending}>
-                      Архивировать
+                    <Button
+                      iconOnly
+                      variant="danger"
+                      onClick={() => void handleArchive(board.id, board.name)}
+                      disabled={archiveBoardMutation.isPending}
+                      title="Архивировать board"
+                      aria-label="Архивировать board"
+                    >
+                      📦
                     </Button>
                   ) : null}
                 </div>

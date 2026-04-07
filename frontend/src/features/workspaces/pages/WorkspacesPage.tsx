@@ -87,7 +87,7 @@ export function WorkspacesPage() {
           <TextAreaField label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Короткое описание workspace" />
           <div className="inline-actions">
             <Button type="submit" variant="primary" disabled={createWorkspaceMutation.isPending}>
-              {createWorkspaceMutation.isPending ? 'Создаем…' : 'Создать workspace'}
+              {createWorkspaceMutation.isPending ? 'Создаем…' : '＋ Workspace'}
             </Button>
           </div>
           {createWorkspaceMutation.isError ? (
@@ -130,12 +130,25 @@ export function WorkspacesPage() {
                   <Button variant="primary" onClick={() => navigate(paths.workspaceBoards(workspace.id))}>
                     Открыть boards
                   </Button>
-                  <Button onClick={() => void handleRename(workspace.id, workspace.name)} disabled={updateWorkspaceMutation.isPending}>
-                    Переименовать
+                  <Button
+                    iconOnly
+                    onClick={() => void handleRename(workspace.id, workspace.name)}
+                    disabled={updateWorkspaceMutation.isPending}
+                    title="Переименовать workspace"
+                    aria-label="Переименовать workspace"
+                  >
+                    ✏️
                   </Button>
                   {!workspace.isArchived ? (
-                    <Button variant="danger" onClick={() => void handleArchive(workspace.id, workspace.name)} disabled={archiveWorkspaceMutation.isPending}>
-                      Архивировать
+                    <Button
+                      iconOnly
+                      variant="danger"
+                      onClick={() => void handleArchive(workspace.id, workspace.name)}
+                      disabled={archiveWorkspaceMutation.isPending}
+                      title="Архивировать workspace"
+                      aria-label="Архивировать workspace"
+                    >
+                      📦
                     </Button>
                   ) : null}
                 </div>

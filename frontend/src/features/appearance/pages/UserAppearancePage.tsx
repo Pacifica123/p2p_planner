@@ -73,9 +73,9 @@ export function UserAppearancePage() {
         </div>
         <div className="page-header__actions">
           <Badge tone={hasUnsavedChanges ? 'warning' : 'done'}>{hasUnsavedChanges ? 'preview only' : 'persisted'}</Badge>
-          <Button onClick={resetDraft} disabled={!hasUnsavedChanges}>Reset</Button>
-          <Button variant="primary" onClick={() => void handleSave()} disabled={updateAppearanceMutation.isPending || !hasUnsavedChanges}>
-            {updateAppearanceMutation.isPending ? 'Saving…' : 'Save user appearance'}
+          <Button iconOnly onClick={resetDraft} disabled={!hasUnsavedChanges} title="Сбросить изменения" aria-label="Сбросить изменения">↺</Button>
+          <Button variant="primary" iconOnly onClick={() => void handleSave()} disabled={updateAppearanceMutation.isPending || !hasUnsavedChanges} title="Сохранить user appearance" aria-label="Сохранить user appearance">
+            {updateAppearanceMutation.isPending ? '…' : '💾'}
           </Button>
         </div>
       </section>

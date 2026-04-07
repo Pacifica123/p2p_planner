@@ -289,7 +289,16 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  font-weight: 600;
   transition: 0.18s ease;
+}
+
+.button--icon-only {
+  width: var(--control-height);
+  min-width: var(--control-height);
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .button:hover {
@@ -356,6 +365,7 @@ body {
 
 .inline-form__row--tight {
   gap: 8px;
+  align-items: stretch;
 }
 
 .tag,
