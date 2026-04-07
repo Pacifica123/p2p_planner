@@ -1,5 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { archiveCard, createCard, deleteCard, getCard, getCards, moveCard, unarchiveCard, updateCard } from '@/features/cards/api/cards';
+import {
+  archiveCard,
+  createCard,
+  deleteCard,
+  getCard,
+  getCards,
+  moveCard,
+  reorderColumnCards,
+  unarchiveCard,
+  updateCard,
+} from '@/features/cards/api/cards';
 import { columnsQueryKey } from '@/features/columns/hooks/useColumns';
 import { boardActivityQueryKey, cardActivityQueryKey } from '@/features/activity/hooks/useActivity';
 import type { CardPriority, CardStatus } from '@/shared/types/api';
@@ -57,9 +67,26 @@ export function useUpdateCardMutation(boardId?: string, cardId?: string) {
 export function useMoveCardMutation(boardId?: string, cardId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (targetColumnId: string) => moveCard(cardId!, targetColumnId),
+    mutationFn: (variables: { cardId?: string; targetColumnId: string; position?: number | null }) =>
+      moveCard(variables.cardId || cardId!, {
+        targetColumnId: variables.targetColumnId,
+        position: variables.position,
+      }),
+    onSuccess: (card, variables) => {
+      invalidateBoardSurface(queryClient, boardId, variables.cardId || cardId || card.id);
+    },
+  });
+}
+
+export function useReorderColumnCardsMutation(boardId?: string, columnId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (variables: { columnId?: string; items: Array<{ cardId: string; position: number }> }) =>
+      reorderColumnCards(variables.columnId || columnId!, {
+        items: variables.items,
+      }),
     onSuccess: () => {
-      invalidateBoardSurface(queryClient, boardId, cardId);
+      invalidateBoardSurface(queryClient, boardId);
     },
   });
 }

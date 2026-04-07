@@ -1,6 +1,18 @@
 import { apiRequest } from '@/shared/api/client';
 import type { Card, CardListResponse } from '@/shared/types/api';
 
+export interface MoveCardInput {
+  targetColumnId: string;
+  position?: number | null;
+}
+
+export interface ReorderColumnCardsInput {
+  items: Array<{
+    cardId: string;
+    position: number;
+  }>;
+}
+
 export function getCards(boardId: string) {
   return apiRequest<CardListResponse>(`/boards/${boardId}/cards`);
 }
@@ -29,12 +41,17 @@ export function updateCard(cardId: string, input: { title?: string; description?
   });
 }
 
-export function moveCard(cardId: string, targetColumnId: string) {
+export function moveCard(cardId: string, input: MoveCardInput) {
   return apiRequest<Card>(`/cards/${cardId}/move`, {
     method: 'POST',
-    body: JSON.stringify({
-      targetColumnId,
-    }),
+    body: JSON.stringify(input),
+  });
+}
+
+export function reorderColumnCards(columnId: string, input: ReorderColumnCardsInput) {
+  return apiRequest<CardListResponse>(`/columns/${columnId}/cards/reorder`, {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }
 

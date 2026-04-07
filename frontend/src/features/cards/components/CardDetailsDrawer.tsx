@@ -83,7 +83,7 @@ export function CardDetailsDrawer() {
     });
 
     if (columnId && columnId !== cardQuery.data.columnId) {
-      await moveCardMutation.mutateAsync(columnId);
+      await moveCardMutation.mutateAsync({ targetColumnId: columnId });
     }
   }
 
