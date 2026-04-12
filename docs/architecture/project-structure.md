@@ -26,87 +26,66 @@ docs/
     project-structure.md
     database.md
     backend-modules.md
+    local-first-data-layer-v1.md
+    sync-model-implementation-plan-v1.md
     conflict-resolution-v1.md
     p2p-relay-bootstrap-abstraction-v1.md
+    integrations-architecture-v1.md
 
 backend/
   migrations/
-  scripts/
-    smoke_api/
+  tests/
   src/
     auth/
-    common/
     db/
     http/
     modules/
-      workspaces/
+      activity/
+      appearance/
+      audit/
       boards/
-      board_appearance/
       cards/
-      labels/
       checklists/
       comments/
-      attachments/
-      custom_fields/
-      activity/
       integrations/
+      labels/
       sync/
       users/
-      invitations/
-    transport/
-      bootstrap/
-      relay/
-      discovery/
+      workspaces/
+      common.rs
+      mod.rs
     app.rs
     config.rs
     error.rs
     lib.rs
     main.rs
-    models.rs
     state.rs
+    telemetry.rs
 
 frontend/
   src/
-    public/
-    src/
-      app/
-        layouts/
-        providers/
-        router/
-        styles/
-      features/
-        auth/
-        workspace-switcher/
-        boards/
-        board-settings/
-        cards/
-        labels/
-        checklists/
-        comments/
-        activity/
-        integrations/
-        sync-status/
-        settings-appearance/
-      shared/
-        api/
-        config/
-        lib/
-        sync/
-          engine/
-          transport/
-          topology/
-        types/
-        ui/
-
-mobile/
-  app/
-  features/
-  shared/
-
-shared-contracts/
-  api/
-  sync/
-  types/
+    app/
+      layouts/
+      providers/
+      router/
+      styles/
+    features/
+      activity/
+      appearance/
+      boards/
+      bootstrap/
+      cards/
+      columns/
+      integrations/
+      workspaces/
+    shared/
+      api/
+      appearance/
+      config/
+      lib/
+      types/
+      ui/
+    main.tsx
 ```
 
 ## Принципы
@@ -116,7 +95,7 @@ shared-contracts/
 
 ### 2. Product-first reading order
 Сначала читается `product/`, затем термины и glossary, потом ADR и только после
-этого детали домена, БД и sync-протокола.
+этого детали домена, БД, local-first, sync и integrations.
 
 ### 3. Backend модульный
 Модули backend группируются по домену, а не по техническим таблицам.
@@ -124,16 +103,24 @@ shared-contracts/
 ### 4. Frontend feature-based
 Функциональность сгруппирована по пользовательским сценариям и bounded context'ам.
 
-### 5. Shared contracts выделены отдельно
-Если появится необходимость делить типы и схемы между клиентами, для этого
-уже есть место в структуре.
+### 5. Shared contracts могут быть вынесены позже
+Когда появится реальная необходимость делить типы и схемы между несколькими
+клиентами, для этого можно добавить отдельный слой shared contracts без ломки
+текущей структуры.
 
 ### 6. Mobile вводится позже
-Каталог mobile резервируется заранее, но не раздувает current scope.
+Каталог mobile сознательно не раздувает текущий runtime scope, пока не
+стабилизированы backend, web и sync contracts.
 
-
-### 7. Transport/topology слой выделяется отдельно
-Даже если concrete runtime сначала coordinator-only, в структуре заранее
+### 7. Transport/topology слой выделяется отдельно по смыслу
+Даже если concrete runtime сначала coordinator-only, в архитектуре заранее
 резервируется место для `transport`, `bootstrap`, `relay`, `discovery` и
 frontend-side sync/transport adapters. Это нужно, чтобы optional p2p
 добавлялся как отдельный слой, а не растекался по UI и CRUD-модулям.
+
+### 8. Integrations выделяются отдельным слоем
+Даже если реальные provider implementations пока остаются заглушками,
+`integrations/` резервирует единое место для provider registry, import/export
+orchestration и webhook boundaries. Это уменьшает риск того, что
+GitHub/Obsidian/import/export логика потом начнет протекать в `boards`, `cards`
+или `sync`.

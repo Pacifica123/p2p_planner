@@ -58,6 +58,7 @@
 - `appearance`
 - `activity`
 - `sync`
+- `integrations`
 
 ### 2.2. Infra / shared
 - `common`
@@ -68,13 +69,12 @@
 - `error`
 - `audit` как infra-support модуль или `common/audit`
 
-### 2.3. Future-ready, но не обязательные для skeleton v1
+### 2.3. Future-ready, но не обязательные для full runtime wiring v1
 - `attachments`
 - `custom_fields`
-- `integrations`
 - `invitations`
 
-Для skeleton v1 их лучше оставить как зарезервированные каталоги или не создавать физически до появления реального объема.
+`integrations` на этом этапе уже создается физически как stub-модуль с provider registry и adapter contracts, но без production-ready provider execution.
 
 ---
 
@@ -258,7 +258,34 @@
 - get/update current user appearance preferences;
 - get/update board appearance settings.
 
-## 3.10. sync
+## 3.10. integrations
+
+**Отвечает за:**
+- provider registry;
+- import/export orchestration contracts;
+- inbound/outbound webhook boundaries;
+- translation between external payloads and normalized integration commands;
+- isolation of GitHub/Obsidian/provider-specific DTOs from core domain modules.
+
+**Не отвечает за:**
+- core board/card/workspace business rules;
+- canonical sync stream ownership;
+- direct writes в domain tables в обход application services.
+
+**Таблицы:**
+- на текущем этапе обязательных таблиц нет;
+- future-ready: provider_connections, integration_jobs, webhook_subscriptions, delivery_attempts.
+
+**Основные операции:**
+- list provider manifests;
+- read provider detail;
+- create import/export stub jobs;
+- receive inbound webhook at reserved boundary.
+
+**Замечание:**
+`integrations` может зависеть от public service boundary других модулей, но не должен тащить их repo к себе и не должен заставлять core domain знать про внешний provider format.
+
+## 3.11. sync
 
 **Отвечает за:**
 - replica registration/update;
@@ -283,7 +310,7 @@
 - reject/duplicate/conflict bookkeeping;
 - optional snapshot manifest later.
 
-## 3.10. activity
+## 3.12. activity
 
 **Отвечает за:**
 - user-facing history для `boards` и `cards`;
@@ -301,7 +328,7 @@
 **Замечание:**
 `activity` не владеет бизнес-логикой `boards/cards/comments/checklists`; он владеет только read model и history-query surface.
 
-## 3.11. audit
+## 3.13. audit
 
 **Отвечает за:**
 - технический server-side аудит;
@@ -988,6 +1015,7 @@ backend/src/
 - `appearance`
 - `activity`
 - `sync`
+- `integrations`
 - `audit` как infra-support
 
 Внутренние ownership-границы:

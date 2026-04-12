@@ -25,7 +25,7 @@
    координатор синхронизации.
 4. **P2P-синхронизация опциональна и не входит в MVP** как обязательный
    пользовательский сценарий.
-5. Мобильный клиент и развитые интеграции откладываются до стабилизации core.
+5. Мобильный клиент откладывается до стабилизации core, а интеграции проектируются заранее как isolated adapter layer без hard dependency на MVP core flow.
 6. Архитектура сохраняет future-ready задел под реплики, change log,
    tombstones, relay/bootstrap и внешние adapters.
 
@@ -42,7 +42,8 @@
    `architecture/sync-lifecycle-map-v1.md`,
    `architecture/frontend-visible-sync-state-model-v1.md`,
    `architecture/conflict-resolution-v1.md`,
-   `architecture/p2p-relay-bootstrap-abstraction-v1.md`
+   `architecture/p2p-relay-bootstrap-abstraction-v1.md`,
+   `architecture/integrations-architecture-v1.md`
    и `architecture/project-structure.md`.
 6. И только потом `api/openapi.yaml`, `sync/protocol.md` и
    `sync/conflict-resolution.md`.
@@ -66,3 +67,5 @@ local-first, sync и optional p2p.
 - `docs/architecture/conflict-resolution-v1.md` — подробная conflict matrix v1: taxonomy, resolution rules, examples, edge-cases и user-facing UX policy.
 
 - `docs/architecture/p2p-relay-bootstrap-abstraction-v1.md` — transport-neutral P2P / relay / bootstrap abstraction: layered boundaries, discovery/bootstrap roles, relay-compatible design и phased rollout.
+
+- `docs/architecture/integrations-architecture-v1.md` — integrations architecture v1: provider registry, import/export touchpoints, webhooks, domain-event boundary и adapter isolation.

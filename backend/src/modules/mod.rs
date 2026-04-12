@@ -10,6 +10,7 @@ pub mod cards;
 pub mod checklists;
 pub mod comments;
 pub mod common;
+pub mod integrations;
 pub mod labels;
 pub mod sync;
 pub mod users;
@@ -24,6 +25,7 @@ pub fn router() -> Router<AppState> {
         .merge(cards::router())
         .merge(checklists::router())
         .merge(comments::router())
+        .merge(integrations::router())
         .merge(labels::router())
         .merge(sync::router())
         .merge(users::router())

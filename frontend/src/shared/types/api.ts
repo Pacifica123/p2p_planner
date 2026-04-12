@@ -166,3 +166,80 @@ export interface UpdateBoardAppearanceRequest {
   showChecklistProgress?: boolean;
   customProperties?: Record<string, unknown>;
 }
+
+
+export interface IntegrationProviderSummary {
+  key: string;
+  displayName: string;
+  providerType: 'third_party' | 'system';
+  status: 'stub' | 'planned' | 'active';
+  authMode: string;
+  supportsImport: boolean;
+  supportsExport: boolean;
+  supportsInboundWebhooks: boolean;
+  supportsOutboundWebhooks: boolean;
+}
+
+export interface IntegrationTouchpoint {
+  key: string;
+  direction: 'import' | 'export' | 'bidirectional';
+  payloadFormat: string;
+  description: string;
+  status: 'stub' | 'planned' | 'active';
+}
+
+export interface DomainEventSubscription {
+  eventType: string;
+  deliveryMode: 'pull' | 'batch' | 'outbox' | 'push';
+  purpose: string;
+}
+
+export interface WebhookContract {
+  mode: 'inbound' | 'outbound';
+  signatureScheme: string;
+  eventTypes: string[];
+  description: string;
+}
+
+export interface IntegrationProviderCatalogResponse {
+  items: IntegrationProviderSummary[];
+}
+
+export interface IntegrationProviderDetailResponse {
+  provider: IntegrationProviderSummary;
+  importTouchpoints: IntegrationTouchpoint[];
+  exportTouchpoints: IntegrationTouchpoint[];
+  domainEventSubscriptions: DomainEventSubscription[];
+  inboundWebhook?: WebhookContract | null;
+  outboundWebhook?: WebhookContract | null;
+  boundaryRules: string[];
+  notes: string[];
+}
+
+export interface CreateImportJobRequest {
+  providerKey: string;
+  workspaceId?: string | null;
+  sourceRef?: string | null;
+  options?: Record<string, unknown>;
+}
+
+export interface CreateExportJobRequest {
+  providerKey: string;
+  workspaceId?: string | null;
+  targetRef?: string | null;
+  options?: Record<string, unknown>;
+}
+
+export interface IntegrationOperationStubResponse {
+  operation: string;
+  providerKey: string;
+  status: 'stub_only';
+  message: string;
+}
+
+export interface WebhookReceiptResponse {
+  providerKey: string;
+  status: 'stub_only';
+  message: string;
+  acceptedEventTypes: string[];
+}

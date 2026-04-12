@@ -23,6 +23,7 @@ tags:
 - name: checklists
 - name: comments
 - name: sync
+- name: integrations
 components:
   securitySchemes:
     bearerAuth:
@@ -121,6 +122,13 @@ components:
       schema:
         type: string
         format: uuid
+    ProviderKey:
+      name: providerKey
+      in: path
+      required: true
+      description: Integration provider key
+      schema:
+        type: string
     Limit:
       name: limit
       in: query
@@ -2175,7 +2183,351 @@ components:
           type:
           - string
           - 'null'
+
+    IntegrationProviderSummary:
+      type: object
+      required:
+      - key
+      - displayName
+      - providerType
+      - status
+      - authMode
+      - supportsImport
+      - supportsExport
+      - supportsInboundWebhooks
+      - supportsOutboundWebhooks
+      properties:
+        key:
+          type: string
+        displayName:
+          type: string
+        providerType:
+          type: string
+          enum:
+          - third_party
+          - system
+        status:
+          type: string
+          enum:
+          - stub
+          - planned
+          - active
+        authMode:
+          type: string
+        supportsImport:
+          type: boolean
+        supportsExport:
+          type: boolean
+        supportsInboundWebhooks:
+          type: boolean
+        supportsOutboundWebhooks:
+          type: boolean
+    IntegrationTouchpoint:
+      type: object
+      required:
+      - key
+      - direction
+      - payloadFormat
+      - description
+      - status
+      properties:
+        key:
+          type: string
+        direction:
+          type: string
+          enum:
+          - import
+          - export
+          - bidirectional
+        payloadFormat:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum:
+          - stub
+          - planned
+          - active
+    DomainEventSubscription:
+      type: object
+      required:
+      - eventType
+      - deliveryMode
+      - purpose
+      properties:
+        eventType:
+          type: string
+        deliveryMode:
+          type: string
+          enum:
+          - pull
+          - batch
+          - outbox
+          - push
+        purpose:
+          type: string
+    WebhookContract:
+      type: object
+      required:
+      - mode
+      - signatureScheme
+      - eventTypes
+      - description
+      properties:
+        mode:
+          type: string
+          enum:
+          - inbound
+          - outbound
+        signatureScheme:
+          type: string
+        eventTypes:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+    IntegrationProviderCatalogResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntegrationProviderSummary'
+    IntegrationProviderDetailResponse:
+      type: object
+      required:
+      - provider
+      - importTouchpoints
+      - exportTouchpoints
+      - domainEventSubscriptions
+      - boundaryRules
+      - notes
+      properties:
+        provider:
+          $ref: '#/components/schemas/IntegrationProviderSummary'
+        importTouchpoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntegrationTouchpoint'
+        exportTouchpoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntegrationTouchpoint'
+        domainEventSubscriptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/DomainEventSubscription'
+        inboundWebhook:
+          oneOf:
+          - $ref: '#/components/schemas/WebhookContract'
+          - type: 'null'
+        outboundWebhook:
+          oneOf:
+          - $ref: '#/components/schemas/WebhookContract'
+          - type: 'null'
+        boundaryRules:
+          type: array
+          items:
+            type: string
+        notes:
+          type: array
+          items:
+            type: string
+    CreateImportJobRequest:
+      type: object
+      required:
+      - providerKey
+      properties:
+        providerKey:
+          type: string
+        workspaceId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        sourceRef:
+          type:
+          - string
+          - 'null'
+        options:
+          type: object
+          additionalProperties: true
+    CreateExportJobRequest:
+      type: object
+      required:
+      - providerKey
+      properties:
+        providerKey:
+          type: string
+        workspaceId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        targetRef:
+          type:
+          - string
+          - 'null'
+        options:
+          type: object
+          additionalProperties: true
+    IntegrationOperationStubResponse:
+      type: object
+      required:
+      - operation
+      - providerKey
+      - status
+      - message
+      properties:
+        operation:
+          type: string
+        providerKey:
+          type: string
+        status:
+          type: string
+          enum:
+          - stub_only
+        message:
+          type: string
+    WebhookReceiptResponse:
+      type: object
+      required:
+      - providerKey
+      - status
+      - message
+      - acceptedEventTypes
+      properties:
+        providerKey:
+          type: string
+        status:
+          type: string
+          enum:
+          - stub_only
+        message:
+          type: string
+        acceptedEventTypes:
+          type: array
+          items:
+            type: string
+
 paths:
+
+  /integrations/providers:
+    get:
+      tags:
+      - integrations
+      summary: List built-in integration providers
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Provider catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationProviderCatalogResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /integrations/providers/{providerKey}:
+    get:
+      tags:
+      - integrations
+      summary: Get provider manifest and reserved touchpoints
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ProviderKey'
+      responses:
+        '200':
+          description: Provider detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationProviderDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /integrations/import-jobs:
+    post:
+      tags:
+      - integrations
+      summary: Create reserved import orchestration job
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateImportJobRequest'
+      responses:
+        '202':
+          description: Stub import orchestration response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationOperationStubResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /integrations/export-jobs:
+    post:
+      tags:
+      - integrations
+      summary: Create reserved export orchestration job
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExportJobRequest'
+      responses:
+        '202':
+          description: Stub export orchestration response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationOperationStubResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /integrations/webhooks/{providerKey}:
+    post:
+      tags:
+      - integrations
+      summary: Reserved inbound webhook boundary for a provider
+      parameters:
+      - $ref: '#/components/parameters/ProviderKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '202':
+          description: Stub webhook receipt response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookReceiptResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /auth/sign-up:
     post:
       tags:
