@@ -37,7 +37,7 @@ export function MainLayout() {
           ) : workspacesQuery.isError ? (
             <ErrorState title="Не удалось загрузить workspaces" description={getErrorMessage(workspacesQuery.error, 'Проверь backend и настройки API.')} compact />
           ) : (
-            <nav className="nav-list">
+            <nav className="nav-list nav-list--scroll">
               <NavLink to={paths.home} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`} end>
                 Все workspaces
               </NavLink>
@@ -63,7 +63,7 @@ export function MainLayout() {
             ) : boardsQuery.isError ? (
               <ErrorState title="Не удалось загрузить boards" description={getErrorMessage(boardsQuery.error, 'Проверь backend и настройки API.')} compact />
             ) : (
-              <nav className="nav-list">
+              <nav className="nav-list nav-list--scroll">
                 {boardsQuery.data?.items.map((board) => (
                   <NavLink
                     key={board.id}

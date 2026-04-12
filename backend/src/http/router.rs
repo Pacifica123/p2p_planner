@@ -2,8 +2,11 @@ use axum::{extract::State, routing::get, Router};
 
 use crate::{
     auth,
-    http::response::{ok, ApiEnvelope, HealthPayload},
-    modules::{activity, appearance, audit, boards, cards, checklists, comments, labels, sync, users, workspaces},
+    http::{
+        health::health_payload,
+        response::{ok, ApiEnvelope, HealthPayload},
+    },
+    modules,
     state::AppState,
 };
 
@@ -11,33 +14,13 @@ pub fn api_router() -> Router<AppState> {
     Router::new()
         .route("/health", get(api_health))
         .merge(auth::router())
-        .merge(users::router())
-        .merge(appearance::router())
-        .merge(activity::router())
-        .merge(workspaces::router())
-        .merge(boards::router())
-        .merge(cards::router())
-        .merge(labels::router())
-        .merge(checklists::router())
-        .merge(comments::router())
-        .merge(sync::router())
-        .merge(audit::router())
+        .merge(modules::router())
 }
 
 pub async fn root_health(State(state): State<AppState>) -> axum::Json<ApiEnvelope<HealthPayload>> {
-    ok(HealthPayload {
-        status: "ok",
-        service: state.settings.app.name.clone(),
-        version: env!("CARGO_PKG_VERSION"),
-        env: state.settings.app.env.clone(),
-    })
+    ok(health_payload(&state))
 }
 
 async fn api_health(State(state): State<AppState>) -> axum::Json<ApiEnvelope<HealthPayload>> {
-    ok(HealthPayload {
-        status: "ok",
-        service: state.settings.app.name.clone(),
-        version: env!("CARGO_PKG_VERSION"),
-        env: state.settings.app.env.clone(),
-    })
+    ok(health_payload(&state))
 }

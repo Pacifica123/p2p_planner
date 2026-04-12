@@ -68,9 +68,9 @@ export function BoardAppearancePage() {
         </div>
         <div className="page-header__actions">
           <Badge tone={hasUnsavedChanges ? 'warning' : 'done'}>{hasUnsavedChanges ? 'draft preview' : 'persisted'}</Badge>
-          <Button onClick={resetDraft} disabled={!hasUnsavedChanges}>Reset</Button>
-          <Button variant="primary" onClick={() => void handleSave()} disabled={updateBoardAppearanceMutation.isPending || !hasUnsavedChanges}>
-            {updateBoardAppearanceMutation.isPending ? 'Saving…' : 'Save board appearance'}
+          <Button iconOnly onClick={resetDraft} disabled={!hasUnsavedChanges} title="Сбросить изменения" aria-label="Сбросить изменения">↺</Button>
+          <Button variant="primary" iconOnly onClick={() => void handleSave()} disabled={updateBoardAppearanceMutation.isPending || !hasUnsavedChanges} title="Сохранить board appearance" aria-label="Сохранить board appearance">
+            {updateBoardAppearanceMutation.isPending ? '…' : '💾'}
           </Button>
           <Link className="button" to={paths.board(workspaceId, boardId)}>Back to board</Link>
         </div>

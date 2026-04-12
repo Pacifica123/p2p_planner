@@ -83,7 +83,7 @@ export function CardDetailsDrawer() {
     });
 
     if (columnId && columnId !== cardQuery.data.columnId) {
-      await moveCardMutation.mutateAsync(columnId);
+      await moveCardMutation.mutateAsync({ targetColumnId: columnId });
     }
   }
 
@@ -113,8 +113,8 @@ export function CardDetailsDrawer() {
             <h3>Card details</h3>
             <p className="muted">Edit / move / archive / delete поверх стабильного card CRUD.</p>
           </div>
-          <Button variant="ghost" onClick={closeDrawer}>
-            Закрыть
+          <Button variant="ghost" iconOnly onClick={closeDrawer} title="Закрыть" aria-label="Закрыть">
+            ✕
           </Button>
         </div>
 
@@ -156,14 +156,14 @@ export function CardDetailsDrawer() {
             </div>
 
             <div className="inline-actions">
-              <Button variant="primary" onClick={() => void handleSave()} disabled={updateCardMutation.isPending || moveCardMutation.isPending}>
-                {updateCardMutation.isPending || moveCardMutation.isPending ? 'Сохраняем…' : 'Сохранить'}
+              <Button variant="primary" iconOnly onClick={() => void handleSave()} disabled={updateCardMutation.isPending || moveCardMutation.isPending} title="Сохранить карточку" aria-label="Сохранить карточку">
+                {updateCardMutation.isPending || moveCardMutation.isPending ? '…' : '💾'}
               </Button>
-              <Button onClick={() => void handleArchiveToggle()} disabled={archiveCardMutation.isPending || unarchiveCardMutation.isPending}>
-                {cardQuery.data.isArchived ? 'Разархивировать' : 'Архивировать'}
+              <Button iconOnly onClick={() => void handleArchiveToggle()} disabled={archiveCardMutation.isPending || unarchiveCardMutation.isPending} title={cardQuery.data.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'} aria-label={cardQuery.data.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'}>
+                {archiveCardMutation.isPending || unarchiveCardMutation.isPending ? '…' : cardQuery.data.isArchived ? '📤' : '📦'}
               </Button>
-              <Button variant="danger" onClick={() => void handleDelete()} disabled={deleteCardMutation.isPending}>
-                Удалить
+              <Button variant="danger" iconOnly onClick={() => void handleDelete()} disabled={deleteCardMutation.isPending} title="Удалить карточку" aria-label="Удалить карточку">
+                {deleteCardMutation.isPending ? '…' : '🗑️'}
               </Button>
             </div>
 
