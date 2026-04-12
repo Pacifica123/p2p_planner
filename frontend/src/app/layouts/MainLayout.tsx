@@ -6,9 +6,16 @@ import { useWorkspacesQuery } from '@/features/workspaces/hooks/useWorkspaces';
 import { useBoardsQuery } from '@/features/boards/hooks/useBoards';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { ErrorState } from '@/shared/ui/ErrorState';
+import { ApiError } from '@/shared/api/errors';
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
 
 export function MainLayout() {
-  const { workspaceId, boardId } = useParams();
+  const { workspaceId } = useParams();
   const { userId, setUserId } = useDevSession();
   const workspacesQuery = useWorkspacesQuery();
   const boardsQuery = useBoardsQuery(workspaceId);
@@ -20,7 +27,7 @@ export function MainLayout() {
           <NavLink to={paths.home} className="brand-link">
             P2P Planner
           </NavLink>
-          <p className="brand-copy">Web customization UI v1</p>
+          <p className="brand-copy">Web core UI v1</p>
         </div>
 
         <section className="sidebar-section">
@@ -28,7 +35,7 @@ export function MainLayout() {
           {workspacesQuery.isLoading ? (
             <LoadingState label="Загружаем workspace list…" compact />
           ) : workspacesQuery.isError ? (
-            <ErrorState title="Не удалось загрузить workspaces" compact />
+            <ErrorState title="Не удалось загрузить workspaces" description={getErrorMessage(workspacesQuery.error, 'Проверь backend и настройки API.')} compact />
           ) : (
             <nav className="nav-list">
               <NavLink to={paths.home} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`} end>
@@ -48,29 +55,13 @@ export function MainLayout() {
           )}
         </section>
 
-        <section className="sidebar-section">
-          <div className="sidebar-section__header">Customization</div>
-          <nav className="nav-list">
-            <NavLink to={paths.userAppearance} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}>
-              <span>User appearance</span>
-              <span className="nav-list__meta">app</span>
-            </NavLink>
-            {workspaceId && boardId ? (
-              <NavLink to={paths.boardAppearance(workspaceId, boardId)} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}>
-                <span>Board appearance</span>
-                <span className="nav-list__meta">board</span>
-              </NavLink>
-            ) : null}
-          </nav>
-        </section>
-
         {workspaceId ? (
           <section className="sidebar-section sidebar-section--flex">
             <div className="sidebar-section__header">Boards in workspace</div>
             {boardsQuery.isLoading ? (
               <LoadingState label="Загружаем boards…" compact />
             ) : boardsQuery.isError ? (
-              <ErrorState title="Не удалось загрузить boards" compact />
+              <ErrorState title="Не удалось загрузить boards" description={getErrorMessage(boardsQuery.error, 'Проверь backend и настройки API.')} compact />
             ) : (
               <nav className="nav-list">
                 {boardsQuery.data?.items.map((board) => (
@@ -92,8 +83,8 @@ export function MainLayout() {
       <div className="app-main">
         <header className="topbar">
           <div>
-            <h1 className="topbar__title">Customization surface: user appearance + board appearance</h1>
-            <p className="topbar__subtitle">Отдельный UI-слой поверх существующего backend surface, без смешивания с core kanban editing.</p>
+            <h1 className="topbar__title">Core flow: workspace → board → column → card</h1>
+            <p className="topbar__subtitle">Подтвержденный happy-path вокруг существующего backend CRUD.</p>
           </div>
 
           <div className="topbar__controls">
