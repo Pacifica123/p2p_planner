@@ -263,6 +263,7 @@
 **Отвечает за:**
 - provider registry;
 - import/export orchestration contracts;
+- portable export / backup / restore-preview contracts;
 - inbound/outbound webhook boundaries;
 - translation between external payloads and normalized integration commands;
 - isolation of GitHub/Obsidian/provider-specific DTOs from core domain modules.
@@ -280,10 +281,11 @@
 - list provider manifests;
 - read provider detail;
 - create import/export stub jobs;
+- expose dedicated import/export capabilities, export and restore-preview endpoints;
 - receive inbound webhook at reserved boundary.
 
 **Замечание:**
-`integrations` может зависеть от public service boundary других модулей, но не должен тащить их repo к себе и не должен заставлять core domain знать про внешний provider format.
+`integrations` может зависеть от public service boundary других модулей, но не должен тащить их repo к себе и не должен заставлять core domain знать про внешний provider format. Для import/export/backup это означает отдельный orchestration surface поверх stable bundle contract, а не ad-hoc SQL dump endpoint.
 
 ## 3.11. sync
 

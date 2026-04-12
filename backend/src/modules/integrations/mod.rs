@@ -20,6 +20,22 @@ pub fn router() -> Router<AppState> {
         .route("/integrations/import-jobs", post(handler::create_import_job))
         .route("/integrations/export-jobs", post(handler::create_export_job))
         .route(
+            "/integrations/import-export/capabilities",
+            get(handler::get_import_export_capabilities),
+        )
+        .route(
+            "/integrations/import-export/exports",
+            post(handler::create_portable_export),
+        )
+        .route(
+            "/integrations/import-export/imports/preview",
+            post(handler::preview_import_bundle),
+        )
+        .route(
+            "/integrations/import-export/imports",
+            post(handler::create_import_execution),
+        )
+        .route(
             "/integrations/webhooks/{providerKey}",
             post(handler::receive_webhook),
         )

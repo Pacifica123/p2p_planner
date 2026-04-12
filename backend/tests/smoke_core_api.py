@@ -14,6 +14,9 @@ HEADERS = {
     'X-User-Id': USER_ID,
 }
 
+SMOKE_USER_EMAIL = os.environ.get('SMOKE_USER_EMAIL', f'smoke-{USER_ID}@local.test')
+SMOKE_USER_DISPLAY_NAME = os.environ.get('SMOKE_USER_DISPLAY_NAME', 'Smoke Test User')
+
 
 def parse_payload(raw: str):
     if not raw:
@@ -103,6 +106,18 @@ def assert_error(payload, code: str, message_substring: str, label: str):
     print(f"[ASSERT] {label}.message contains {message_substring!r}")
 
 
+def ensure_smoke_user():
+    _, payload = request('POST', '/auth/dev-bootstrap', {
+        'userId': USER_ID,
+        'email': SMOKE_USER_EMAIL,
+        'displayName': SMOKE_USER_DISPLAY_NAME,
+    })
+    data = api_data(payload)
+    assert_equal(data['id'], USER_ID, 'bootstrap user id')
+    assert_equal(data['email'], SMOKE_USER_EMAIL, 'bootstrap user email')
+    return data
+
+
 def main():
     print(f"BASE_URL={BASE_URL}")
     print(f"USER_ID={USER_ID}")
@@ -116,6 +131,7 @@ def main():
 
     try:
         request('GET', '/health')
+        ensure_smoke_user()
 
         _, ws = request('POST', '/workspaces', {
             'name': 'Smoke Workspace',
@@ -171,6 +187,75 @@ def main():
         _, audit_payload = request('GET', f"/workspaces/{created['workspace_id']}/audit-log")
         audit_items = api_data(audit_payload)['items']
         assert_true(len(audit_items) >= 3, 'workspace audit has several entries')
+
+
+        _, import_export_caps_payload = request('GET', '/integrations/import-export/capabilities')
+        import_export_caps = api_data(import_export_caps_payload)
+        assert_equal(import_export_caps['providerKey'], 'import_export', 'import export capabilities providerKey')
+        assert_equal(import_export_caps['format'], 'p2p_planner_bundle', 'import export capabilities format')
+        assert_equal(import_export_caps['formatVersion'], 1, 'import export capabilities formatVersion')
+        assert_true('portable_export' in import_export_caps['supportedExportModes'], 'import export capabilities portable_export supported')
+        assert_true('restore_backup' in import_export_caps['supportedImportModes'], 'import export capabilities restore_backup supported')
+
+        _, export_payload = request('POST', '/integrations/import-export/exports', {
+            'scopeKind': 'workspace',
+            'workspaceId': created['workspace_id'],
+            'exportMode': 'portable_export',
+            'includeAppearance': True,
+            'includeActivityHistory': True,
+        }, expected_status=202)
+        export_data = api_data(export_payload)
+        assert_equal(export_data['providerKey'], 'import_export', 'portable export providerKey')
+        assert_equal(export_data['status'], 'ready_stub', 'portable export status')
+        assert_equal(export_data['bundleManifest']['format'], 'p2p_planner_bundle', 'portable export format')
+        assert_equal(export_data['bundleManifest']['scopeKind'], 'workspace', 'portable export scopeKind')
+        assert_equal(export_data['bundleManifest']['workspaceId'], created['workspace_id'], 'portable export workspaceId')
+        assert_true(isinstance(export_data['warnings'], list), 'portable export warnings list')
+
+        _, preview_payload = request('POST', '/integrations/import-export/imports/preview', {
+            'sourceRef': export_data['suggestedFileName'],
+            'importMode': 'restore_backup',
+            'restoreStrategy': 'merge_review',
+            'targetWorkspaceId': created['workspace_id'],
+            'bundleManifest': {
+                'format': 'p2p_planner_bundle',
+                'formatVersion': 1,
+            },
+        })
+        preview_data = api_data(preview_payload)
+        assert_equal(preview_data['providerKey'], 'import_export', 'import preview providerKey')
+        assert_equal(preview_data['status'], 'preview_stub', 'import preview status')
+        assert_true(preview_data['requiresManualReview'], 'import preview requiresManualReview')
+        assert_equal(preview_data['restoreStrategy'], 'merge_review', 'import preview restoreStrategy')
+
+        _, import_apply_payload = request('POST', '/integrations/import-export/imports', {
+            'sourceRef': export_data['suggestedFileName'],
+            'importMode': 'portable_import',
+            'restoreStrategy': 'create_copy',
+            'previewId': preview_data['previewId'],
+            'targetWorkspaceId': created['workspace_id'],
+            'bundleManifest': {
+                'format': 'p2p_planner_bundle',
+                'formatVersion': 1,
+            },
+        }, expected_status=202)
+        import_apply = api_data(import_apply_payload)
+        assert_equal(import_apply['providerKey'], 'import_export', 'import execution providerKey')
+        assert_equal(import_apply['status'], 'accepted_stub', 'import execution status')
+        assert_equal(import_apply['importMode'], 'portable_import', 'import execution importMode')
+
+        _, invalid_export_mode_payload = request('POST', '/integrations/import-export/exports', {
+            'scopeKind': 'workspace',
+            'workspaceId': created['workspace_id'],
+            'exportMode': 'snapshot_magic',
+        }, expected_status=400)
+        assert_error(invalid_export_mode_payload, 'bad_request', 'exportMode has unsupported value', 'invalid export mode')
+
+        _, invalid_restore_strategy_payload = request('POST', '/integrations/import-export/imports/preview', {
+            'importMode': 'portable_import',
+            'restoreStrategy': 'overwrite_now',
+        }, expected_status=400)
+        assert_error(invalid_restore_strategy_payload, 'bad_request', 'restoreStrategy has unsupported value', 'invalid restore strategy')
 
         _, me_before_payload = request('GET', '/me/appearance')
         me_before = api_data(me_before_payload)

@@ -31,6 +31,7 @@ docs/
     conflict-resolution-v1.md
     p2p-relay-bootstrap-abstraction-v1.md
     integrations-architecture-v1.md
+    import-export-backup-v1.md
 
 backend/
   migrations/

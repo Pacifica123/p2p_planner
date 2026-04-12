@@ -243,3 +243,116 @@ export interface WebhookReceiptResponse {
   message: string;
   acceptedEventTypes: string[];
 }
+
+
+export interface PortableEntityCounts {
+  workspaces: number;
+  boards: number;
+  columns: number;
+  cards: number;
+  comments: number;
+  checklists: number;
+  attachments: number;
+}
+
+export interface PortableBundleSummary {
+  scopeKind: 'workspace' | 'board';
+  entityCounts: PortableEntityCounts;
+  includesActivityHistory: boolean;
+  includesAppearance: boolean;
+  includesArchived: boolean;
+  includesAttachments: boolean;
+}
+
+export interface PortableBundleManifest {
+  format: 'p2p_planner_bundle';
+  formatVersion: 1;
+  bundleKind: 'portable_export' | 'backup_snapshot';
+  scopeKind: 'workspace' | 'board';
+  workspaceId?: string | null;
+  boardId?: string | null;
+  includesLocalMetadata: boolean;
+  summary: PortableBundleSummary;
+}
+
+export interface ImportExportCapabilitiesResponse {
+  providerKey: 'import_export';
+  format: 'p2p_planner_bundle';
+  formatVersion: 1;
+  supportedExportModes: Array<'portable_export' | 'backup_snapshot'>;
+  clientOnlyBackupModes: Array<'local_backup_snapshot'>;
+  supportedImportModes: Array<'portable_import' | 'restore_backup'>;
+  supportedScopeKinds: Array<'workspace' | 'board'>;
+  supportedRestoreStrategies: Array<'create_copy' | 'merge_review'>;
+  maxBundleSizeBytes?: number | null;
+  notes: string[];
+}
+
+export interface CreatePortableExportRequest {
+  scopeKind: 'workspace' | 'board';
+  workspaceId?: string | null;
+  boardId?: string | null;
+  exportMode: 'portable_export' | 'backup_snapshot';
+  includeArchived?: boolean;
+  includeActivityHistory?: boolean;
+  includeAppearance?: boolean;
+  includeAttachments?: boolean;
+  targetRef?: string | null;
+}
+
+export interface PortableExportResponse {
+  jobId: string;
+  providerKey: 'import_export';
+  status: 'ready_stub';
+  exportMode: 'portable_export' | 'backup_snapshot';
+  suggestedFileName: string;
+  targetRef?: string | null;
+  bundleManifest: PortableBundleManifest;
+  message: string;
+  warnings: string[];
+}
+
+export interface CreateImportPreviewRequest {
+  sourceRef?: string | null;
+  importMode: 'portable_import' | 'restore_backup';
+  targetWorkspaceId?: string | null;
+  restoreStrategy: 'create_copy' | 'merge_review';
+  bundleManifest?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}
+
+export interface ImportPreviewResponse {
+  previewId: string;
+  providerKey: 'import_export';
+  status: 'preview_stub';
+  detectedFormat: 'p2p_planner_bundle';
+  detectedFormatVersion: 1;
+  importMode: 'portable_import' | 'restore_backup';
+  restoreStrategy: 'create_copy' | 'merge_review';
+  requiresManualReview: boolean;
+  warnings: string[];
+  steps: string[];
+  summary: PortableBundleSummary;
+}
+
+export interface CreateImportExecutionRequest {
+  sourceRef?: string | null;
+  importMode: 'portable_import' | 'restore_backup';
+  targetWorkspaceId?: string | null;
+  restoreStrategy: 'create_copy' | 'merge_review';
+  previewId?: string | null;
+  bundleManifest?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}
+
+export interface ImportExecutionResponse {
+  jobId: string;
+  providerKey: 'import_export';
+  status: 'accepted_stub';
+  importMode: 'portable_import' | 'restore_backup';
+  restoreStrategy: 'create_copy' | 'merge_review';
+  previewId?: string | null;
+  targetWorkspaceId?: string | null;
+  message: string;
+  warnings: string[];
+}

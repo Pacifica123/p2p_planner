@@ -1,11 +1,15 @@
-use axum::Json;
+use axum::{extract::State, Json};
 
 use crate::{
     error::AppResult,
-    http::response::ok,
+    http::response::{ok, ApiEnvelope},
+    state::AppState,
 };
 
-use super::{dto::SessionResponse, service};
+use super::{
+    dto::{DevBootstrapUserRequest, DevBootstrapUserResponse, SessionResponse},
+    service,
+};
 
 pub async fn sign_up() -> AppResult<Json<serde_json::Value>> {
     service::sign_up().await?;
@@ -32,7 +36,15 @@ pub async fn sign_out_all() -> AppResult<Json<serde_json::Value>> {
     unreachable!()
 }
 
-pub async fn get_session() -> AppResult<Json<crate::http::response::ApiEnvelope<SessionResponse>>> {
+pub async fn bootstrap_dev_user(
+    State(state): State<AppState>,
+    Json(payload): Json<DevBootstrapUserRequest>,
+) -> AppResult<Json<ApiEnvelope<DevBootstrapUserResponse>>> {
+    let user = service::bootstrap_dev_user(&state, payload).await?;
+    Ok(ok(user))
+}
+
+pub async fn get_session() -> AppResult<Json<ApiEnvelope<SessionResponse>>> {
     Ok(ok(SessionResponse {
         authenticated: false,
         mode: "skeleton",

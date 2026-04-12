@@ -134,7 +134,7 @@ impl IntegrationProvider for ImportExportProvider {
         IntegrationProviderDetailResponse {
             provider: IntegrationProviderSummary {
                 key: "import_export".to_string(),
-                display_name: "Generic Import / Export Adapter".to_string(),
+                display_name: "Import / Export / Backup Adapter".to_string(),
                 provider_type: "system".to_string(),
                 status: "stub".to_string(),
                 auth_mode: "local_user_context".to_string(),
@@ -143,20 +143,38 @@ impl IntegrationProvider for ImportExportProvider {
                 supports_inbound_webhooks: false,
                 supports_outbound_webhooks: false,
             },
-            import_touchpoints: vec![IntegrationTouchpoint {
-                key: "json_snapshot_import".to_string(),
-                direction: "import".to_string(),
-                payload_format: "p2p_planner_bundle_v1".to_string(),
-                description: "Import a portable project bundle through the same integration orchestration layer that future third-party providers will use.".to_string(),
-                status: "stub".to_string(),
-            }],
-            export_touchpoints: vec![IntegrationTouchpoint {
-                key: "json_snapshot_export".to_string(),
-                direction: "export".to_string(),
-                payload_format: "p2p_planner_bundle_v1".to_string(),
-                description: "Export workspace or board snapshots for backup, transfer or offline archiving without leaking file packaging logic into domain modules.".to_string(),
-                status: "stub".to_string(),
-            }],
+            import_touchpoints: vec![
+                IntegrationTouchpoint {
+                    key: "portable_bundle_import_preview".to_string(),
+                    direction: "import".to_string(),
+                    payload_format: "p2p_planner_bundle".to_string(),
+                    description: "Preview a portable bundle before apply so restore/import never becomes a silent overwrite flow.".to_string(),
+                    status: "stub".to_string(),
+                },
+                IntegrationTouchpoint {
+                    key: "portable_bundle_import_apply".to_string(),
+                    direction: "import".to_string(),
+                    payload_format: "p2p_planner_bundle".to_string(),
+                    description: "Apply a validated import/restore request through integration orchestration instead of direct table writes.".to_string(),
+                    status: "stub".to_string(),
+                },
+            ],
+            export_touchpoints: vec![
+                IntegrationTouchpoint {
+                    key: "portable_bundle_export".to_string(),
+                    direction: "export".to_string(),
+                    payload_format: "p2p_planner_bundle".to_string(),
+                    description: "Create a versioned portable export for cross-device or cross-instance transfer.".to_string(),
+                    status: "stub".to_string(),
+                },
+                IntegrationTouchpoint {
+                    key: "backup_snapshot_export".to_string(),
+                    direction: "export".to_string(),
+                    payload_format: "p2p_planner_bundle".to_string(),
+                    description: "Create a coordinated backup snapshot with richer recovery intent than a plain portable export.".to_string(),
+                    status: "stub".to_string(),
+                },
+            ],
             domain_event_subscriptions: vec![DomainEventSubscription {
                 event_type: "workspace.snapshot.requested".to_string(),
                 delivery_mode: "pull".to_string(),
@@ -167,9 +185,11 @@ impl IntegrationProvider for ImportExportProvider {
             boundary_rules: vec![
                 "Portable file formats are versioned integration contracts, not direct database dumps.".to_string(),
                 "Restore/import must go through validated application commands and conflict-aware reconciliation.".to_string(),
+                "Local backup snapshot remains a client-owned flow and must not be confused with coordinated backend export.".to_string(),
             ],
             notes: vec![
-                "System-level adapter for future import/export and backup flows.".to_string(),
+                "System-level adapter for import/export, backup and restore-preview flows.".to_string(),
+                "Current implementation exposes capabilities and stable stub responses, not real file packaging.".to_string(),
             ],
         }
     }

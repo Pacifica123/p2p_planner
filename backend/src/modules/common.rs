@@ -46,7 +46,7 @@ pub async fn ensure_user_exists(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
     if exists {
         Ok(())
     } else {
-        Err(AppError::unauthorized("X-User-Id does not match an active user"))
+        Err(AppError::unauthorized("X-User-Id does not match an active user. In local dev, bootstrap it via POST /auth/dev-bootstrap."))
     }
 }
 

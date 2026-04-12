@@ -14,7 +14,10 @@ use crate::{
 };
 
 use super::{
-    dto::{CreateExportJobRequest, CreateImportJobRequest},
+    dto::{
+        CreateExportJobRequest, CreateImportExecutionRequest, CreateImportJobRequest,
+        CreateImportPreviewRequest, CreatePortableExportRequest,
+    },
     service,
 };
 
@@ -54,6 +57,45 @@ pub async fn create_export_job(
 ) -> AppResult<impl IntoResponse> {
     let actor = actor_user_id(&headers)?;
     let response = service::create_export_job(&state, actor, payload).await?;
+    Ok((StatusCode::ACCEPTED, ok(response)))
+}
+
+pub async fn get_import_export_capabilities(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&headers)?;
+    let response = service::get_import_export_capabilities(&state, actor).await?;
+    Ok(ok(response))
+}
+
+pub async fn create_portable_export(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreatePortableExportRequest>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&headers)?;
+    let response = service::create_portable_export(&state, actor, payload).await?;
+    Ok((StatusCode::ACCEPTED, ok(response)))
+}
+
+pub async fn preview_import_bundle(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateImportPreviewRequest>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&headers)?;
+    let response = service::preview_import_bundle(&state, actor, payload).await?;
+    Ok(ok(response))
+}
+
+pub async fn create_import_execution(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateImportExecutionRequest>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&headers)?;
+    let response = service::create_import_execution(&state, actor, payload).await?;
     Ok((StatusCode::ACCEPTED, ok(response)))
 }
 

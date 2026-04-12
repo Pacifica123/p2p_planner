@@ -16,4 +16,5 @@ pub fn router() -> Router<AppState> {
         .route("/auth/sign-out", post(handler::sign_out))
         .route("/auth/sign-out-all", post(handler::sign_out_all))
         .route("/auth/session", get(handler::get_session))
+        .route("/auth/dev-bootstrap", post(handler::bootstrap_dev_user))
 }

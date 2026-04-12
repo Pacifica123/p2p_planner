@@ -70,6 +70,8 @@
 - backup/export touchpoints;
 - подготовку мостика к будущему этапу import/export/backup.
 
+Детальная продуктовая и API policy для этого adapter'а фиксируется отдельным документом `docs/architecture/import-export-backup-v1.md`.
+
 ### 3.4. Webhooks
 Это тоже **system adapter layer**.
 

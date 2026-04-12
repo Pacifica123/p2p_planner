@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -97,4 +98,148 @@ pub struct WebhookReceiptResponse {
     pub status: String,
     pub message: String,
     pub accepted_event_types: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableEntityCounts {
+    pub workspaces: i32,
+    pub boards: i32,
+    pub columns: i32,
+    pub cards: i32,
+    pub comments: i32,
+    pub checklists: i32,
+    pub attachments: i32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableBundleSummary {
+    pub scope_kind: String,
+    pub entity_counts: PortableEntityCounts,
+    pub includes_activity_history: bool,
+    pub includes_appearance: bool,
+    pub includes_archived: bool,
+    pub includes_attachments: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableBundleManifest {
+    pub format: String,
+    pub format_version: i32,
+    pub bundle_kind: String,
+    pub scope_kind: String,
+    pub workspace_id: Option<Uuid>,
+    pub board_id: Option<Uuid>,
+    pub includes_local_metadata: bool,
+    pub summary: PortableBundleSummary,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportExportCapabilitiesResponse {
+    pub provider_key: String,
+    pub format: String,
+    pub format_version: i32,
+    pub supported_export_modes: Vec<String>,
+    pub client_only_backup_modes: Vec<String>,
+    pub supported_import_modes: Vec<String>,
+    pub supported_scope_kinds: Vec<String>,
+    pub supported_restore_strategies: Vec<String>,
+    pub max_bundle_size_bytes: Option<i64>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePortableExportRequest {
+    pub scope_kind: String,
+    pub workspace_id: Option<Uuid>,
+    pub board_id: Option<Uuid>,
+    pub export_mode: String,
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(default)]
+    pub include_activity_history: bool,
+    #[serde(default = "default_true")]
+    pub include_appearance: bool,
+    #[serde(default)]
+    pub include_attachments: bool,
+    pub target_ref: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableExportResponse {
+    pub job_id: Uuid,
+    pub provider_key: String,
+    pub status: String,
+    pub export_mode: String,
+    pub suggested_file_name: String,
+    pub target_ref: Option<String>,
+    pub bundle_manifest: PortableBundleManifest,
+    pub message: String,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateImportPreviewRequest {
+    pub source_ref: Option<String>,
+    pub import_mode: String,
+    pub target_workspace_id: Option<Uuid>,
+    pub restore_strategy: String,
+    #[serde(default)]
+    pub bundle_manifest: Value,
+    #[serde(default)]
+    pub options: Value,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreviewResponse {
+    pub preview_id: Uuid,
+    pub provider_key: String,
+    pub status: String,
+    pub detected_format: String,
+    pub detected_format_version: i32,
+    pub import_mode: String,
+    pub restore_strategy: String,
+    pub requires_manual_review: bool,
+    pub warnings: Vec<String>,
+    pub steps: Vec<String>,
+    pub summary: PortableBundleSummary,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateImportExecutionRequest {
+    pub source_ref: Option<String>,
+    pub import_mode: String,
+    pub target_workspace_id: Option<Uuid>,
+    pub restore_strategy: String,
+    pub preview_id: Option<Uuid>,
+    #[serde(default)]
+    pub bundle_manifest: Value,
+    #[serde(default)]
+    pub options: Value,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportExecutionResponse {
+    pub job_id: Uuid,
+    pub provider_key: String,
+    pub status: String,
+    pub import_mode: String,
+    pub restore_strategy: String,
+    pub preview_id: Option<Uuid>,
+    pub target_workspace_id: Option<Uuid>,
+    pub message: String,
+    pub warnings: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
