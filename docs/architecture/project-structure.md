@@ -26,6 +26,8 @@ docs/
     project-structure.md
     database.md
     backend-modules.md
+    conflict-resolution-v1.md
+    p2p-relay-bootstrap-abstraction-v1.md
 
 backend/
   migrations/
@@ -51,6 +53,10 @@ backend/
       sync/
       users/
       invitations/
+    transport/
+      bootstrap/
+      relay/
+      discovery/
     app.rs
     config.rs
     error.rs
@@ -85,6 +91,10 @@ frontend/
         api/
         config/
         lib/
+        sync/
+          engine/
+          transport/
+          topology/
         types/
         ui/
 
@@ -120,3 +130,10 @@ shared-contracts/
 
 ### 6. Mobile вводится позже
 Каталог mobile резервируется заранее, но не раздувает current scope.
+
+
+### 7. Transport/topology слой выделяется отдельно
+Даже если concrete runtime сначала coordinator-only, в структуре заранее
+резервируется место для `transport`, `bootstrap`, `relay`, `discovery` и
+frontend-side sync/transport adapters. Это нужно, чтобы optional p2p
+добавлялся как отдельный слой, а не растекался по UI и CRUD-модулям.

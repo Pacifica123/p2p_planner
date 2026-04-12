@@ -1,71 +1,102 @@
 # Политика разрешения конфликтов
 
+Этот документ фиксирует **канонические правила**, а подробная матрица, примеры и UX-policy раскрыты в `docs/architecture/conflict-resolution-v1.md`.
+
 ## Общий принцип
 
-В проекте запрещен неявный конфликт-менеджмент "по удаче". Для каждого класса
-данных должна существовать явная стратегия слияния или отклонения.
+В проекте запрещен неявный conflict-management "по удаче". Для каждого класса данных должна существовать явная стратегия:
+- `LWW per field`;
+- merge by field;
+- structural merge;
+- reject/quarantine;
+- manual resolution surface.
 
-Важно: в MVP детально обязаны быть покрыты **core-сущности**:
-- workspace / board / column / card;
-- labels;
-- checklists;
-- comments;
-- sync-технические delete/tombstone сценарии.
+Важно: для реальной реализации конфликтов и идемпотентности нужны **оба** поля:
+- `replicaSeq` — порядок внутри реплики;
+- `logicalClock` — causal/merge ordering.
 
-Future-ready сущности вроде attachments, custom fields и integrations могут
-получить отдельную матрицу конфликтов позже.
+`serverOrder` нужен для event-stream replay и cursor progress, но не подменяет semantic winner selection для одного и того же поля.
 
 ## Базовые стратегии
 
 ### 1. Last-Write-Wins per field
 Используется для:
 - простых scalar-полей;
-- описаний;
-- названий;
-- неструктурированных текстовых атрибутов, если допустима потеря одного из
-  параллельных изменений.
+- short text;
+- enum/flag/date values;
+- low-stakes appearance settings.
 
-### 2. Operation-based merge
+Сравнение идет по conflict-key:
+1. `logicalClock`
+2. `replicaSeq` внутри той же реплики
+3. `replicaId`
+4. `eventId`
+
+### 2. Merge by field
+Используется, когда разные реплики изменили разные поля одной сущности.
+
+Пример:
+- `card.title` и `card.dueAt`;
+- `board.name` и `board.description`.
+
+### 3. Structural operation merge
 Используется для:
 - reorder колонок;
-- reorder карточек;
-- add/remove labels;
-- add/remove checklist items.
+- move/reorder карточек;
+- reorder checklist items.
 
-### 3. Reject or manual resolution
-Используется там, где автоматическое слияние разрушает смысл.
+Порядок нельзя надежно восстанавливать только по `updated_at`, поэтому reorder/move считается отдельной операцией.
+
+### 4. Membership/set merge
+Используется для:
+- add/remove labels;
+- add/remove checklist items;
+- add/remove membership edges.
+
+`add/add` и `remove/remove` идемпотентны. `add/remove` той же связи разрешается по policy membership winner, но lifecycle guards по parent/delete остаются сильнее.
+
+### 5. Reject or manual resolution
+Используется там, где автоматическое слияние разрушает смысл или trust.
 
 Примеры:
-- две несовместимые structural-операции;
-- удаление и глубокое редактирование одной и той же сущности;
-- изменения после revoke/restriction.
+- delete vs meaningful local edit;
+- parent deleted / archived;
+- permission loss;
+- uniqueness collision;
+- high-value text loss.
 
-## Приоритет tombstone
+## Приоритет lifecycle и tombstone
 
-Tombstone имеет больший приоритет, чем старое состояние сущности, если только:
-- не существует документированного сценария восстановления;
-- не доказано, что восстановление является более новым и валидным действием.
+Tombstone и lifecycle guards имеют приоритет над stale update, если только:
+- не существует отдельной валидной операции `restore`;
+- не пройдены права и инварианты для восстановления.
 
-## Особый случай: порядок элементов
+Следствия:
+- delete по умолчанию выигрывает у stale edit;
+- archive/revoke/policy denial не маскируются под обычный merge;
+- implicit resurrection запрещен.
 
-Порядок колонок, карточек и checklist items нельзя надежно восстанавливать только
-по `updated_at`. Нужны отдельные reorder-операции и позиционные поля.
+## Особые случаи
 
-## Особый случай: delete vs update
+### Ordered structures
+Порядок колонок, карточек и checklist items нельзя выводить только из `updated_at`. Нужны отдельные reorder-операции и позиционные поля.
 
-Если одна реплика удаляет сущность, а другая редактирует устаревшую копию, по
-умолчанию приоритет у delete/tombstone, если только более новая валидная операция
-восстановления не зафиксирована явно.
+### High-value text
+Для `card.description`, `comment.body` и других содержательных текстовых полей допустим canonical auto-outcome, но проигравший локальный текст должен сохраняться в `conflict_stub`, если его потеря заметна пользователю.
 
-## Особый случай: comments
+### Comments
+Для comments допускается:
+- concurrent create -> append обеих записей;
+- `comment.body` -> `LWW per field`;
+- delete vs edit -> delete wins canonically + review/copy surface.
 
-Для comments допустим LWW на уровне тела комментария и soft delete/tombstone для
-удаления. Полноценный merge rich-text редактора не входит в MVP.
+### Read models
+`activity_entries` и `audit_log` не являются источником разрешения конфликтов. Они отражают исход canonical операций, но не выбирают winner.
 
 ## Технические требования
 
 1. Решение конфликтов должно быть детерминированным.
 2. Повторное применение одинакового набора событий должно давать тот же результат.
-3. Политика конфликтов должна тестироваться отдельно от HTTP-хендлеров.
-4. В MVP допустимо отсутствие отдельного пользовательского conflict center,
-   если backend и клиент применяют один и тот же детерминированный результат.
+3. Duplicate/replay не должен показываться пользователю как обычный conflict.
+4. Conflict policy должна тестироваться отдельно от HTTP-хендлеров.
+5. В MVP допустимо отсутствие отдельного conflict center, но не допустимо скрывать meaningful loss без user-visible surface.

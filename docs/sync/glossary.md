@@ -44,6 +44,18 @@ Replica не следует трактовать как обязательный
 Backend-компонент, который принимает изменения, хранит прогресс и координирует
 sync между клиентом и серверной моделью.
 
+### Relay
+Transport/runtime-компонент, который помогает доставке и rendezvous между сторонами, но не должен становиться canonical source of truth для merge policy или current state.
+
+### Bootstrap
+Отдельный шаг начального согласования маршрута или режима sync: coordinator endpoint, relay ticket, peer route hint, capability flags. Bootstrap не равен самому sync exchange.
+
+### Peer discovery
+Поиск возможных peer route candidates для scope или pairing-сценария. Discovery — это topology layer, а не часть доменного CRUD или merge policy.
+
+### Transport mode
+Текущий способ доставки sync envelopes: `coordinator`, `relay_assisted` или `direct_peer`. Transport mode может влиять на diagnostics/latency, но не должен менять conflict semantics.
+
 ## Единицы изменений
 
 ### Mutation
@@ -79,10 +91,19 @@ Archive не равен tombstone.
 Маркер того, до какого места одна сторона знает журнал другой стороны.
 
 ### Logical clock
-Логическое упорядочивание изменений внутри replica/change stream.
+Логическое упорядочивание изменений внутри replica/change stream. Используется для causal/merge semantics, а не только как transport-метка.
+
+### Replica sequence / `replicaSeq`
+Строго монотонный порядок событий внутри одной реплики. Нужен для идемпотентности, обнаружения out-of-order/gap и tie-break внутри одного replica stream.
+
+### Server order / `serverOrder`
+Глобально возрастающий порядок, назначенный coordinator/backend принятому событию. Используется для replay и cursor progress, но не всегда является semantic winner selector для same-field conflict.
 
 ### Ack
 Подтверждение приема и/или продвижения курсора.
+
+### Route hint
+Подсказка от bootstrap/discovery слоя о доступном пути связи: coordinator endpoint, relay endpoint/ticket или peer signaling hint.
 
 ### Idempotency
 Повторная доставка одного и того же изменения не должна ломать состояние и не
@@ -111,7 +132,13 @@ Archive не равен tombstone.
 Ситуация, когда несколько изменений нельзя наивно применить как один линейный поток.
 
 ### LWW per field
-Выбор более нового значения для простого scalar-поля.
+Выбор более нового значения для простого scalar-поля. В проекте сравнение идет не по wall-clock, а по documented conflict-key на основе `logicalClock`, `replicaSeq` и стабильных tie-break rules.
+
+### Conflict stub
+UI-visible marker, который означает, что canonical outcome уже известен, но пользователю нужно показать losing local value, review action или объяснение semantic conflict.
+
+### Manual resolution
+Ограниченный пользовательский flow для случаев, где silent auto-outcome подорвет trust: meaningful text loss, delete-vs-edit, uniqueness collision, permission/lifecycle denial.
 
 ### Reject / quarantine
 Защитное отклонение или изоляция изменения, если оно нарушает права, жизненный

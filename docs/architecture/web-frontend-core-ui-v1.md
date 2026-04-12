@@ -365,6 +365,8 @@ frontend/
 
 Нельзя в этом этапе зашивать предположения о будущем offline/sync поведении в UI contracts.
 
+Этот запрет относился именно к этапу web core UI. Полноценные правила local-first data layer, hydration, pending ops и offline UX фиксируются позже отдельным документом `docs/architecture/local-first-data-layer-v1.md`.
+
 ---
 
 ## 10. Что считаем результатом этапа

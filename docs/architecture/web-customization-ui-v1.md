@@ -256,19 +256,20 @@ Reason:
 
 On Save:
 
-- the client performs an optimistic cache update for `me/appearance`;
+- the client commits the new appearance into local persisted state immediately;
 - the web shell already visually matches the draft because preview was active;
-- if the request fails, cache is rolled back;
-- reset/refresh returns to persisted server state.
+- pending sync status is shown separately from the appearance value itself;
+- if the request fails, the operation becomes `failed/retryable` by default instead of forcing an immediate hard rollback;
+- reset/refresh may later restore the last server-confirmed state if the user explicitly discards the failed local change.
 
 ### Board appearance save
 
 On Save:
 
-- the client performs an optimistic cache update for `board appearance`;
+- the client commits the new board appearance into local persisted state immediately;
 - the dedicated preview screen already matches the draft;
-- board page picks up the updated cache once the mutation succeeds;
-- on failure, cache rolls back to the previous persisted appearance.
+- board page can pick up the locally committed appearance before server confirmation;
+- on failure, the operation moves into `failed/retryable` unless the UI explicitly chooses discard-and-rollback.
 
 Important limitation for v1:
 
@@ -281,10 +282,10 @@ Important limitation for v1:
 
 ### Persisted state
 
-Persisted state is what comes from or is confirmed by the backend:
+Persisted state is what already lives in the client's durable local store and is either hydrated from or later confirmed by the backend:
 
-- query data for `me/appearance`;
-- query data for `board appearance`.
+- local persisted `me/appearance`;
+- local persisted `board appearance`.
 
 ### Purely local preview state
 
@@ -301,6 +302,7 @@ Examples:
 2. Board preview draft must not be treated as shared state until Save succeeds.
 3. User preview draft may affect only the current shell session, not other devices or users.
 4. Closing or resetting the screen may discard local preview state.
+5. Successful Save moves the value from preview state into local persisted state even before server confirmation.
 
 ---
 

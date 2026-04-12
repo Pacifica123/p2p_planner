@@ -58,6 +58,9 @@
 4. Tombstone имеет приоритет над устаревшим snapshot/patch без доказательства
    более нового допустимого восстановления.
 5. SyncCursor обновляется только вперед относительно известного прогресса.
+6. `serverOrder` задает replay order, но не подменяет semantic winner selection для одного и того же поля.
+7. Неявное resurrection удаленной сущности через stale update запрещено; восстановление возможно только через отдельную валидную операцию restore/recreate.
+8. Derived read models (`activity_entries`, audit) не участвуют в выборе winner для доменного конфликта.
 
 ## Integrations
 
