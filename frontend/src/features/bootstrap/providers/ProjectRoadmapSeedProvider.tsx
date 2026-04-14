@@ -1,6 +1,7 @@
 import type { PropsWithChildren } from 'react';
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { env } from '@/shared/config/env';
 import { useAuthSession } from '@/app/providers/AuthSessionProvider';
 import { ensureProjectRoadmapSeed } from '@/features/bootstrap/lib/projectRoadmapSeed';
 
@@ -11,6 +12,7 @@ export function ProjectRoadmapSeedProvider({ children }: PropsWithChildren) {
   const seedStateRef = useRef<Record<string, 'running' | 'done'>>({});
 
   useEffect(() => {
+    if (!env.enableProjectRoadmapSeed) return;
     if (status !== 'authenticated' || !user?.id) return;
     if (seedStateRef.current[userId]) return;
     seedStateRef.current[userId] = 'running';

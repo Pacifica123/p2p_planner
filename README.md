@@ -77,3 +77,36 @@ VITE_DEV_USER_ID=11111111-1111-7111-8111-111111111111
 - conflict resolution policy;
 - security/privacy/threat model;
 - доведение auth/session flow до полноценного UX.
+
+## Тестирование
+
+На текущем этапе в репозитории уже есть backend smoke и integration проверки, а общая стратегия описана в:
+
+- `docs/architecture/testing-strategy-v1.md`;
+- `docs/architecture/testing-pyramid-v1.md`;
+- `docs/architecture/testing-application-guide-v1.md`;
+- `backend/tests/SMOKE_SCENARIOS.md`.
+
+Быстрые полезные команды:
+
+```bash
+cd frontend
+npm install
+npm run test:run
+```
+
+```bash
+cd backend
+python tests/smoke_core_api.py
+```
+
+```bash
+cd backend
+cargo test --test core_crud_smoke -- --ignored
+cargo test --test appearance_smoke -- --ignored
+```
+
+```bash
+cd frontend
+npm run test:browser
+```

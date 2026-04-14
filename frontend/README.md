@@ -36,3 +36,38 @@ VITE_DEV_USER_ID=11111111-1111-7111-8111-111111111111
 - убран разъехавшийся вертикальный stretch в board layout;
 - sidebar списки стали аккуратнее при большом количестве элементов;
 - глобальные стили собраны без дублирования и с более предсказуемым responsive-поведением.
+
+
+## Тестирование
+
+### Unit и integration
+
+После установки зависимостей:
+
+```bash
+npm run test:run
+```
+
+Для watch-режима:
+
+```bash
+npm test
+```
+
+### Browser smoke
+
+Один раз установи браузеры Playwright:
+
+```bash
+npx playwright install
+```
+
+После этого можно запускать короткий browser smoke:
+
+```bash
+npm run test:browser
+```
+
+Smoke использует mocked API responses и временно отключает автосид dev-roadmap board, чтобы сценарий оставался быстрым и детерминированным.
+
+Подробная инструкция по тестированию всего приложения: `../docs/architecture/testing-application-guide-v1.md`.

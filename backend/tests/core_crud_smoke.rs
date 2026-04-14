@@ -31,21 +31,39 @@ fn test_settings(database_url: String) -> Settings {
         },
         http: HttpSettings {
             body_limit_mb: 10,
-            cors_allowed_origins: vec!["*".to_string()],
+            cors_allowed_origins: vec![
+                "http://localhost:3000".to_string(),
+                "http://127.0.0.1:3000".to_string(),
+                "http://localhost:5173".to_string(),
+                "http://127.0.0.1:5173".to_string(),
+            ],
         },
         auth: AuthSettings {
             jwt_secret: "test-secret".to_string(),
+            previous_jwt_secrets: vec![],
             access_token_ttl_minutes: 15,
             refresh_token_ttl_days: 30,
             public_signup_enabled: true,
+            refresh_cookie_name: "p2p_planner_refresh".to_string(),
+            device_cookie_name: "p2p_planner_device".to_string(),
+            cookie_same_site: p2p_planner_backend::config::CookieSameSite::Lax,
+            cookie_secure: false,
+            enable_dev_header_auth: true,
+            auth_rate_limit_window_secs: 60,
+            auth_rate_limit_max_attempts: 20,
+            sensitive_rate_limit_window_secs: 60,
+            sensitive_rate_limit_max_attempts: 60,
         },
     }
 }
 
 async fn setup() -> anyhow::Result<(PgPool, axum::Router)> {
+    dotenvy::dotenv().ok();
+
     let database_url = std::env::var("TEST_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
-        .expect("TEST_DATABASE_URL or DATABASE_URL must be set for smoke tests");
+        .or_else(|_| Settings::load().map(|s| s.database.url))
+        .expect("TEST_DATABASE_URL, DATABASE_URL, or DATABASE__URL via Settings::load must be set for smoke tests");
 
     let settings = test_settings(database_url.clone());
     let pool = PgPool::connect(&database_url).await?;

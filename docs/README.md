@@ -45,7 +45,10 @@
    `architecture/p2p-relay-bootstrap-abstraction-v1.md`,
    `architecture/integrations-architecture-v1.md`,
    `architecture/import-export-backup-v1.md`,
-   `architecture/security-privacy-threat-model-v1.1.md`
+   `architecture/security-privacy-threat-model-v1.1.md`,
+   `architecture/testing-strategy-v1.md`,
+   `architecture/testing-pyramid-v1.md`,
+   `architecture/testing-application-guide-v1.md`
    и `architecture/project-structure.md`.
 6. И только потом `api/openapi.yaml`, `sync/protocol.md` и
    `sync/conflict-resolution.md`.
@@ -75,3 +78,9 @@ local-first, sync и optional p2p.
 - `docs/architecture/import-export-backup-v1.md` — import/export/backup v1: portable bundle format, backup semantics, restore expectations и preview/apply flow.
 
 - `docs/architecture/security-privacy-threat-model-v1.1.md` — security/privacy/threat model v1.1: trust boundaries, security invariants, auth/session semantics, logging/redaction policy, privacy lifecycle, operational security baseline и release gates.
+
+- `docs/architecture/testing-strategy-v1.md` — testing strategy v1: test layers, mandatory coverage, contract discipline, sync/conflict scenarios, fixture strategy, determinism and replayability.
+
+- `docs/architecture/testing-pyramid-v1.md` — testing pyramid v1: practical ratio of unit/integration/contract/smoke checks and expected quality gates.
+
+- `docs/architecture/testing-application-guide-v1.md` — practical local test guide: backend/frontend commands, browser smoke flow, prerequisites and recommended pre-commit order.

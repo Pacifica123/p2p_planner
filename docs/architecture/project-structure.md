@@ -32,10 +32,23 @@ docs/
     p2p-relay-bootstrap-abstraction-v1.md
     integrations-architecture-v1.md
     import-export-backup-v1.md
+    security-privacy-threat-model-v1.1.md
+    testing-strategy-v1.md
+    testing-pyramid-v1.md
+    testing-application-guide-v1.md
 
 backend/
   migrations/
   tests/
+    README.md
+    *.rs
+    smoke_core_api.py
+    SMOKE_SCENARIOS.md
+    smoke/
+    contract/
+    fixtures/
+    scenarios/
+    support/
   src/
     auth/
     db/
@@ -64,6 +77,10 @@ backend/
     telemetry.rs
 
 frontend/
+  playwright.config.ts
+  e2e/
+    README.md
+    smoke/
   src/
     app/
       layouts/
@@ -86,6 +103,15 @@ frontend/
       lib/
       types/
       ui/
+    test/
+      README.md
+      setup.ts
+      renderWithProviders.tsx
+      unit/
+      integration/
+      contracts/
+      fixtures/
+      factories/
     main.tsx
 ```
 
@@ -96,7 +122,7 @@ frontend/
 
 ### 2. Product-first reading order
 Сначала читается `product/`, затем термины и glossary, потом ADR и только после
-этого детали домена, БД, local-first, sync и integrations.
+этого детали домена, БД, local-first, sync, integrations и testing strategy.
 
 ### 3. Backend модульный
 Модули backend группируются по домену, а не по техническим таблицам.
@@ -125,3 +151,8 @@ frontend-side sync/transport adapters. Это нужно, чтобы optional p2
 orchestration и webhook boundaries. Это уменьшает риск того, что
 GitHub/Obsidian/import/export логика потом начнет протекать в `boards`, `cards`
 или `sync`.
+
+### 9. Test assets отделяются по смыслу
+- backend integration tests остаются в `backend/tests/*.rs`, потому что это естественная точка входа для `cargo test`;
+- contract/fixtures/scenarios/support выносятся в отдельные подкаталоги, чтобы sync/conflict и API data не смешивались с black-box smoke;
+- frontend unit/integration/contracts/fixtures/factories разделяются с самого начала, чтобы local-first и browser smoke не превратились в один хаотичный слой.
