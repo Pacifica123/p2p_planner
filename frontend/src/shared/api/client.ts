@@ -1,5 +1,4 @@
 import { env } from '@/shared/config/env';
-import { resolveDevUserId } from '@/app/providers/DevSessionProvider';
 import { ApiError } from '@/shared/api/errors';
 
 interface ApiEnvelope<T> {
@@ -12,6 +11,20 @@ interface ErrorEnvelope {
     message?: string;
     details?: unknown;
   };
+}
+
+let accessToken: string | null = null;
+
+export function setAccessToken(next: string | null) {
+  accessToken = next?.trim() || null;
+}
+
+export function clearAccessToken() {
+  accessToken = null;
+}
+
+export function getAccessToken() {
+  return accessToken;
 }
 
 async function parseJson(response: Response) {
@@ -32,12 +45,15 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     headers.set('Content-Type', 'application/json');
   }
 
-  headers.set('X-User-Id', resolveDevUserId());
+  if (accessToken) {
+    headers.set('Authorization', `Bearer ${accessToken}`);
+  }
 
   let response: Response;
   try {
     response = await fetch(`${env.apiBaseUrl}${path}`, {
       ...init,
+      credentials: 'include',
       headers,
     });
   } catch (error) {
@@ -53,6 +69,9 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
 
   if (!response.ok) {
     const error = (payload as ErrorEnvelope | null)?.error;
+    if (response.status === 401) {
+      clearAccessToken();
+    }
     throw new ApiError(error?.message || `Request failed with ${response.status}`, {
       status: response.status,
       code: error?.code,

@@ -1,15 +1,15 @@
 import { NavLink, Outlet, useParams } from 'react-router-dom';
 import { paths } from '@/app/router/paths';
-import { useDevSession } from '@/app/providers/DevSessionProvider';
-import { env } from '@/shared/config/env';
+import { useAuthSession } from '@/app/providers/AuthSessionProvider';
 import { useWorkspacesQuery } from '@/features/workspaces/hooks/useWorkspaces';
 import { useBoardsQuery } from '@/features/boards/hooks/useBoards';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { ErrorState } from '@/shared/ui/ErrorState';
+import { Button } from '@/shared/ui/Button';
 
 export function MainLayout() {
   const { workspaceId, boardId } = useParams();
-  const { userId, setUserId } = useDevSession();
+  const { user, signOutCurrent, signOutEverywhere } = useAuthSession();
   const workspacesQuery = useWorkspacesQuery();
   const boardsQuery = useBoardsQuery(workspaceId);
 
@@ -92,16 +92,19 @@ export function MainLayout() {
       <div className="app-main">
         <header className="topbar">
           <div>
-            <h1 className="topbar__title">P2P Planner: workspaces, boards and appearance</h1>
-            <p className="topbar__subtitle">Текущий web-клиент поверх подтвержденного backend API: core kanban flow + appearance + activity.</p>
+            <h1 className="topbar__title">P2P Planner: secured session baseline</h1>
+            <p className="topbar__subtitle">Auth теперь идет через session/refresh flow, а доступ к API больше не строится вокруг X-User-Id.</p>
           </div>
 
           <div className="topbar__controls">
-            <label className="field field--compact">
-              <span className="field__label">Dev user id</span>
-              <input value={userId} onChange={(event) => setUserId(event.target.value)} className="field__input" />
-            </label>
-            <div className="topbar__hint">API: {env.apiBaseUrl}</div>
+            <div className="topbar__hint">
+              <strong>{user?.displayName || 'Unknown user'}</strong>
+              <div>{user?.email}</div>
+            </div>
+            <Button onClick={() => void signOutCurrent()}>Sign out</Button>
+            <Button variant="danger" onClick={() => void signOutEverywhere()}>
+              Sign out all
+            </Button>
           </div>
         </header>
 

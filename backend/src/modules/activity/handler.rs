@@ -20,7 +20,7 @@ pub async fn list_board_activity(
     Path(board_id): Path<Uuid>,
     Query(query): Query<ListActivityQuery>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let activity = service::list_board_activity(&state, actor, board_id, query).await?;
     Ok(ok(activity))
 }
@@ -31,7 +31,7 @@ pub async fn list_card_activity(
     Path(card_id): Path<Uuid>,
     Query(query): Query<ListActivityQuery>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let activity = service::list_card_activity(&state, actor, card_id, query).await?;
     Ok(ok(activity))
 }

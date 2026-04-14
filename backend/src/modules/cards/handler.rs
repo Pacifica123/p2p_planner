@@ -24,7 +24,7 @@ pub async fn list_cards(
     Path(board_id): Path<Uuid>,
     Query(query): Query<ListCardsQuery>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let cards = service::list_cards(&state, actor, board_id, query).await?;
     Ok(ok(cards))
 }
@@ -35,7 +35,7 @@ pub async fn create_card(
     Path(board_id): Path<Uuid>,
     Json(payload): Json<CreateCardRequest>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let card = service::create_card(&state, actor, board_id, payload).await?;
     Ok((StatusCode::CREATED, ok(card)))
 }
@@ -45,7 +45,7 @@ pub async fn get_card(
     headers: HeaderMap,
     Path(card_id): Path<Uuid>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let card = service::get_card(&state, actor, card_id).await?;
     Ok(ok(card))
 }
@@ -56,7 +56,7 @@ pub async fn update_card(
     Path(card_id): Path<Uuid>,
     Json(payload): Json<UpdateCardRequest>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let card = service::update_card(&state, actor, card_id, payload).await?;
     Ok(ok(card))
 }
@@ -66,7 +66,7 @@ pub async fn delete_card(
     headers: HeaderMap,
     Path(card_id): Path<Uuid>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let card = service::delete_card(&state, actor, card_id).await?;
     Ok(ok(card))
 }
@@ -77,7 +77,7 @@ pub async fn move_card(
     Path(card_id): Path<Uuid>,
     Json(payload): Json<MoveCardRequest>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let card = service::move_card(&state, actor, card_id, payload).await?;
     Ok(ok(card))
 }
@@ -87,7 +87,7 @@ pub async fn archive_card(
     headers: HeaderMap,
     Path(card_id): Path<Uuid>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let card = service::archive_card(&state, actor, card_id).await?;
     Ok(ok(card))
 }
@@ -97,7 +97,7 @@ pub async fn unarchive_card(
     headers: HeaderMap,
     Path(card_id): Path<Uuid>,
 ) -> AppResult<impl IntoResponse> {
-    let actor = actor_user_id(&headers)?;
+    let actor = actor_user_id(&state, &headers).await?;
     let card = service::unarchive_card(&state, actor, card_id).await?;
     Ok(ok(card))
 }

@@ -3,24 +3,40 @@ use std::time::Duration;
 use axum::{
     BoxError, Router,
     error_handling::HandleErrorLayer,
-    http::{HeaderName, Method, StatusCode, header},
+    http::{HeaderValue, Method, StatusCode, header},
+    middleware,
     routing::get,
 };
 use tower::ServiceBuilder;
 use tower::timeout::TimeoutLayer;
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::{AllowOrigin, CorsLayer},
     limit::RequestBodyLimitLayer,
     trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 
-use crate::{http::router::{api_router, root_health}, state::AppState};
+use crate::{
+    http::{
+        middleware::rate_limit_middleware,
+        router::{api_router, root_health},
+    },
+    state::AppState,
+};
 
 pub fn build_app(state: AppState) -> Router {
     let body_limit_bytes = state.settings.http.body_limit_mb * 1024 * 1024;
 
+    let allowed_origins = state
+        .settings
+        .http
+        .cors_allowed_origins
+        .iter()
+        .filter_map(|value| HeaderValue::from_str(value).ok())
+        .collect::<Vec<_>>();
+
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::list(allowed_origins))
+        .allow_credentials(true)
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -33,10 +49,9 @@ pub fn build_app(state: AppState) -> Router {
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
             header::ACCEPT,
-            HeaderName::from_static("x-user-id"),
         ]);
 
-    let middleware = ServiceBuilder::new()
+    let middleware_stack = ServiceBuilder::new()
         .layer(RequestBodyLimitLayer::new(body_limit_bytes))
         .layer(
             TraceLayer::new_for_http()
@@ -45,14 +60,13 @@ pub fn build_app(state: AppState) -> Router {
                 .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
         )
         .layer(cors)
-        .layer(HandleErrorLayer::new(|_: BoxError| async {
-            StatusCode::REQUEST_TIMEOUT
-        }))
+        .layer(HandleErrorLayer::new(|_: BoxError| async { StatusCode::REQUEST_TIMEOUT }))
         .layer(TimeoutLayer::new(Duration::from_secs(30)));
 
     Router::new()
         .route("/health", get(root_health))
         .nest("/api/v1", api_router())
-        .layer(middleware)
+        .layer(middleware::from_fn_with_state(state.clone(), rate_limit_middleware))
+        .layer(middleware_stack)
         .with_state(state)
 }

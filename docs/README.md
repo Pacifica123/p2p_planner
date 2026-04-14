@@ -44,7 +44,8 @@
    `architecture/conflict-resolution-v1.md`,
    `architecture/p2p-relay-bootstrap-abstraction-v1.md`,
    `architecture/integrations-architecture-v1.md`,
-   `architecture/import-export-backup-v1.md`
+   `architecture/import-export-backup-v1.md`,
+   `architecture/security-privacy-threat-model-v1.1.md`
    и `architecture/project-structure.md`.
 6. И только потом `api/openapi.yaml`, `sync/protocol.md` и
    `sync/conflict-resolution.md`.
@@ -72,3 +73,5 @@ local-first, sync и optional p2p.
 - `docs/architecture/integrations-architecture-v1.md` — integrations architecture v1: provider registry, import/export touchpoints, webhooks, domain-event boundary и adapter isolation.
 
 - `docs/architecture/import-export-backup-v1.md` — import/export/backup v1: portable bundle format, backup semantics, restore expectations и preview/apply flow.
+
+- `docs/architecture/security-privacy-threat-model-v1.1.md` — security/privacy/threat model v1.1: trust boundaries, security invariants, auth/session semantics, logging/redaction policy, privacy lifecycle, operational security baseline и release gates.

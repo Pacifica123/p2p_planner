@@ -86,6 +86,52 @@ fn normalize_kinds(mut kinds: Option<Vec<String>>) -> Option<Vec<String>> {
     }
 }
 
+
+fn redact_string(value: &str) -> Value {
+    if value.len() > 256 {
+        Value::String(format!("{}…", &value[..256]))
+    } else {
+        Value::String(value.to_string())
+    }
+}
+
+fn sanitize_json_value(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut sanitized = serde_json::Map::new();
+            for (key, inner) in map {
+                let lower = key.to_ascii_lowercase();
+                let redacted = matches!(
+                    lower.as_str(),
+                    "password"
+                        | "passwordhash"
+                        | "refreshtoken"
+                        | "accesstoken"
+                        | "authorization"
+                        | "cookie"
+                        | "description"
+                        | "customproperties"
+                        | "wallpapervalue"
+                        | "secret"
+                        | "token"
+                );
+                sanitized.insert(
+                    key.clone(),
+                    if redacted {
+                        Value::String("[redacted]".to_string())
+                    } else {
+                        sanitize_json_value(inner)
+                    },
+                );
+            }
+            Value::Object(sanitized)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_json_value).collect()),
+        Value::String(value) => redact_string(value),
+        _ => value.clone(),
+    }
+}
+
 fn map_activity_entry(row: &sqlx::postgres::PgRow) -> AppResult<ActivityEntryResponse> {
     Ok(ActivityEntryResponse {
         id: row.try_get::<Uuid, _>("id")?.to_string(),
@@ -140,7 +186,7 @@ where
     .bind(entry.entity_type)
     .bind(entry.entity_id)
     .bind(&entry.field_mask)
-    .bind(&entry.payload_jsonb)
+    .bind(sanitize_json_value(&entry.payload_jsonb))
     .bind(entry.request_id)
     .bind(entry.source_change_event_id)
     .bind(entry.source_audit_log_id)

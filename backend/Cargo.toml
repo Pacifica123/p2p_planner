@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+argon2 = "0.5"
+base64 = "0.22"
+hmac = "0.12"
+rand = "0.8"
+sha2 = "0.10"
 anyhow = "1"
 axum = { version = "0.8", features = ["json", "macros", "query", "tokio", "tracing"] }
 config = { version = "0.15", default-features = false, features = ["toml"] }

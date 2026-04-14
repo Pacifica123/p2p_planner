@@ -52,6 +52,52 @@ fn parse_uuid_filter(value: Option<String>, field_name: &str) -> AppResult<Optio
         .map_err(|_| AppError::bad_request(format!("{field_name} must be a valid UUID")))
 }
 
+
+fn redact_string(value: &str) -> Value {
+    if value.len() > 256 {
+        Value::String(format!("{}…", &value[..256]))
+    } else {
+        Value::String(value.to_string())
+    }
+}
+
+fn sanitize_json_value(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut sanitized = serde_json::Map::new();
+            for (key, inner) in map {
+                let lower = key.to_ascii_lowercase();
+                let redacted = matches!(
+                    lower.as_str(),
+                    "password"
+                        | "passwordhash"
+                        | "refreshtoken"
+                        | "accesstoken"
+                        | "authorization"
+                        | "cookie"
+                        | "description"
+                        | "customproperties"
+                        | "wallpapervalue"
+                        | "secret"
+                        | "token"
+                );
+                sanitized.insert(
+                    key.clone(),
+                    if redacted {
+                        Value::String("[redacted]".to_string())
+                    } else {
+                        sanitize_json_value(inner)
+                    },
+                );
+            }
+            Value::Object(sanitized)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_json_value).collect()),
+        Value::String(value) => redact_string(value),
+        _ => value.clone(),
+    }
+}
+
 fn map_audit_entry(row: &sqlx::postgres::PgRow) -> AppResult<AuditLogEntryResponse> {
     Ok(AuditLogEntryResponse {
         id: row.try_get::<Uuid, _>("id")?.to_string(),
@@ -97,7 +143,7 @@ where
     .bind(&entry.target_entity_type)
     .bind(entry.target_entity_id)
     .bind(entry.request_id)
-    .bind(&entry.metadata_jsonb)
+    .bind(sanitize_json_value(&entry.metadata_jsonb))
     .execute(executor)
     .await?;
 

@@ -1,15 +1,17 @@
 import type { PropsWithChildren } from 'react';
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useDevSession } from '@/app/providers/DevSessionProvider';
+import { useAuthSession } from '@/app/providers/AuthSessionProvider';
 import { ensureProjectRoadmapSeed } from '@/features/bootstrap/lib/projectRoadmapSeed';
 
 export function ProjectRoadmapSeedProvider({ children }: PropsWithChildren) {
-  const { userId } = useDevSession();
+  const { user, status } = useAuthSession();
+  const userId = user?.id || 'anonymous';
   const queryClient = useQueryClient();
   const seedStateRef = useRef<Record<string, 'running' | 'done'>>({});
 
   useEffect(() => {
+    if (status !== 'authenticated' || !user?.id) return;
     if (seedStateRef.current[userId]) return;
     seedStateRef.current[userId] = 'running';
 
@@ -24,7 +26,7 @@ export function ProjectRoadmapSeedProvider({ children }: PropsWithChildren) {
         delete seedStateRef.current[userId];
         console.warn('Project roadmap seed skipped:', error);
       });
-  }, [queryClient, userId]);
+  }, [queryClient, status, user?.id, userId]);
 
   return <>{children}</>;
 }

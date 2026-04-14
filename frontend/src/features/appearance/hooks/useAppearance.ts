@@ -5,7 +5,7 @@ import {
   updateBoardAppearance,
   updateMyAppearance,
 } from '@/features/appearance/api/appearance';
-import { useDevSession } from '@/app/providers/DevSessionProvider';
+import { useAuthSession } from '@/app/providers/AuthSessionProvider';
 import type {
   BoardAppearanceSettings,
   UpdateBoardAppearanceRequest,
@@ -17,10 +17,12 @@ export const myAppearanceQueryKey = (userId: string) => ['appearance', 'me', use
 export const boardAppearanceQueryKey = (boardId?: string) => ['appearance', 'board', boardId];
 
 export function useMyAppearanceQuery() {
-  const { userId } = useDevSession();
+  const { user } = useAuthSession();
+  const userId = user?.id || 'anonymous';
   return useQuery({
     queryKey: myAppearanceQueryKey(userId),
     queryFn: getMyAppearance,
+    enabled: Boolean(user?.id),
   });
 }
 
@@ -34,7 +36,8 @@ export function useBoardAppearanceQuery(boardId?: string) {
 
 export function useUpdateMyAppearanceMutation() {
   const queryClient = useQueryClient();
-  const { userId } = useDevSession();
+  const { user } = useAuthSession();
+  const userId = user?.id || 'anonymous';
 
   return useMutation({
     mutationFn: (input: UpdateUserAppearancePreferencesRequest) => updateMyAppearance(input),

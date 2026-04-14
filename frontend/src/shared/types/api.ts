@@ -356,3 +356,44 @@ export interface ImportExecutionResponse {
   message: string;
   warnings: string[];
 }
+
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  displayName: string;
+}
+
+export interface SignInRequest {
+  email: string;
+  password: string;
+}
+
+export interface SignUpRequest {
+  email: string;
+  password: string;
+  displayName: string;
+}
+
+export interface AuthSuccessResponse {
+  authenticated: boolean;
+  mode: string;
+  accessToken: string;
+  accessTokenExpiresAt: string;
+  sessionId: string;
+  deviceId: string;
+  user: AuthUser;
+}
+
+export interface SessionResponse {
+  authenticated: boolean;
+  mode: string;
+  sessionId: string | null;
+  deviceId: string | null;
+  user: AuthUser | null;
+}
+
+export interface SignOutResponse {
+  signedOut: boolean;
+  mode: string;
+}

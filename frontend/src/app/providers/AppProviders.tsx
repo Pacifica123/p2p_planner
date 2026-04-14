@@ -1,17 +1,17 @@
 import type { PropsWithChildren } from 'react';
 import { QueryProvider } from '@/app/providers/QueryProvider';
-import { DevSessionProvider } from '@/app/providers/DevSessionProvider';
+import { AuthSessionProvider } from '@/app/providers/AuthSessionProvider';
 import { AppearanceProvider } from '@/app/providers/AppearanceProvider';
 import { ProjectRoadmapSeedProvider } from '@/features/bootstrap/providers/ProjectRoadmapSeedProvider';
 
 export function AppProviders({ children }: PropsWithChildren) {
   return (
     <QueryProvider>
-      <DevSessionProvider>
+      <AuthSessionProvider>
         <ProjectRoadmapSeedProvider>
           <AppearanceProvider>{children}</AppearanceProvider>
         </ProjectRoadmapSeedProvider>
-      </DevSessionProvider>
+      </AuthSessionProvider>
     </QueryProvider>
   );
 }

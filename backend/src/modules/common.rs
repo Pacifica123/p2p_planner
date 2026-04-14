@@ -2,20 +2,75 @@ use axum::http::HeaderMap;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::error::{AppError, AppResult};
+use crate::{
+    auth::{repo, token::verify_access_token},
+    error::{AppError, AppResult},
+    http::middleware::bearer_token,
+    state::AppState,
+};
 
 pub const POSITION_GAP: f64 = 1024.0;
 
-pub fn actor_user_id(headers: &HeaderMap) -> AppResult<Uuid> {
-    headers
-        .get("x-user-id")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| Uuid::parse_str(value).ok())
-        .ok_or_else(|| {
-            AppError::unauthorized(
-                "Authentication is not wired yet. Pass X-User-Id with an existing user UUID.",
-            )
-        })
+#[derive(Debug, Clone)]
+pub struct AuthContext {
+    pub user_id: Uuid,
+    pub session_id: Uuid,
+    pub device_id: Uuid,
+    pub mode: &'static str,
+}
+
+pub async fn auth_context(state: &AppState, headers: &HeaderMap) -> AppResult<AuthContext> {
+    if let Some(token) = bearer_token(headers) {
+        let claims = verify_access_token(
+            &token,
+            &state.settings.auth.jwt_secret,
+            &state.settings.auth.previous_jwt_secrets,
+        )?;
+        let user_id = claims.user_id()?;
+        let session_id = claims.session_id()?;
+        let device_id = claims
+            .device_id()?
+            .ok_or_else(|| AppError::unauthorized("Access token is missing device binding"))?;
+
+        let Some(session) = repo::find_session_principal(&state.db, user_id, session_id).await? else {
+            return Err(AppError::unauthorized("Session is no longer active"));
+        };
+
+        if session.device_id != device_id {
+            return Err(AppError::unauthorized("Access token device binding mismatch"));
+        }
+
+        return Ok(AuthContext {
+            user_id,
+            session_id,
+            device_id,
+            mode: "bearer",
+        });
+    }
+
+    if state.settings.auth.enable_dev_header_auth {
+        let user_id = headers
+            .get("x-user-id")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| Uuid::parse_str(value).ok())
+            .ok_or_else(|| AppError::unauthorized("Missing bearer token"))?;
+
+        ensure_user_exists(&state.db, user_id).await?;
+        return Ok(AuthContext {
+            user_id,
+            session_id: Uuid::nil(),
+            device_id: Uuid::nil(),
+            mode: "dev_header",
+        });
+    }
+
+    Err(AppError::unauthorized(
+        "Authentication is required. Sign in to obtain a session.",
+    ))
+}
+
+pub async fn actor_user_id(state: &AppState, headers: &HeaderMap) -> AppResult<Uuid> {
+    Ok(auth_context(state, headers).await?.user_id)
 }
 
 pub fn normalize_limit(limit: Option<i64>) -> i64 {
@@ -46,7 +101,7 @@ pub async fn ensure_user_exists(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
     if exists {
         Ok(())
     } else {
-        Err(AppError::unauthorized("X-User-Id does not match an active user. In local dev, bootstrap it via POST /auth/dev-bootstrap."))
+        Err(AppError::unauthorized("Authenticated user is not active anymore"))
     }
 }
 

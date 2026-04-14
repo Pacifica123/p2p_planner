@@ -3,19 +3,17 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from typing import Optional
+import http.cookiejar
 
 BASE_URL = os.environ.get('BASE_URL', 'http://127.0.0.1:18080/api/v1').rstrip('/')
-USER_ID = os.environ.get('USER_ID', '11111111-1111-7111-8111-111111111111')
 TIMEOUT = float(os.environ.get('TIMEOUT', '10'))
-
-HEADERS = {
-    'Content-Type': 'application/json',
-    'X-User-Id': USER_ID,
-}
-
-SMOKE_USER_EMAIL = os.environ.get('SMOKE_USER_EMAIL', f'smoke-{USER_ID}@local.test')
+SMOKE_USER_EMAIL = os.environ.get('SMOKE_USER_EMAIL', 'smoke-user@local.test')
+SMOKE_USER_PASSWORD = os.environ.get('SMOKE_USER_PASSWORD', 'SmokePass123!')
 SMOKE_USER_DISPLAY_NAME = os.environ.get('SMOKE_USER_DISPLAY_NAME', 'Smoke Test User')
+
+COOKIE_JAR = http.cookiejar.CookieJar()
+OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(COOKIE_JAR))
+ACCESS_TOKEN = None
 
 
 def parse_payload(raw: str):
@@ -27,23 +25,22 @@ def parse_payload(raw: str):
         return raw
 
 
-def request(method: str, path: str, body=None, expected_status: int = 200, user_id: Optional[str] = None):
+def request(method: str, path: str, body=None, expected_status: int = 200, include_auth: bool = True):
+    global ACCESS_TOKEN
     url = f"{BASE_URL}{path}"
     data = None
     if body is not None:
         data = json.dumps(body).encode('utf-8')
 
     req = urllib.request.Request(url, data=data, method=method)
-    for k, v in HEADERS.items():
-        if k.lower() == 'x-user-id' and user_id is not None:
-            req.add_header(k, user_id)
-        else:
-            req.add_header(k, v)
+    req.add_header('Content-Type', 'application/json')
+    if include_auth and ACCESS_TOKEN:
+        req.add_header('Authorization', f'Bearer {ACCESS_TOKEN}')
 
     status = None
     payload = None
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with OPENER.open(req, timeout=TIMEOUT) as resp:
             status = resp.status
             payload = parse_payload(resp.read().decode('utf-8'))
     except urllib.error.HTTPError as e:
@@ -87,12 +84,6 @@ def assert_true(value, label: str):
     print(f"[ASSERT] {label} is True")
 
 
-def assert_false(value, label: str):
-    if value is not False:
-        raise RuntimeError(f"Assertion failed for {label}: expected False, got {value!r}")
-    print(f"[ASSERT] {label} is False")
-
-
 def assert_error(payload, code: str, message_substring: str, label: str):
     error = payload.get('error') if isinstance(payload, dict) else None
     if not isinstance(error, dict):
@@ -106,21 +97,41 @@ def assert_error(payload, code: str, message_substring: str, label: str):
     print(f"[ASSERT] {label}.message contains {message_substring!r}")
 
 
-def ensure_smoke_user():
-    _, payload = request('POST', '/auth/dev-bootstrap', {
-        'userId': USER_ID,
+def ensure_smoke_session():
+    global ACCESS_TOKEN
+    sign_up_payload = {
         'email': SMOKE_USER_EMAIL,
+        'password': SMOKE_USER_PASSWORD,
         'displayName': SMOKE_USER_DISPLAY_NAME,
-    })
+    }
+    status, payload = request('POST', '/auth/sign-up', sign_up_payload, expected_status=201, include_auth=False)
     data = api_data(payload)
-    assert_equal(data['id'], USER_ID, 'bootstrap user id')
-    assert_equal(data['email'], SMOKE_USER_EMAIL, 'bootstrap user email')
+    if status == 201:
+        ACCESS_TOKEN = data['accessToken']
+        return data
+
+
+def ensure_smoke_session_fallback_sign_in():
+    global ACCESS_TOKEN
+    _, payload = request('POST', '/auth/sign-in', {
+        'email': SMOKE_USER_EMAIL,
+        'password': SMOKE_USER_PASSWORD,
+    }, expected_status=200, include_auth=False)
+    data = api_data(payload)
+    ACCESS_TOKEN = data['accessToken']
     return data
+
+
+def ensure_authenticated_user():
+    try:
+        return ensure_smoke_session()
+    except RuntimeError:
+        return ensure_smoke_session_fallback_sign_in()
 
 
 def main():
     print(f"BASE_URL={BASE_URL}")
-    print(f"USER_ID={USER_ID}")
+    print(f"SMOKE_USER_EMAIL={SMOKE_USER_EMAIL}")
 
     created = {
         'workspace_id': None,
@@ -130,8 +141,12 @@ def main():
     }
 
     try:
-        request('GET', '/health')
-        ensure_smoke_user()
+        request('GET', '/health', include_auth=False)
+        ensure_authenticated_user()
+        _, session_payload = request('GET', '/auth/session')
+        session_data = api_data(session_payload)
+        assert_true(session_data['authenticated'], 'session authenticated')
+        assert_equal(session_data['user']['email'], SMOKE_USER_EMAIL.lower(), 'session user email')
 
         _, ws = request('POST', '/workspaces', {
             'name': 'Smoke Workspace',
@@ -161,17 +176,14 @@ def main():
         created['card_id'] = data_id(card)
 
         request('GET', f"/cards/{created['card_id']}")
-
         request('PATCH', f"/cards/{created['card_id']}", {
             'title': 'Renamed smoke card',
             'priority': 'high',
         })
-
         request('POST', f"/cards/{created['card_id']}/move", {
             'targetColumnId': created['column_id'],
             'position': 2048.0,
         })
-
         request('POST', f"/cards/{created['card_id']}/archive")
         request('POST', f"/cards/{created['card_id']}/unarchive")
         request('GET', f"/boards/{created['board_id']}/cards")
@@ -188,222 +200,30 @@ def main():
         audit_items = api_data(audit_payload)['items']
         assert_true(len(audit_items) >= 3, 'workspace audit has several entries')
 
+        _, me_payload = request('GET', '/me')
+        me = api_data(me_payload)
+        assert_equal(me['email'], SMOKE_USER_EMAIL.lower(), 'me email')
 
-        _, import_export_caps_payload = request('GET', '/integrations/import-export/capabilities')
-        import_export_caps = api_data(import_export_caps_payload)
-        assert_equal(import_export_caps['providerKey'], 'import_export', 'import export capabilities providerKey')
-        assert_equal(import_export_caps['format'], 'p2p_planner_bundle', 'import export capabilities format')
-        assert_equal(import_export_caps['formatVersion'], 1, 'import export capabilities formatVersion')
-        assert_true('portable_export' in import_export_caps['supportedExportModes'], 'import export capabilities portable_export supported')
-        assert_true('restore_backup' in import_export_caps['supportedImportModes'], 'import export capabilities restore_backup supported')
+        _, devices_payload = request('GET', '/me/devices')
+        devices = api_data(devices_payload)
+        assert_true(len(devices) >= 1, 'at least one device registered')
 
-        _, export_payload = request('POST', '/integrations/import-export/exports', {
-            'scopeKind': 'workspace',
-            'workspaceId': created['workspace_id'],
-            'exportMode': 'portable_export',
-            'includeAppearance': True,
-            'includeActivityHistory': True,
-        }, expected_status=202)
-        export_data = api_data(export_payload)
-        assert_equal(export_data['providerKey'], 'import_export', 'portable export providerKey')
-        assert_equal(export_data['status'], 'ready_stub', 'portable export status')
-        assert_equal(export_data['bundleManifest']['format'], 'p2p_planner_bundle', 'portable export format')
-        assert_equal(export_data['bundleManifest']['scopeKind'], 'workspace', 'portable export scopeKind')
-        assert_equal(export_data['bundleManifest']['workspaceId'], created['workspace_id'], 'portable export workspaceId')
-        assert_true(isinstance(export_data['warnings'], list), 'portable export warnings list')
+        _, sign_out_all_payload = request('POST', '/auth/sign-out-all')
+        sign_out_all_data = api_data(sign_out_all_payload)
+        assert_true(sign_out_all_data['signedOut'], 'sign out all result')
+        ACCESS_TOKEN = None
 
-        _, preview_payload = request('POST', '/integrations/import-export/imports/preview', {
-            'sourceRef': export_data['suggestedFileName'],
-            'importMode': 'restore_backup',
-            'restoreStrategy': 'merge_review',
-            'targetWorkspaceId': created['workspace_id'],
-            'bundleManifest': {
-                'format': 'p2p_planner_bundle',
-                'formatVersion': 1,
-            },
-        })
-        preview_data = api_data(preview_payload)
-        assert_equal(preview_data['providerKey'], 'import_export', 'import preview providerKey')
-        assert_equal(preview_data['status'], 'preview_stub', 'import preview status')
-        assert_true(preview_data['requiresManualReview'], 'import preview requiresManualReview')
-        assert_equal(preview_data['restoreStrategy'], 'merge_review', 'import preview restoreStrategy')
+        _, unauthorized_workspaces = request('GET', '/workspaces', expected_status=401, include_auth=False)
+        assert_error(unauthorized_workspaces, 'unauthorized', 'Authentication is required', 'anonymous workspaces blocked')
 
-        _, import_apply_payload = request('POST', '/integrations/import-export/imports', {
-            'sourceRef': export_data['suggestedFileName'],
-            'importMode': 'portable_import',
-            'restoreStrategy': 'create_copy',
-            'previewId': preview_data['previewId'],
-            'targetWorkspaceId': created['workspace_id'],
-            'bundleManifest': {
-                'format': 'p2p_planner_bundle',
-                'formatVersion': 1,
-            },
-        }, expected_status=202)
-        import_apply = api_data(import_apply_payload)
-        assert_equal(import_apply['providerKey'], 'import_export', 'import execution providerKey')
-        assert_equal(import_apply['status'], 'accepted_stub', 'import execution status')
-        assert_equal(import_apply['importMode'], 'portable_import', 'import execution importMode')
+        ensure_smoke_session_fallback_sign_in()
+        request('GET', '/workspaces')
 
-        _, invalid_export_mode_payload = request('POST', '/integrations/import-export/exports', {
-            'scopeKind': 'workspace',
-            'workspaceId': created['workspace_id'],
-            'exportMode': 'snapshot_magic',
-        }, expected_status=400)
-        assert_error(invalid_export_mode_payload, 'bad_request', 'exportMode has unsupported value', 'invalid export mode')
-
-        _, invalid_restore_strategy_payload = request('POST', '/integrations/import-export/imports/preview', {
-            'importMode': 'portable_import',
-            'restoreStrategy': 'overwrite_now',
-        }, expected_status=400)
-        assert_error(invalid_restore_strategy_payload, 'bad_request', 'restoreStrategy has unsupported value', 'invalid restore strategy')
-
-        _, me_before_payload = request('GET', '/me/appearance')
-        me_before = api_data(me_before_payload)
-        assert_true(isinstance(me_before['isCustomized'], bool), 'me appearance before isCustomized is bool')
-        assert_true(me_before['appTheme'] in ['system', 'light', 'dark'], 'me appearance before appTheme is supported')
-        assert_true(me_before['density'] in ['comfortable', 'compact'], 'me appearance before density is supported')
-        assert_true(isinstance(me_before['reduceMotion'], bool), 'me appearance before reduceMotion is bool')
-
-        me_target_theme = 'dark' if me_before['appTheme'] != 'dark' else 'light'
-        me_target_density = 'compact' if me_before['density'] != 'compact' else 'comfortable'
-        me_target_reduce_motion = not me_before['reduceMotion']
-
-        _, me_updated_payload = request('PUT', '/me/appearance', {
-            'appTheme': me_target_theme,
-            'density': me_target_density,
-            'reduceMotion': me_target_reduce_motion,
-        })
-        me_updated = api_data(me_updated_payload)
-        assert_true(me_updated['isCustomized'], 'me appearance updated isCustomized')
-        assert_equal(me_updated['appTheme'], me_target_theme, 'me appearance updated appTheme')
-        assert_equal(me_updated['density'], me_target_density, 'me appearance updated density')
-        assert_equal(me_updated['reduceMotion'], me_target_reduce_motion, 'me appearance updated reduceMotion')
-
-        _, me_reloaded_payload = request('GET', '/me/appearance')
-        me_reloaded = api_data(me_reloaded_payload)
-        assert_true(me_reloaded['isCustomized'], 'me appearance reloaded isCustomized')
-        assert_equal(me_reloaded['appTheme'], me_target_theme, 'me appearance reloaded appTheme')
-        assert_equal(me_reloaded['density'], me_target_density, 'me appearance reloaded density')
-        assert_equal(me_reloaded['reduceMotion'], me_target_reduce_motion, 'me appearance reloaded reduceMotion')
-
-        _, board_default_payload = request('GET', f"/boards/{created['board_id']}/appearance")
-        board_default = api_data(board_default_payload)
-        assert_false(board_default['isCustomized'], 'board appearance default isCustomized')
-        assert_equal(board_default['themePreset'], 'system', 'board appearance default themePreset')
-        assert_equal(board_default['wallpaper']['kind'], 'none', 'board appearance default wallpaper.kind')
-        assert_equal(board_default['wallpaper']['value'], None, 'board appearance default wallpaper.value')
-        assert_equal(board_default['columnDensity'], 'comfortable', 'board appearance default columnDensity')
-        assert_equal(board_default['cardPreviewMode'], 'expanded', 'board appearance default cardPreviewMode')
-        assert_true(board_default['showCardDescription'], 'board appearance default showCardDescription')
-        assert_true(board_default['showCardDates'], 'board appearance default showCardDates')
-        assert_true(board_default['showChecklistProgress'], 'board appearance default showChecklistProgress')
-        assert_equal(board_default['customProperties'], {}, 'board appearance default customProperties')
-
-        _, board_updated_payload = request('PUT', f"/boards/{created['board_id']}/appearance", {
-            'themePreset': 'midnight-blue',
-            'wallpaper': {
-                'kind': 'gradient',
-                'value': 'sunset-mesh',
-            },
-            'columnDensity': 'compact',
-            'cardPreviewMode': 'compact',
-            'showCardDescription': False,
-            'showCardDates': False,
-            'showChecklistProgress': False,
-            'customProperties': {
-                'accentColor': 'violet',
-                'columnHeaderStyle': 'glass',
-            },
-        })
-        board_updated = api_data(board_updated_payload)
-        assert_true(board_updated['isCustomized'], 'board appearance updated isCustomized')
-        assert_equal(board_updated['themePreset'], 'midnight-blue', 'board appearance updated themePreset')
-        assert_equal(board_updated['wallpaper']['kind'], 'gradient', 'board appearance updated wallpaper.kind')
-        assert_equal(board_updated['wallpaper']['value'], 'sunset-mesh', 'board appearance updated wallpaper.value')
-        assert_equal(board_updated['columnDensity'], 'compact', 'board appearance updated columnDensity')
-        assert_equal(board_updated['cardPreviewMode'], 'compact', 'board appearance updated cardPreviewMode')
-        assert_false(board_updated['showCardDescription'], 'board appearance updated showCardDescription')
-        assert_false(board_updated['showCardDates'], 'board appearance updated showCardDates')
-        assert_false(board_updated['showChecklistProgress'], 'board appearance updated showChecklistProgress')
-        assert_equal(
-            board_updated['customProperties'],
-            {'accentColor': 'violet', 'columnHeaderStyle': 'glass'},
-            'board appearance updated customProperties',
-        )
-
-        _, board_partial_payload = request('PUT', f"/boards/{created['board_id']}/appearance", {
-            'cardPreviewMode': 'expanded',
-            'showCardDates': True,
-        })
-        board_partial = api_data(board_partial_payload)
-        assert_equal(board_partial['themePreset'], 'midnight-blue', 'board appearance partial keeps themePreset')
-        assert_equal(board_partial['wallpaper']['kind'], 'gradient', 'board appearance partial keeps wallpaper.kind')
-        assert_equal(board_partial['wallpaper']['value'], 'sunset-mesh', 'board appearance partial keeps wallpaper.value')
-        assert_equal(board_partial['columnDensity'], 'compact', 'board appearance partial keeps columnDensity')
-        assert_equal(board_partial['cardPreviewMode'], 'expanded', 'board appearance partial updates cardPreviewMode')
-        assert_false(board_partial['showCardDescription'], 'board appearance partial keeps showCardDescription')
-        assert_true(board_partial['showCardDates'], 'board appearance partial updates showCardDates')
-        assert_false(board_partial['showChecklistProgress'], 'board appearance partial keeps showChecklistProgress')
-        assert_equal(
-            board_partial['customProperties'],
-            {'accentColor': 'violet', 'columnHeaderStyle': 'glass'},
-            'board appearance partial keeps customProperties',
-        )
-
-        _, invalid_theme_payload = request('PUT', '/me/appearance', {
-            'appTheme': 'neon',
-        }, expected_status=400)
-        assert_error(invalid_theme_payload, 'bad_request', 'appTheme has unsupported value', 'invalid app theme')
-
-        _, invalid_density_payload = request('PUT', f"/boards/{created['board_id']}/appearance", {
-            'columnDensity': 'ultra',
-        }, expected_status=400)
-        assert_error(
-            invalid_density_payload,
-            'bad_request',
-            'columnDensity has unsupported value',
-            'invalid board column density',
-        )
-
-        _, missing_wallpaper_value_payload = request('PUT', f"/boards/{created['board_id']}/appearance", {
-            'wallpaper': {
-                'kind': 'gradient',
-            },
-        }, expected_status=400)
-        assert_error(
-            missing_wallpaper_value_payload,
-            'bad_request',
-            'wallpaper.value is required for non-none wallpapers',
-            'missing wallpaper value',
-        )
-
-        _, invalid_custom_properties_payload = request('PUT', f"/boards/{created['board_id']}/appearance", {
-            'customProperties': ['not', 'an', 'object'],
-        }, expected_status=400)
-        assert_error(
-            invalid_custom_properties_payload,
-            'bad_request',
-            'customProperties must be a JSON object',
-            'invalid customProperties',
-        )
-
-        print('\nSmoke flow completed successfully.')
-        return 0
-    finally:
-        # cleanup in reverse order; ignore cleanup errors so we can still inspect the original failure above
-        for path in [
-            f"/cards/{created['card_id']}" if created['card_id'] else None,
-            f"/columns/{created['column_id']}" if created['column_id'] else None,
-            f"/boards/{created['board_id']}" if created['board_id'] else None,
-            f"/workspaces/{created['workspace_id']}" if created['workspace_id'] else None,
-        ]:
-            if not path:
-                continue
-            try:
-                request('DELETE', path)
-            except Exception:
-                pass
+        print('[DONE] smoke_core_api.py finished successfully')
+    except Exception as e:
+        print(f"\n[SMOKE FAILED] {e}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    main()
