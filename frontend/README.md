@@ -8,14 +8,13 @@ npm install
 npm run dev
 ```
 
-По умолчанию клиент ожидает backend на `http://127.0.0.1:18080/api/v1`
-и использует dev user id `11111111-1111-7111-8111-111111111111`.
+По умолчанию клиент ожидает backend на `http://127.0.0.1:18080/api/v1` и работает через текущий auth/session flow. После sign-in/sign-up frontend хранит access token in-memory и отправляет его как `Authorization: Bearer ...`; refresh происходит через cookie.
 
 Если backend живет на другом адресе, создай `.env.local`:
 
 ```bash
 VITE_API_BASE_URL=http://127.0.0.1:18080/api/v1
-VITE_DEV_USER_ID=11111111-1111-7111-8111-111111111111
+VITE_ENABLE_PROJECT_ROADMAP_SEED=true
 ```
 
 ## Что покрыто сейчас
@@ -68,6 +67,6 @@ npx playwright install
 npm run test:browser
 ```
 
-Smoke использует mocked API responses и временно отключает автосид dev-roadmap board, чтобы сценарий оставался быстрым и детерминированным.
+Smoke использует mocked API responses, проходит через auth screen и временно отключает автосид dev-roadmap board, чтобы сценарий оставался быстрым и детерминированным.
 
 Подробная инструкция по тестированию всего приложения: `../docs/architecture/testing-application-guide-v1.md`.

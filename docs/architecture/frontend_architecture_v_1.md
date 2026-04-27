@@ -68,14 +68,14 @@ Draft v1
 - `workspace audit log`.
 
 ### Пока не стоит считать завершенным end-to-end UX
-- финальный auth UX;
+- production-grade account/session UX;
 - guest/public/shared flow как полностью готовый пользовательский surface;
 - полный `labels / checklists / comments` flow.
 
 Следствие для архитектуры:
 - app shell и screen map должны строиться вокруг **workspace / board / card / activity / appearance**;
 - незавершенные функции должны идти как изолированные modules или feature flags;
-- auth нужно проектировать future-ready, но не привязывать всю текущую dev-сборку только к нему.
+- auth/session уже является основным направлением интеграции, но account-management и security hardening нужно держать изолированными от core board UI.
 
 ---
 
@@ -292,7 +292,8 @@ frontend/
 3. Пока идет гидрация — `Splash / Bootstrap screen`
 4. После bootstrap:
    - нет session -> `AuthNavigator`
-   - есть session или dev pre-auth mode -> `MainNavigator`
+   - есть session -> `MainNavigator`
+   - dev/test bootstrap, если явно включен, сначала создает/refresh'ит реальную session и только потом ведет в `MainNavigator`
 
 ---
 
@@ -309,7 +310,7 @@ frontend/
 ## Auth navigator
 - `SignInScreen`
 - `SignUpScreen`
-- `DevEntryScreen` или аналогичный временный вход для текущей dev-сборки
+- опциональный `DevBootstrapScreen` только для явно включенной dev/test сборки; он не должен возвращать `X-User-Id` как основной auth path
 
 ## Main navigator
 - `WorkspaceDrawerNavigator`

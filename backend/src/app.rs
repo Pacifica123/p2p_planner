@@ -3,7 +3,7 @@ use std::time::Duration;
 use axum::{
     BoxError, Router,
     error_handling::HandleErrorLayer,
-    http::{HeaderValue, Method, StatusCode, header},
+    http::{HeaderName, HeaderValue, Method, StatusCode, header},
     middleware,
     routing::get,
 };
@@ -49,6 +49,7 @@ pub fn build_app(state: AppState) -> Router {
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
             header::ACCEPT,
+            HeaderName::from_static("x-user-id"),
         ]);
 
     let middleware_stack = ServiceBuilder::new()

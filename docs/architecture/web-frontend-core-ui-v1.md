@@ -10,7 +10,7 @@ Draft v1 / implementation-ready
 
 - `workspace / board / column / card`;
 - `board activity` и `card activity`;
-- dev-входа через временный `X-User-Id` bridge;
+- auth/session baseline через bearer access token и refresh cookie;
 - базового archive/update/delete для уже стабильных сущностей.
 
 Задача этого этапа — не строить local-first, sync или mobile concerns, а собрать **рабочий базовый web-client** вокруг того, что уже реально живет на backend.
@@ -37,14 +37,14 @@ Draft v1 / implementation-ready
 - Vite + React + TypeScript web app;
 - `react-router-dom` для route-based screen composition;
 - `@tanstack/react-query` для server-state;
-- dev session provider для `X-User-Id`;
+- `AuthSessionProvider` для sign-in/sign-up/refresh и compatibility `DevSessionProvider` shim для старых компонентов;
 - feature-based структура `app / features / shared`;
 - board activity panel;
 - card history inside card details drawer.
 
 ### Не входит
 
-- полноценный auth UX;
+- production-grade account management и security hardening auth UX;
 - appearance/customization как отдельный законченный UI-слой;
 - local-first persistence beyond temporary client state;
 - offline-first;
@@ -84,6 +84,7 @@ frontend/
       providers/
         AppProviders.tsx
         QueryProvider.tsx
+        AuthSessionProvider.tsx
         DevSessionProvider.tsx
       router/
         index.tsx
@@ -353,9 +354,11 @@ frontend/
 
 ## 9. Риски и технические замечания
 
-### 1. Pre-auth bridge
+### 1. Auth transition result
 
-Клиент намеренно использует `X-User-Id` как dev-only bridge. Это соответствует текущему backend stage и не должно маскироваться под финальный auth UX.
+Изначальный web-core этап проектировался вокруг pre-auth bridge, но текущий baseline уже перешел на `auth/session`: API-клиент отправляет `Authorization: Bearer ...`, а `X-User-Id` не является browser default flow.
+
+`DevSessionProvider` остается compatibility shim: он отдает `userId` из текущей authenticated session для старых UI-участков и не должен снова вводить `X-User-Id` как основной путь.
 
 ### 2. OpenAPI drift
 

@@ -142,7 +142,7 @@ python tests/smoke_core_api.py
 - поднят ли backend;
 - тот ли `BASE_URL` использует smoke;
 - чисты ли assumptions внутри smoke;
-- не потерян ли CORS/dev auth wiring.
+- не потерян ли CORS/auth wiring: `Authorization` header, refresh cookie credentials и allowlist origins.
 
 ## 8. Frontend: browser smoke
 
@@ -169,7 +169,7 @@ npm run test:browser
 - быстрый сигнал о white screen / routing / critical boot regression;
 - независимость от состояния dev-БД.
 
-Полный browser e2e против живого backend можно расширять позже, когда auth/session/local-first runtime станут стабильнее.
+Полный browser e2e против живого backend можно расширять позже, когда auth/session edge cases и local-first runtime станут стабильнее.
 
 ## 9. Полезный минимальный сценарий перед коммитом
 

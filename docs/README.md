@@ -48,7 +48,8 @@
    `architecture/security-privacy-threat-model-v1.1.md`,
    `architecture/testing-strategy-v1.md`,
    `architecture/testing-pyramid-v1.md`,
-   `architecture/testing-application-guide-v1.md`
+   `architecture/testing-application-guide-v1.md`,
+   `architecture/deployment-packaging-v1.md`
    и `architecture/project-structure.md`.
 6. И только потом `api/openapi.yaml`, `sync/protocol.md` и
    `sync/conflict-resolution.md`.
@@ -84,3 +85,5 @@ local-first, sync и optional p2p.
 - `docs/architecture/testing-pyramid-v1.md` — testing pyramid v1: practical ratio of unit/integration/contract/smoke checks and expected quality gates.
 
 - `docs/architecture/testing-application-guide-v1.md` — practical local test guide: backend/frontend commands, browser smoke flow, prerequisites and recommended pre-commit order.
+
+- `docs/architecture/deployment-packaging-v1.md` — deployment/packaging v1: environment model, build profiles, self-host baseline, `.env` contract, docker/dev setup and local workflow.

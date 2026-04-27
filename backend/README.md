@@ -30,12 +30,11 @@ Health endpoints:
 - `GET /health`
 - `GET /api/v1/health`
 
-## Dev auth bridge
+## Auth / session model
 
-Пока полноценный auth/session flow не доведен до финального UX,
-core CRUD и frontend dev-flow используют временный `X-User-Id` header.
+Основной API-flow сейчас идет через `Authorization: Bearer ...`: frontend получает access token на `/auth/sign-in`, `/auth/sign-up` или `/auth/refresh`, а refresh token хранится в cookie. Protected endpoints должны извлекать пользователя из bearer-сессии.
 
-Из-за этого для web-клиента важно, чтобы CORS разрешал `x-user-id`.
+Legacy `X-User-Id` fallback оставлен только для dev/test сценариев и выключен по умолчанию через `AUTH__ENABLE_DEV_HEADER_AUTH=false`. Его не нужно считать нормальным browser flow и не нужно возвращать в CORS без отдельного решения.
 
 ## Smoke tests
 
