@@ -11,6 +11,7 @@
 ## Назначение документов
 
 - `product/mvp-scope-v1.md` — продуктовые границы первой версии.
+- `product/beta-scope-v1.md` — beta backlog, must-have/nice-to-have границы, release gates и решение по mobile/release model.
 - `adr/` — принятые архитектурные решения.
 - `domain/` — доменная модель, инварианты, права доступа, жизненный цикл и термины.
 - `sync/` — glossary, протокол синхронизации и каноническая conflict policy.
@@ -31,7 +32,7 @@
 
 ## Как читать эти документы
 
-1. Сначала `product/mvp-scope-v1.md`.
+1. Сначала `product/mvp-scope-v1.md`, затем `product/beta-scope-v1.md`.
 2. Затем `domain/terms.md` и `sync/glossary.md`.
 3. Затем `adr/`.
 4. После этого `domain/entities.md`, `domain/invariants.md`, `domain/permissions.md`.
@@ -87,3 +88,5 @@ local-first, sync и optional p2p.
 - `docs/architecture/testing-application-guide-v1.md` — practical local test guide: backend/frontend commands, browser smoke flow, prerequisites and recommended pre-commit order.
 
 - `docs/architecture/deployment-packaging-v1.md` — deployment/packaging v1: environment model, build profiles, self-host baseline, `.env` contract, docker/dev setup and local workflow.
+
+- `docs/product/beta-scope-v1.md` — beta scope v1: финальная release-plan граница для web-first beta без native mobile, с beta backlog, must-have/nice-to-have, release gates, demoable flows и mobile/repo/release решением.
