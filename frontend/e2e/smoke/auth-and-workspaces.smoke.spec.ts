@@ -97,9 +97,9 @@ test('auth boot and workspace list smoke path stays alive', async ({ page }) => 
 
   await page.getByLabel('Email').fill('smoke-user@local.test');
   await page.getByLabel('Password').fill('password123');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.locator('form').getByRole('button', { name: 'Sign in' }).click();
 
   await expect(page.getByRole('heading', { name: 'Workspace list / switcher' })).toBeVisible();
-  await expect(page.getByText('Browser Smoke Workspace')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Browser Smoke Workspace' })).toBeVisible();
   await expect.poll(() => pageErrors).toEqual([]);
 });
