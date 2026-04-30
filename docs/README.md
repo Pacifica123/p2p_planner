@@ -12,6 +12,7 @@
 
 - `product/mvp-scope-v1.md` — продуктовые границы первой версии.
 - `product/beta-scope-v1.md` — beta backlog, must-have/nice-to-have границы, release gates и решение по mobile/release model.
+- `product/v1-execution-roadmap.md` — текущая правда о реализованном/частичном/stub surface и contract parity baseline перед v1.
 - `adr/` — принятые архитектурные решения.
 - `domain/` — доменная модель, инварианты, права доступа, жизненный цикл и термины.
 - `sync/` — glossary, протокол синхронизации и каноническая conflict policy.
@@ -32,7 +33,7 @@
 
 ## Как читать эти документы
 
-1. Сначала `product/mvp-scope-v1.md`, затем `product/beta-scope-v1.md`.
+1. Сначала `product/v1-execution-roadmap.md`, затем `product/mvp-scope-v1.md` и `product/beta-scope-v1.md`.
 2. Затем `domain/terms.md` и `sync/glossary.md`.
 3. Затем `adr/`.
 4. После этого `domain/entities.md`, `domain/invariants.md`, `domain/permissions.md`.
@@ -90,3 +91,5 @@ local-first, sync и optional p2p.
 - `docs/architecture/deployment-packaging-v1.md` — deployment/packaging v1: environment model, build profiles, self-host baseline, `.env` contract, docker/dev setup and local workflow.
 
 - `docs/product/beta-scope-v1.md` — beta scope v1: финальная release-plan граница для web-first beta без native mobile, с beta backlog, must-have/nice-to-have, release gates, demoable flows и mobile/repo/release решением.
+
+- `docs/product/v1-execution-roadmap.md` — execution roadmap перед v1: статусы Done/Partial/Blocker/Deferred, ручной testable path, baseline backend/frontend/OpenAPI parity sweep и очередь ближайших blockers.
