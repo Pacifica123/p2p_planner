@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-devctl v0 — pure-Python patch conveyor for p2p_planner.
+devctl v0.1 — pure-Python patch conveyor for p2p_planner.
 
 Commands:
     python tools/devctl.py status
@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-DEVCTL_VERSION = "0"
+DEVCTL_VERSION = "0.1"
 STATE_VERSION = 1
 DEFAULT_PROJECT_DIR_NAME = "p2p_planner"
 DEFAULT_PATCHES_DIR_NAME = "patches"
@@ -580,6 +580,11 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     for section in ("setup", "services"):
         if section in manifest and not isinstance(manifest.get(section), list):
             raise InvalidPatchError(f"manifest.{section} is reserved and must be a list")
+        if isinstance(manifest.get(section), list) and manifest.get(section):
+            raise InvalidPatchError(
+                f"manifest.{section} is reserved for a future devctl version; "
+                "v0.1 does not auto-install dependencies or auto-start services"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -737,13 +742,15 @@ def validate_check_prerequisites(project_root: Path, manifest: dict[str, Any]) -
     for index, check in enumerate(checks):
         if not isinstance(check, dict):
             continue
+        check_name = str(check.get("name", index))
         cwd_raw = validate_relative_posix_path(check.get("cwd", "."), allow_dot=True, kind=f"checks[{index}].cwd")
         cwd = project_root if cwd_raw == "." else safe_destination(project_root, cwd_raw, kind=f"checks[{index}].cwd")
         if not cwd.is_dir():
-            bad_cwds.append(f"{check.get('name', index)}: {cwd_raw}")
+            bad_cwds.append(f"{check_name}: {cwd_raw}")
         for command in check.get("requiredCommands", []):
-            if not shutil.which(command):
-                missing.append(command)
+            command_name = command.strip()
+            if not shutil.which(command_name):
+                missing.append(f"{command_name} (required by {check_name})")
     if bad_cwds:
         raise PreflightError("Check cwd does not exist before apply: " + ", ".join(bad_cwds))
     if missing:
@@ -1266,6 +1273,7 @@ def status_command() -> int:
         return 2
 
     print_header("devctl status")
+    print(f"devctl version: {DEVCTL_VERSION}")
     print(f"Project root:   {workspace.project_root}")
     print(f"Workspace root: {workspace.workspace_root}")
     print(f"Patches dir:    {workspace.patches_dir} {'[missing]' if not workspace.patches_dir.is_dir() else ''}")
@@ -1287,6 +1295,11 @@ def status_command() -> int:
                 print(f"  {line}")
             if len(status.splitlines()) > 50:
                 print("  ...")
+            dirty_lines = status.splitlines()
+            if any("tools/" in line or "tools\\" in line for line in dirty_lines) and any(
+                "docs/devctl/" in line or "docs\\devctl\\" in line for line in dirty_lines
+            ):
+                print("Hint: this looks like a devctl bootstrap/update state. Commit/push it before running start again.")
         try:
             branch = git_branch(workspace.project_root)
             # Do not fetch in status; just inspect existing remote ref if present.
@@ -1566,7 +1579,7 @@ def start_command() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="devctl v0 patch conveyor")
+    parser = argparse.ArgumentParser(description="devctl v0.1 patch conveyor")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("status", help="Show project/workspace/git/patch state without modifying anything")
     subparsers.add_parser("start", help="Apply latest unapplied patch and run the conveyor")
