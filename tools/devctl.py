@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-devctl v0.1 — pure-Python patch conveyor for p2p_planner.
+devctl v0.2 — pure-Python patch conveyor for p2p_planner.
 
 Commands:
     python tools/devctl.py status
@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-DEVCTL_VERSION = "0.1"
+DEVCTL_VERSION = "0.2"
 STATE_VERSION = 1
 DEFAULT_PROJECT_DIR_NAME = "p2p_planner"
 DEFAULT_PATCHES_DIR_NAME = "patches"
@@ -47,6 +47,11 @@ ARCHIVE_EXCLUDED_PARTS = {
     "__pycache__",
 }
 ARCHIVE_EXCLUDED_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+RELEASE_DIR_NAME = "release"
+RELEASE_ARCHIVE_PAYLOAD_SUFFIXES = (".zip",)
+RELEASE_EXECUTABLE_PAYLOAD_SUFFIXES = (".exe",)
+RELEASE_ZIP_PLACEHOLDER = "тут_был_zip_архив.txt"
+RELEASE_EXE_PLACEHOLDER = "тут_был_экзешник.txt"
 ARCHIVE_SIZE_WARNING_BYTES = 100 * 1024 * 1024
 DANGEROUS_GIT_PATH_SUFFIXES = ARCHIVE_EXCLUDED_SUFFIXES + (".pyc", ".pyo")
 DANGEROUS_GIT_PATH_PARTS = {"node_modules", "target", ".git", "__pycache__"}
@@ -583,7 +588,7 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         if isinstance(manifest.get(section), list) and manifest.get(section):
             raise InvalidPatchError(
                 f"manifest.{section} is reserved for a future devctl version; "
-                "v0.1 does not auto-install dependencies or auto-start services"
+                f"v{DEVCTL_VERSION} does not auto-install dependencies or auto-start services"
             )
 
 
@@ -836,6 +841,67 @@ def manifest_archive_excludes(manifest: dict[str, Any]) -> list[str]:
     return []
 
 
+def manifest_include_release_payloads(manifest: dict[str, Any]) -> bool:
+    archive = manifest.get("archive") if isinstance(manifest.get("archive"), dict) else {}
+    return bool(archive.get("includeReleasePayloads", False)) if isinstance(archive, dict) else False
+
+
+def release_payload_omission_kind(relative_posix: str) -> str | None:
+    parts = relative_posix.split("/")
+    if not parts or parts[0] != RELEASE_DIR_NAME:
+        return None
+    lower = relative_posix.lower()
+    if lower.endswith(RELEASE_ARCHIVE_PAYLOAD_SUFFIXES):
+        return "zip"
+    if lower.endswith(RELEASE_EXECUTABLE_PAYLOAD_SUFFIXES):
+        return "exe"
+    return None
+
+
+def release_placeholder_path(relative_posix: str, kind: str) -> str:
+    parent = relative_posix.rsplit("/", 1)[0] if "/" in relative_posix else ""
+    placeholder_name = RELEASE_ZIP_PLACEHOLDER if kind == "zip" else RELEASE_EXE_PLACEHOLDER
+    return f"{parent}/{placeholder_name}" if parent else placeholder_name
+
+
+def human_size(size_bytes: int | None) -> str:
+    if size_bytes is None:
+        return "unknown size"
+    units = ("B", "KiB", "MiB", "GiB")
+    value = float(size_bytes)
+    unit = units[0]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            break
+        value /= 1024
+    if unit == "B":
+        return f"{int(value)} {unit}"
+    return f"{value:.1f} {unit}"
+
+
+def release_placeholder_text(entries: list[tuple[str, str, int | None]]) -> str:
+    lines = [
+        "Этот файл создан devctl при сборке snapshot-архива проекта.",
+        "",
+        "Тяжелые release payload-файлы намеренно не попали в архив devctl,",
+        "чтобы служебные pre/post/failed архивы не раздувались на много мегабайт.",
+        "",
+        "Исключенные файлы:",
+    ]
+    for kind, rel_path, size in entries:
+        label = "release zip" if kind == "zip" else "Windows executable"
+        lines.append(f"- {rel_path} ({label}, {human_size(size)})")
+    lines.extend(
+        [
+            "",
+            "Это не удаляет исходные файлы из рабочей копии проекта.",
+            "Для реальной поставки пересобери release локально или используй исходный каталог release/.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def create_project_archive(
     workspace: Workspace,
     destination: Path,
@@ -850,7 +916,11 @@ def create_project_archive(
     if include_project_dir is None:
         include_project_dir = bool(archive.get("includeProjectDir", True)) if isinstance(archive, dict) else True
 
+    include_release_payloads = manifest_include_release_payloads(manifest or {})
+
     file_count = 0
+    written_arcnames: set[str] = set()
+    release_placeholders: dict[str, list[tuple[str, str, int | None]]] = {}
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for root, dirs, files in os.walk(workspace.project_root):
             root_path = Path(root)
@@ -868,11 +938,33 @@ def create_project_archive(
                 rel_path = file_path.relative_to(workspace.project_root).as_posix()
                 if should_exclude_from_archive(rel_path, extra_excludes):
                     continue
+
+                omission_kind = None if include_release_payloads else release_payload_omission_kind(rel_path)
+                if omission_kind:
+                    try:
+                        size_bytes = file_path.stat().st_size
+                    except OSError:
+                        size_bytes = None
+                    placeholder = release_placeholder_path(rel_path, omission_kind)
+                    release_placeholders.setdefault(placeholder, []).append((omission_kind, rel_path, size_bytes))
+                    continue
+
                 arcname = rel_path
                 if include_project_dir:
                     arcname = f"{workspace.project_root.name}/{rel_path}"
                 zf.write(file_path, arcname)
+                written_arcnames.add(arcname)
                 file_count += 1
+
+        for placeholder_rel, entries in sorted(release_placeholders.items()):
+            arcname = placeholder_rel
+            if include_project_dir:
+                arcname = f"{workspace.project_root.name}/{placeholder_rel}"
+            if arcname in written_arcnames:
+                continue
+            zf.writestr(arcname, release_placeholder_text(entries))
+            written_arcnames.add(arcname)
+            file_count += 1
     return destination, file_count
 
 
@@ -1579,7 +1671,7 @@ def start_command() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="devctl v0.1 patch conveyor")
+    parser = argparse.ArgumentParser(description=f"devctl v{DEVCTL_VERSION} patch conveyor")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("status", help="Show project/workspace/git/patch state without modifying anything")
     subparsers.add_parser("start", help="Apply latest unapplied patch and run the conveyor")

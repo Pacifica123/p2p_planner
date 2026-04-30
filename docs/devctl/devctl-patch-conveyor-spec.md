@@ -391,6 +391,8 @@ Archives must not overwrite existing files. On collision, append numeric suffix.
 
 ## 12. Archive excludes
 
+Starting with `devctl` v0.2, archive creation has one extra release-specific trimming rule: keep the `release/` directory structure, but omit heavyweight release payloads from devctl snapshots by default. This means `release/**/*.zip` and `release/**/*.exe` are replaced in the archive by small placeholder text files such as `тут_был_zip_архив.txt` and `тут_был_экзешник.txt`. The working tree is not modified. A patch manifest can opt out with `archive.includeReleasePayloads: true` when a full payload snapshot is explicitly required.
+
 Default excludes:
 
 ```text
