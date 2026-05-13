@@ -575,6 +575,8 @@ Acceptance criteria:
 
 ## Phase 1 — skeleton CLI + read-only diagnose
 
+Статус: implemented baseline in `tools/devbootstrap.py` (`diagnose`, `status`, report writer, root/tool/file/port/http probes). Следующие фазы должны расширять этот файл, не смешивая его с `tools/devctl.py`.
+
 Цель:
 
 - создать `tools/devbootstrap.py`;

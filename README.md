@@ -40,6 +40,17 @@ frontend/  React + Vite + TanStack Query
 docs/      ADR, архитектурные решения, OpenAPI, MVP scope
 ```
 
+## Автодиагностика dev-среды
+
+Первый слой будущего авторазвертывателя уже доступен как read-only диагностика:
+
+```bash
+python tools/devbootstrap.py diagnose --no-write-report
+python tools/devbootstrap.py status
+```
+
+Обычный `diagnose` дополнительно сохраняет отчет в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. На phase 1 инструмент еще не запускает PostgreSQL/backend/frontend, а только проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL.
+
 ## Быстрый запуск
 
 ### 1. Backend

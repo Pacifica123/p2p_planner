@@ -18,7 +18,7 @@
 - `sync/` — glossary, протокол синхронизации и каноническая conflict policy.
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
-- `dev-bootstrap/` — мотивация, каталог рисков и план разработки будущего авторазвертывателя local dev-среды.
+- `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status` без запуска runtime-сервисов.
 
 ## Зафиксированные принципы
 
@@ -101,5 +101,5 @@ local-first, sync и optional p2p.
 
 - `docs/dev-bootstrap/deployment-pitfalls-catalog.md` — каталог рисков локального разворачивания: ОС, инструменты, env, PostgreSQL, backend, frontend, smoke, процессы и cleanup.
 
-- `docs/dev-bootstrap/dev-autodeployer-v1-development-plan.md` — детальный план разработки авторазвертывателя до v1: команды, фазы, проверки, acceptance criteria и граница минимально полезного инструмента.
+- `docs/dev-bootstrap/dev-autodeployer-v1-development-plan.md` — детальный план разработки авторазвертывателя до v1: команды, фазы, проверки, acceptance criteria и граница минимально полезного инструмента. Phase 1 baseline уже реализован в `tools/devbootstrap.py`.
 

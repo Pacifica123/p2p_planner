@@ -9,3 +9,4 @@
 .env.local
 backend/.env
 frontend/.env.local
+.dev-bootstrap/
