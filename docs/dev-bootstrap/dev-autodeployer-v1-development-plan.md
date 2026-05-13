@@ -756,6 +756,8 @@ Acceptance criteria:
 
 ## Phase 5 — frontend prepare and frontend start
 
+Статус: implemented in `tools/devbootstrap.py` as `prepare-frontend` / `start-frontend` with npm dependency installation, install marker, Vite port preflight, guarded `npm run dev`, PID/state/log capture, frontend root readiness and API base sanity checks.
+
 Цель:
 
 - поднять Vite frontend и проверить, что он смотрит в правильный backend.
@@ -784,6 +786,17 @@ Acceptance criteria:
 - frontend dependencies устанавливаются или диагностируются;
 - dev server стартует;
 - если `VITE_API_BASE_URL` смотрит не туда, report говорит об этом до ручной отладки в браузере.
+
+Реализованные детали Phase 5:
+
+- `prepare-frontend` выбирает `npm ci` при наличии `package-lock.json`, иначе `npm install`;
+- dependency install не повторяется без необходимости, если `frontend/node_modules` есть и `.dev-bootstrap/frontend-install.json` совпадает с hash `package.json` / `package-lock.json`;
+- `--force-install` позволяет явно переустановить зависимости;
+- `--dry-run` показывает план без изменения `node_modules`;
+- `start-frontend` проверяет Node/npm, `scripts.dev`, `node_modules`, Vite port и frontend root;
+- `start-frontend` запускает `npm run dev -- --host ... --port ... --strictPort`, пишет `frontend.log`, PID/state и ожидает HTTP root;
+- report показывает фактический frontend URL, `VITE_API_BASE_URL`, API health probe, mismatch с backend port и подсказки next actions;
+- инструмент не убивает чужой процесс на Vite port и не поднимает frontend поверх неясного port conflict.
 
 ---
 

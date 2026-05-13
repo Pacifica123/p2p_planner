@@ -9,6 +9,10 @@ Commands:
     python tools/devbootstrap.py prepare-env
     python tools/devbootstrap.py start-db
     python tools/devbootstrap.py diagnose --section postgres
+    python tools/devbootstrap.py check-backend
+    python tools/devbootstrap.py start-backend
+    python tools/devbootstrap.py prepare-frontend
+    python tools/devbootstrap.py start-frontend
     python tools/devbootstrap.py status
 
 The tool intentionally uses only Python standard library modules.
@@ -16,9 +20,11 @@ The tool intentionally uses only Python standard library modules.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -32,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TOOL_VERSION = "0.4.0-phase4"
+TOOL_VERSION = "0.5.0-phase5"
 STATE_VERSION = 1
 BOOTSTRAP_DIR_NAME = ".dev-bootstrap"
 DEFAULT_PORTS = {
@@ -2551,6 +2557,721 @@ def command_start_backend(args: argparse.Namespace) -> int:
         print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
     return 1 if result.failures and not args.dry_run else 0
 
+
+@dataclass
+class FrontendCheck:
+    code: str
+    status: str
+    message: str
+    evidence: str | None = None
+
+
+@dataclass
+class FrontendAction:
+    code: str
+    status: str
+    message: str
+    command: str | None = None
+    evidence: str | None = None
+
+
+@dataclass
+class FrontendResult:
+    generated_at: str
+    tool_version: str
+    project_root: str | None
+    invoked_from: str
+    mode: str
+    dry_run: bool = False
+    frontend_host: str = "127.0.0.1"
+    frontend_port: int = 5173
+    frontend_url: str | None = None
+    api_base_url: str | None = None
+    package_json_exists: bool = False
+    package_lock_exists: bool = False
+    node_modules_exists: bool = False
+    package_scripts: dict[str, str] = field(default_factory=dict)
+    package_json_hash: str | None = None
+    package_lock_hash: str | None = None
+    install_marker_path: str | None = None
+    install_marker_valid: bool = False
+    install_command: list[str] = field(default_factory=list)
+    node_version: ProcessProbe | None = None
+    npm_version: ProcessProbe | None = None
+    frontend_port_probe: PortProbe | None = None
+    frontend_root_probe: HttpProbe | None = None
+    api_probe: HttpProbe | None = None
+    backend_health: list[HttpProbe] = field(default_factory=list)
+    state_frontend: dict[str, Any] = field(default_factory=dict)
+    process_pid: int | None = None
+    process_alive: bool | None = None
+    process_returncode: int | None = None
+    run_id: str | None = None
+    log_path: str | None = None
+    detected_urls: list[str] = field(default_factory=list)
+    npm_install: ProcessProbe | None = None
+    classification: str = "unknown"
+    checks: list[FrontendCheck] = field(default_factory=list)
+    actions: list[FrontendAction] = field(default_factory=list)
+    failures: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    report_dir: str | None = None
+
+
+def frontend_effective_env(project_root: Path) -> dict[str, str]:
+    return effective_env_values_for(project_root, "frontend")
+
+
+def frontend_install_marker_path(project_root: Path) -> Path:
+    return project_root / BOOTSTRAP_DIR_NAME / "frontend-install.json"
+
+
+def sha256_file(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def read_frontend_package(project_root: Path) -> tuple[dict[str, Any], str | None]:
+    package_path = project_root / "frontend" / "package.json"
+    try:
+        data = json.loads(package_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, "frontend/package.json is missing"
+    except json.JSONDecodeError as exc:
+        return {}, f"frontend/package.json is not valid JSON: {exc}"
+    if not isinstance(data, dict):
+        return {}, "frontend/package.json root is not an object"
+    return data, None
+
+
+def frontend_scripts_from_package(package_data: dict[str, Any]) -> dict[str, str]:
+    scripts = package_data.get("scripts")
+    if not isinstance(scripts, dict):
+        return {}
+    return {str(key): str(value) for key, value in scripts.items()}
+
+
+def parse_frontend_host_port(project_root: Path) -> tuple[str, int, str | None]:
+    values = frontend_effective_env(project_root)
+    host = values.get("VITE_DEV_HOST") or values.get("VITE_HOST") or "127.0.0.1"
+    raw_port = values.get("VITE_DEV_PORT") or values.get("VITE_PORT") or str(DEFAULT_PORTS["frontend"])
+    try:
+        port = int(raw_port)
+    except ValueError:
+        return host, DEFAULT_PORTS["frontend"], f"Frontend port is not an integer: {raw_port}"
+    if port <= 0 or port > 65535:
+        return host, DEFAULT_PORTS["frontend"], f"Frontend port is outside TCP port range: {raw_port}"
+    return host, port, None
+
+
+def frontend_root_url(host: str, port: int) -> str:
+    return f"http://{http_probe_host(host)}:{port}/"
+
+
+def frontend_api_health_url(api_base_url: str | None) -> str | None:
+    if not api_base_url:
+        return None
+    base = api_base_url.rstrip("/")
+    if not base:
+        return None
+    return f"{base}/health"
+
+
+def load_frontend_install_marker(project_root: Path) -> dict[str, Any]:
+    return read_json(frontend_install_marker_path(project_root))
+
+
+def frontend_install_marker_matches(project_root: Path, package_json_hash: str | None, package_lock_hash: str | None) -> bool:
+    marker = load_frontend_install_marker(project_root)
+    if "_error" in marker:
+        return False
+    return (
+        marker.get("packageJsonSha256") == package_json_hash
+        and marker.get("packageLockSha256") == package_lock_hash
+        and bool((project_root / "frontend" / "node_modules").is_dir())
+    )
+
+
+def write_frontend_install_marker(project_root: Path, result: FrontendResult, command: list[str]) -> None:
+    marker_path = frontend_install_marker_path(project_root)
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    marker = {
+        "version": STATE_VERSION,
+        "generatedAt": iso_now(),
+        "toolVersion": TOOL_VERSION,
+        "command": command_as_text(command),
+        "packageJsonSha256": result.package_json_hash,
+        "packageLockSha256": result.package_lock_hash,
+    }
+    write_json(marker_path, marker)
+
+
+def frontend_install_command(project_root: Path) -> list[str]:
+    if (project_root / "frontend" / "package-lock.json").is_file():
+        return ["npm", "ci"]
+    return ["npm", "install"]
+
+
+def state_process_entry(project_root: Path, process_name: str) -> dict[str, Any]:
+    state = read_json(project_root / BOOTSTRAP_DIR_NAME / "state.json")
+    processes = state.get("processes") if isinstance(state.get("processes"), dict) else {}
+    entry = processes.get(process_name) if isinstance(processes.get(process_name), dict) else {}
+    if not entry:
+        return {}
+    pid_raw = entry.get("pid")
+    try:
+        pid = int(pid_raw)
+    except (TypeError, ValueError):
+        pid = -1
+    entry = dict(entry)
+    entry["alive"] = pid_alive(pid)
+    return entry
+
+
+def build_frontend_result(project_root: Path | None, invoked_from: Path, *, mode: str, dry_run: bool = False) -> FrontendResult:
+    result = FrontendResult(
+        generated_at=iso_now(),
+        tool_version=TOOL_VERSION,
+        project_root=str(project_root) if project_root else None,
+        invoked_from=str(invoked_from),
+        mode=mode,
+        dry_run=dry_run,
+    )
+    if project_root is None:
+        result.classification = "invalid_project_root"
+        result.failures.append({"code": "invalid_project_root", "message": "Could not find project root."})
+        result.next_actions.append("Run this command from the project root, tools/, backend/ or frontend/ directory.")
+        return result
+
+    host, port, port_error = parse_frontend_host_port(project_root)
+    result.frontend_host = host
+    result.frontend_port = port
+    result.frontend_url = frontend_root_url(host, port)
+    values = frontend_effective_env(project_root)
+    result.api_base_url = values.get("VITE_API_BASE_URL")
+
+    package_data, package_error = read_frontend_package(project_root)
+    result.package_json_exists = (project_root / "frontend" / "package.json").is_file()
+    result.package_lock_exists = (project_root / "frontend" / "package-lock.json").is_file()
+    result.node_modules_exists = (project_root / "frontend" / "node_modules").is_dir()
+    result.package_scripts = frontend_scripts_from_package(package_data)
+    result.package_json_hash = sha256_file(project_root / "frontend" / "package.json")
+    result.package_lock_hash = sha256_file(project_root / "frontend" / "package-lock.json")
+    result.install_marker_path = rel(frontend_install_marker_path(project_root), project_root)
+    result.install_marker_valid = frontend_install_marker_matches(project_root, result.package_json_hash, result.package_lock_hash)
+    result.install_command = frontend_install_command(project_root)
+    result.node_version = run_process_probe("node_version", ["node", "--version"], cwd=project_root, timeout=8)
+    result.npm_version = run_process_probe("npm_version", ["npm", "--version"], cwd=project_root, timeout=8)
+    result.frontend_port_probe = probe_port("frontend", port, host=http_probe_host(host))
+    result.frontend_root_probe = probe_http("frontend_root", result.frontend_url)
+    api_health = frontend_api_health_url(result.api_base_url)
+    if api_health:
+        result.api_probe = probe_http("frontend_api_base_health", api_health)
+    backend_host, backend_port, _ = parse_backend_host_port(project_root)
+    result.backend_health = probe_backend_health(backend_host, backend_port)
+    result.state_frontend = state_process_entry(project_root, "frontend")
+
+    if port_error:
+        result.warnings.append({"code": "frontend_port_parse", "message": port_error})
+    if package_error:
+        result.failures.append({"code": "frontend_package_invalid", "message": package_error})
+    if result.state_frontend:
+        if result.state_frontend.get("alive"):
+            result.warnings.append(
+                {
+                    "code": "frontend_process_registered",
+                    "message": f"state.json already contains alive frontend pid={result.state_frontend.get('pid')}.",
+                }
+            )
+        else:
+            result.warnings.append(
+                {
+                    "code": "frontend_stale_process",
+                    "message": f"state.json contains stale frontend pid={result.state_frontend.get('pid')}; it is not alive.",
+                }
+            )
+    return result
+
+
+def add_frontend_preflight_checks(result: FrontendResult, project_root: Path | None = None) -> None:
+    if result.node_version:
+        status = "ok" if process_probe_ok(result.node_version) else "fail"
+        result.checks.append(FrontendCheck("node_version", status, "Node.js availability check.", first_output_line(result.node_version)))
+    if result.npm_version:
+        status = "ok" if process_probe_ok(result.npm_version) else "fail"
+        result.checks.append(FrontendCheck("npm_version", status, "npm availability check.", first_output_line(result.npm_version)))
+    result.checks.append(
+        FrontendCheck(
+            "package_json",
+            "ok" if result.package_json_exists else "fail",
+            "frontend/package.json presence check.",
+        )
+    )
+    result.checks.append(
+        FrontendCheck(
+            "package_lock",
+            "ok" if result.package_lock_exists else "warn",
+            "frontend/package-lock.json presence check; npm ci is preferred when it exists.",
+        )
+    )
+    dev_script = result.package_scripts.get("dev")
+    result.checks.append(
+        FrontendCheck(
+            "frontend_dev_script",
+            "ok" if dev_script else "fail",
+            "package.json contains scripts.dev for Vite startup.",
+            dev_script,
+        )
+    )
+    result.checks.append(
+        FrontendCheck(
+            "node_modules",
+            "ok" if result.node_modules_exists else "warn",
+            "frontend/node_modules presence check.",
+            "install marker valid" if result.install_marker_valid else "install marker missing or stale",
+        )
+    )
+    if result.frontend_port_probe:
+        status = "warn" if result.frontend_port_probe.open else "ok"
+        message = f"Frontend TCP port {result.frontend_port_probe.host}:{result.frontend_port_probe.port} is {'open' if result.frontend_port_probe.open else 'closed/free'}."
+        evidence = "tcp connect succeeded" if result.frontend_port_probe.open else (result.frontend_port_probe.error or "")
+        result.checks.append(FrontendCheck("frontend_port_preflight", status, message, evidence))
+    if result.frontend_root_probe:
+        status = "ok" if result.frontend_root_probe.reachable and result.frontend_root_probe.status and 200 <= result.frontend_root_probe.status < 500 else "warn"
+        message = f"{result.frontend_root_probe.url} returned HTTP {result.frontend_root_probe.status}." if result.frontend_root_probe.reachable else f"{result.frontend_root_probe.url} is not reachable."
+        result.checks.append(FrontendCheck("frontend_root", status, message, result.frontend_root_probe.error))
+    add_frontend_api_checks(result, project_root)
+
+
+def add_frontend_api_checks(result: FrontendResult, project_root: Path | None) -> None:
+    api_base = result.api_base_url or ""
+    if not api_base:
+        result.checks.append(FrontendCheck("frontend_api_base_url", "warn", "VITE_API_BASE_URL is missing from effective frontend env."))
+        result.warnings.append({"code": "frontend_api_base_missing", "message": "VITE_API_BASE_URL is missing; browser requests may use an unintended fallback."})
+        return
+    if api_base.rstrip("/").endswith("/api/v1"):
+        result.checks.append(FrontendCheck("frontend_api_base_path", "ok", "VITE_API_BASE_URL ends with /api/v1.", api_base))
+    else:
+        result.checks.append(FrontendCheck("frontend_api_base_path", "warn", "VITE_API_BASE_URL should normally end with /api/v1.", api_base))
+        result.warnings.append({"code": "frontend_api_base_path", "message": "VITE_API_BASE_URL does not end with /api/v1."})
+    if project_root is not None:
+        _, backend_port, _ = parse_backend_host_port(project_root)
+        api_port = parse_url_port(api_base)
+        if str(api_port) == str(backend_port):
+            result.checks.append(FrontendCheck("frontend_api_backend_port_match", "ok", "VITE_API_BASE_URL points to the configured backend port.", f"api={api_port}, backend={backend_port}"))
+        else:
+            result.checks.append(FrontendCheck("frontend_api_backend_port_match", "warn", "VITE_API_BASE_URL does not point to the configured backend port.", f"api={api_port}, backend={backend_port}"))
+            result.warnings.append({"code": "frontend_api_backend_mismatch", "message": f"VITE_API_BASE_URL port {api_port} does not match backend APP__PORT {backend_port}."})
+    if result.api_probe:
+        status = "ok" if result.api_probe.reachable and result.api_probe.status and 200 <= result.api_probe.status < 300 else "warn"
+        message = f"{result.api_probe.url} returned HTTP {result.api_probe.status}." if result.api_probe.reachable else f"{result.api_probe.url} is not reachable."
+        result.checks.append(FrontendCheck("frontend_api_health", status, message, result.api_probe.error))
+        if status != "ok":
+            result.warnings.append({"code": "frontend_api_unreachable", "message": "Backend API health derived from VITE_API_BASE_URL is not reachable yet."})
+
+
+def frontend_dependencies_current(result: FrontendResult) -> bool:
+    return bool(result.node_modules_exists and result.install_marker_valid)
+
+
+def render_frontend_report(result: FrontendResult) -> str:
+    lines: list[str] = []
+    lines.append(f"# devbootstrap {result.mode} report")
+    lines.append("")
+    lines.append(f"- Generated at: `{result.generated_at}`")
+    lines.append(f"- Tool version: `{result.tool_version}`")
+    lines.append(f"- Invoked from: `{result.invoked_from}`")
+    lines.append(f"- Project root: `{result.project_root or 'not found'}`")
+    lines.append(f"- Dry run: `{result.dry_run}`")
+    lines.append(f"- Frontend URL: `{result.frontend_url or '<unknown>'}`")
+    lines.append(f"- API base URL: `{result.api_base_url or '<missing>'}`")
+    if result.process_pid is not None:
+        lines.append(f"- Frontend PID: `{result.process_pid}`")
+    if result.log_path:
+        lines.append(f"- Frontend log: `{result.log_path}`")
+    lines.append(f"- Classification: `{result.classification}`")
+    lines.append("")
+
+    lines.append("## Package")
+    lines.append("")
+    lines.append(f"- `frontend/package.json`: `{result.package_json_exists}`")
+    lines.append(f"- `frontend/package-lock.json`: `{result.package_lock_exists}`")
+    lines.append(f"- `frontend/node_modules`: `{result.node_modules_exists}`")
+    lines.append(f"- Install marker: `{result.install_marker_path}` valid=`{result.install_marker_valid}`")
+    lines.append(f"- Install command: `{command_as_text(result.install_command)}`")
+    lines.append("")
+    lines.append("### Scripts")
+    lines.append("")
+    if result.package_scripts:
+        for name, script in sorted(result.package_scripts.items()):
+            lines.append(f"- `{name}`: `{script}`")
+    else:
+        lines.append("- No package scripts discovered.")
+    lines.append("")
+
+    lines.append("## Checks")
+    lines.append("")
+    if result.checks:
+        lines.append("| Code | Status | Message | Evidence |")
+        lines.append("|---|---|---|---|")
+        for check in result.checks:
+            lines.append(f"| `{check.code}` | {check.status} | {check.message} | `{check.evidence or ''}` |")
+    else:
+        lines.append("- No frontend checks recorded.")
+    lines.append("")
+
+    lines.append("## Actions")
+    lines.append("")
+    if result.actions:
+        lines.append("| Code | Status | Message | Command | Evidence |")
+        lines.append("|---|---|---|---|---|")
+        for action in result.actions:
+            lines.append(f"| `{action.code}` | {action.status} | {action.message} | `{action.command or ''}` | `{action.evidence or ''}` |")
+    else:
+        lines.append("- No frontend actions recorded.")
+    lines.append("")
+
+    if result.detected_urls:
+        lines.append("## Detected dev server URLs")
+        lines.append("")
+        for url in result.detected_urls:
+            lines.append(f"- `{url}`")
+        lines.append("")
+
+    lines.append("## Findings")
+    lines.append("")
+    if not result.failures and not result.warnings:
+        lines.append("- No frontend findings.")
+    for failure in result.failures:
+        lines.append(f"- **FAIL** `{failure['code']}` — {failure['message']}")
+    for warning in result.warnings:
+        lines.append(f"- **WARN** `{warning['code']}` — {warning['message']}")
+    lines.append("")
+
+    lines.append("## Next safe actions")
+    lines.append("")
+    if result.next_actions:
+        for action in result.next_actions:
+            lines.append(f"- {action}")
+    else:
+        lines.append("- Continue with the next devbootstrap phase.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_frontend_reports(project_root: Path, result: FrontendResult, command: str, report_dir: Path | None = None) -> Path:
+    if report_dir is None:
+        report_dir = create_report_dir(project_root, command)
+    result.report_dir = rel(report_dir, project_root)
+    write_json(report_dir / f"{command}.json", as_jsonable(result))
+    (report_dir / "report.md").write_text(render_frontend_report(result), encoding="utf-8")
+    return report_dir
+
+
+def print_frontend_summary(result: FrontendResult) -> None:
+    print_header(f"devbootstrap {result.mode}")
+    print(f"Tool version: {result.tool_version}")
+    print(f"Project root: {result.project_root or 'not found'}")
+    print(f"Frontend URL: {result.frontend_url or '<unknown>'}")
+    print(f"API base URL: {result.api_base_url or '<missing>'}")
+    print(f"Classification: {result.classification}")
+    if result.process_pid is not None:
+        alive_text = "alive" if result.process_alive else "not alive"
+        print(f"Frontend process: pid={result.process_pid} {alive_text}")
+    if result.log_path:
+        print(f"Log: {result.log_path}")
+    if result.checks:
+        print("\nChecks:")
+        for check in result.checks:
+            evidence = f" — {check.evidence}" if check.evidence else ""
+            print(f"  - {check.status.upper()} {check.code}: {check.message}{evidence}")
+    if result.actions:
+        print("\nActions:")
+        for action in result.actions:
+            command = f" [{action.command}]" if action.command else ""
+            evidence = f" — {action.evidence}" if action.evidence else ""
+            print(f"  - {action.status.upper()} {action.code}: {action.message}{command}{evidence}")
+    if result.failures or result.warnings:
+        print("\nFindings:")
+        for failure in result.failures:
+            print(f"  - FAIL {failure['code']}: {failure['message']}")
+        for warning in result.warnings:
+            print(f"  - WARN {warning['code']}: {warning['message']}")
+    else:
+        print("\nFindings: no frontend findings")
+    if result.report_dir:
+        print(f"\nReport: {result.report_dir}/report.md")
+
+
+def command_prepare_frontend(args: argparse.Namespace) -> int:
+    invoked_from = Path.cwd()
+    project_root = find_project_root(invoked_from)
+    result = build_frontend_result(project_root, invoked_from, mode="prepare-frontend", dry_run=args.dry_run)
+    report_dir: Path | None = None
+    if project_root is not None and not args.no_write_report:
+        report_dir = create_report_dir(project_root, "prepare-frontend")
+    if project_root is not None:
+        add_frontend_preflight_checks(result, project_root)
+        if not process_probe_ok(result.node_version):
+            result.classification = "missing_prerequisite"
+            result.failures.append({"code": "missing_node", "message": "node is not available on PATH."})
+            result.next_actions.append("Install Node.js or use a shell where node/npm are available, then rerun prepare-frontend.")
+        elif not process_probe_ok(result.npm_version):
+            result.classification = "missing_prerequisite"
+            result.failures.append({"code": "missing_npm", "message": "npm is not available on PATH."})
+            result.next_actions.append("Install npm or repair PATH, then rerun prepare-frontend.")
+        elif not result.package_json_exists:
+            result.classification = "frontend_package_invalid"
+            result.next_actions.append("Restore frontend/package.json from the project archive before installing dependencies.")
+        elif frontend_dependencies_current(result) and not args.force_install:
+            result.classification = "frontend_dependencies_current"
+            result.actions.append(FrontendAction("npm_install_noop", "ok", "frontend/node_modules matches the devbootstrap install marker; install skipped."))
+            result.next_actions.append("Frontend dependencies look current. Continue with `python tools/devbootstrap.py start-frontend`.")
+        elif args.dry_run:
+            result.classification = "frontend_prepare_planned"
+            result.actions.append(FrontendAction("npm_install", "planned", "Would install frontend dependencies.", command_as_text(result.install_command)))
+            result.next_actions.append("Run without --dry-run to install/update frontend dependencies.")
+        else:
+            log_path = report_dir / "npm-install.log" if report_dir is not None else None
+            result.actions.append(FrontendAction("npm_install", "started", "Installing frontend dependencies.", command_as_text(result.install_command)))
+            result.npm_install = run_frontend_command_probe(
+                "npm_install",
+                result.install_command,
+                project_root=project_root,
+                cwd=project_root / "frontend",
+                timeout=args.timeout_seconds,
+                log_path=log_path,
+            )
+            if process_probe_ok(result.npm_install):
+                result.classification = "frontend_dependencies_ready"
+                result.node_modules_exists = (project_root / "frontend" / "node_modules").is_dir()
+                result.install_marker_valid = True
+                write_frontend_install_marker(project_root, result, result.install_command)
+                result.actions.append(FrontendAction("install_marker", "ok", "Updated frontend install marker.", evidence=result.install_marker_path))
+                result.next_actions.append("Frontend dependencies are ready. Continue with `python tools/devbootstrap.py start-frontend`.")
+            else:
+                result.classification = classify_frontend_failure(command_output_text(result.npm_install), "frontend_install_failed")
+                result.failures.append({"code": result.classification, "message": "Frontend dependency installation failed."})
+                result.next_actions.append("Inspect npm-install.log, fix npm/network/lockfile issues, then rerun prepare-frontend.")
+    if project_root is not None and report_dir is not None:
+        write_frontend_reports(project_root, result, "prepare-frontend", report_dir)
+    print_frontend_summary(result)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
+    return 1 if result.failures and not args.dry_run else 0
+
+
+def run_frontend_command_probe(
+    name: str,
+    command: list[str],
+    *,
+    project_root: Path,
+    cwd: Path,
+    timeout: int,
+    log_path: Path | None = None,
+) -> ProcessProbe:
+    probe = run_process_probe(name, command, cwd=cwd, timeout=timeout)
+    if log_path is not None:
+        lines = [
+            f"$ {command_as_text(command)}",
+            f"cwd: {rel(cwd, project_root)}",
+            f"exit: {probe.returncode if probe.returncode is not None else probe.error or '<none>'}",
+            "",
+            "## stdout",
+            sanitize_frontend_log(probe.stdout, project_root) or "<empty>",
+            "",
+            "## stderr",
+            sanitize_frontend_log(probe.stderr or probe.error or "", project_root) or "<empty>",
+            "",
+        ]
+        log_path.write_text("\n".join(lines), encoding="utf-8")
+    return probe
+
+
+def launch_frontend_process(project_root: Path, report_dir: Path, host: str, port: int) -> tuple[subprocess.Popen[Any], Path, list[str]]:
+    frontend_dir = project_root / "frontend"
+    log_path = report_dir / "frontend.log"
+    command = ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"]
+    with log_path.open("ab") as log_file:
+        header = f"\n== devbootstrap start-frontend {iso_now()} ==\n$ {command_as_text(command)}\ncwd: {rel(frontend_dir, project_root)}\n\n".encode("utf-8", errors="replace")
+        log_file.write(header)
+        log_file.flush()
+        process = subprocess.Popen(
+            command,
+            cwd=str(frontend_dir),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=(os.name != "nt"),
+        )
+    return process, log_path, command
+
+
+def frontend_ready(probe: HttpProbe | None) -> bool:
+    return bool(probe and probe.reachable and probe.status is not None and 200 <= probe.status < 500)
+
+
+def wait_for_frontend_root(process: subprocess.Popen[Any], url: str, *, timeout_seconds: int) -> tuple[bool, HttpProbe | None, int | None]:
+    deadline = time.monotonic() + timeout_seconds
+    last_probe: HttpProbe | None = None
+    while time.monotonic() < deadline:
+        returncode = process.poll()
+        last_probe = probe_http("frontend_root", url, timeout=1.0)
+        if frontend_ready(last_probe):
+            return True, last_probe, returncode
+        if returncode is not None:
+            return False, last_probe, returncode
+        time.sleep(1.0)
+    return False, last_probe, process.poll()
+
+
+def extract_frontend_urls(log_text: str) -> list[str]:
+    urls = re.findall(r"https?://[^\s'\"<>]+", log_text)
+    cleaned: list[str] = []
+    for url in urls:
+        url = url.rstrip(".,)")
+        if url not in cleaned:
+            cleaned.append(url)
+    return cleaned[:10]
+
+
+def sanitize_frontend_log(text: str, project_root: Path | None = None) -> str:
+    if not text:
+        return ""
+    cleaned = text
+    if project_root is not None:
+        api_base = frontend_effective_env(project_root).get("VITE_API_BASE_URL")
+        if api_base and is_secret_key("VITE_API_BASE_URL"):
+            cleaned = cleaned.replace(api_base, "***")
+    return "\n".join(cleaned.strip().splitlines()[-60:])
+
+
+def classify_frontend_failure(text: str, default: str) -> str:
+    lower = text.lower()
+    if "eaddrinuse" in lower or "address already in use" in lower:
+        return "frontend_port_conflict"
+    if "missing script" in lower or "script not found" in lower:
+        return "frontend_script_missing"
+    if "cannot find module" in lower or "module not found" in lower:
+        return "frontend_dependency_missing"
+    if "npm err!" in lower and "network" in lower:
+        return "frontend_npm_network_failed"
+    if "eresolve" in lower or "unable to resolve dependency tree" in lower:
+        return "frontend_dependency_conflict"
+    if "enoent" in lower and "package.json" in lower:
+        return "frontend_package_invalid"
+    return default
+
+
+def command_start_frontend(args: argparse.Namespace) -> int:
+    invoked_from = Path.cwd()
+    project_root = find_project_root(invoked_from)
+    result = build_frontend_result(project_root, invoked_from, mode="start-frontend", dry_run=args.dry_run)
+    report_dir: Path | None = None
+    if project_root is not None and (not args.no_write_report or not args.dry_run):
+        report_dir = create_report_dir(project_root, "start-frontend")
+    if project_root is not None:
+        add_frontend_preflight_checks(result, project_root)
+        if not process_probe_ok(result.node_version):
+            result.classification = "missing_prerequisite"
+            result.failures.append({"code": "missing_node", "message": "node is not available on PATH."})
+            result.next_actions.append("Install Node.js or use a shell where node/npm are available, then rerun start-frontend.")
+        elif not process_probe_ok(result.npm_version):
+            result.classification = "missing_prerequisite"
+            result.failures.append({"code": "missing_npm", "message": "npm is not available on PATH."})
+            result.next_actions.append("Install npm or repair PATH, then rerun start-frontend.")
+        elif not result.package_scripts.get("dev"):
+            result.classification = "frontend_script_missing"
+            result.failures.append({"code": "frontend_script_missing", "message": "frontend/package.json does not contain scripts.dev."})
+            result.next_actions.append("Restore the frontend dev script before trying to start Vite.")
+        elif not result.node_modules_exists:
+            result.classification = "frontend_dependencies_missing"
+            result.failures.append({"code": "frontend_dependencies_missing", "message": "frontend/node_modules is missing."})
+            result.next_actions.append("Run `python tools/devbootstrap.py prepare-frontend` first.")
+        elif result.frontend_root_probe and frontend_ready(result.frontend_root_probe):
+            result.classification = "frontend_already_running"
+            result.actions.append(FrontendAction("start_frontend_noop", "ok", "Frontend root is already reachable; npm run dev was not started."))
+            result.next_actions.append("Frontend is reachable. Continue with browser/manual checks or the future smoke phase.")
+        elif result.frontend_port_probe and result.frontend_port_probe.open:
+            result.classification = "frontend_port_conflict"
+            result.failures.append({"code": "frontend_port_conflict", "message": "Frontend port is open but the frontend root probe is not healthy. devbootstrap will not kill a foreign process."})
+            result.next_actions.append("Inspect the process on the Vite port manually, or stop the old frontend you own and rerun start-frontend.")
+        elif args.dry_run:
+            command = ["npm", "run", "dev", "--", "--host", result.frontend_host, "--port", str(result.frontend_port), "--strictPort"]
+            result.classification = "frontend_start_planned"
+            result.actions.append(FrontendAction("npm_run_dev", "planned", "Would start Vite dev server and wait for frontend root.", command_as_text(command)))
+            result.next_actions.append("Run without --dry-run to start frontend.")
+        else:
+            run_id_value = run_id("start-frontend")
+            try:
+                process, log_path, command = launch_frontend_process(project_root, report_dir or create_report_dir(project_root, "start-frontend"), result.frontend_host, result.frontend_port)
+                result.process_pid = process.pid
+                result.process_alive = pid_alive(process.pid)
+                result.run_id = run_id_value
+                result.log_path = rel(log_path, project_root)
+                result.actions.append(FrontendAction("npm_run_dev", "started", "Started frontend process with npm run dev.", command_as_text(command), f"pid={process.pid}"))
+                ready, probe, returncode = wait_for_frontend_root(process, result.frontend_url or frontend_root_url(result.frontend_host, result.frontend_port), timeout_seconds=args.timeout_seconds)
+                result.frontend_root_probe = probe
+                result.process_returncode = returncode
+                result.process_alive = pid_alive(process.pid) if returncode is None else False
+                result.detected_urls = extract_frontend_urls(read_log_tail(log_path))
+                if ready:
+                    result.classification = "frontend_started"
+                    result.checks.append(FrontendCheck("frontend_root_wait", "ok", "Frontend root became reachable.", f"timeout={args.timeout_seconds}s"))
+                    update_process_state(
+                        project_root,
+                        process_name="frontend",
+                        pid=process.pid,
+                        cwd=project_root / "frontend",
+                        command=command,
+                        started_at=result.generated_at,
+                        run_id_value=run_id_value,
+                        log_path=log_path,
+                        report_dir=log_path.parent,
+                    )
+                    result.next_actions.append("Frontend is running. Continue with browser/manual checks or the future smoke phase.")
+                else:
+                    log_tail = sanitize_frontend_log(read_log_tail(log_path), project_root)
+                    default = "frontend_start_failed" if returncode is not None else "frontend_health_timeout"
+                    result.classification = classify_frontend_failure(log_tail, default)
+                    result.checks.append(FrontendCheck("frontend_root_wait", "fail", "Frontend root did not become reachable.", f"timeout={args.timeout_seconds}s"))
+                    result.failures.append({"code": result.classification, "message": "Frontend did not reach ready state after npm run dev."})
+                    if result.process_alive:
+                        update_process_state(
+                            project_root,
+                            process_name="frontend",
+                            pid=process.pid,
+                            cwd=project_root / "frontend",
+                            command=command,
+                            started_at=result.generated_at,
+                            run_id_value=run_id_value,
+                            log_path=log_path,
+                            report_dir=log_path.parent,
+                        )
+                        result.next_actions.append("Frontend process is still alive but root timed out. Inspect frontend.log and stop it manually if needed until stop phase exists.")
+                    else:
+                        result.next_actions.append("Inspect frontend.log for the classified failure before retrying.")
+            except FileNotFoundError:
+                result.classification = "missing_prerequisite"
+                result.failures.append({"code": "missing_npm", "message": "npm run dev could not be started because npm was not found."})
+            except OSError as exc:
+                result.classification = "frontend_start_failed"
+                result.failures.append({"code": "frontend_start_failed", "message": f"Could not start npm run dev: {exc}"})
+    if project_root is not None and report_dir is not None:
+        write_frontend_reports(project_root, result, "start-frontend", report_dir)
+    print_frontend_summary(result)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
+    return 1 if result.failures and not args.dry_run else 0
+
 def print_diagnose_summary(result: DiagnoseResult) -> None:
     print_header("devbootstrap diagnose")
     print(f"Tool version: {result.tool_version}")
@@ -2682,6 +3403,22 @@ def build_parser() -> argparse.ArgumentParser:
     start_backend.add_argument("--no-write-report", action="store_true", help="Skip report files when used with --dry-run; real start still writes logs/state.")
     start_backend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     start_backend.set_defaults(func=command_start_backend)
+
+
+    prepare_frontend = subparsers.add_parser("prepare-frontend", help="Install or verify frontend npm dependencies with a devbootstrap marker.")
+    prepare_frontend.add_argument("--dry-run", action="store_true", help="Show whether npm ci/install would run without changing node_modules.")
+    prepare_frontend.add_argument("--force-install", action="store_true", help="Run npm ci/install even when the install marker looks current.")
+    prepare_frontend.add_argument("--timeout-seconds", type=int, default=300, help="Timeout for npm ci/install.")
+    prepare_frontend.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap report files.")
+    prepare_frontend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
+    prepare_frontend.set_defaults(func=command_prepare_frontend)
+
+    start_frontend = subparsers.add_parser("start-frontend", help="Start frontend with npm run dev, capture logs and wait for Vite root.")
+    start_frontend.add_argument("--dry-run", action="store_true", help="Show what would be started without running npm run dev.")
+    start_frontend.add_argument("--timeout-seconds", type=int, default=120, help="How long to wait for frontend root after npm run dev.")
+    start_frontend.add_argument("--no-write-report", action="store_true", help="Skip report files when used with --dry-run; real start still writes logs/state.")
+    start_frontend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
+    start_frontend.set_defaults(func=command_start_frontend)
 
     plan = subparsers.add_parser("plan", help="Build a safe env/bootstrap plan without changing files.")
     plan.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap report files.")

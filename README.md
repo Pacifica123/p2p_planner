@@ -52,10 +52,12 @@ python tools/devbootstrap.py diagnose --section postgres --no-write-report
 python tools/devbootstrap.py start-db --dry-run
 python tools/devbootstrap.py check-backend --dry-run
 python tools/devbootstrap.py start-backend --dry-run
+python tools/devbootstrap.py prepare-frontend --dry-run
+python tools/devbootstrap.py start-frontend --dry-run
 python tools/devbootstrap.py status
 ```
 
-Обычные `diagnose`, `plan`, `prepare-env`, `diagnose --section postgres`, `start-db`, `check-backend` и `start-backend` дополнительно сохраняют отчеты в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. Phase 1 проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL. Phase 2 читает env-контракт, показывает diff ключей, маскирует секреты и безопасно создает отсутствующие `backend/.env` / `frontend/.env.local` из example-файлов без перезаписи существующих env. Phase 3 проверяет PostgreSQL target из `DATABASE__URL`, умеет классифицировать частые проблемы БД и может поднять compose-сервис `postgres`, если configured port закрыт. Phase 4 добавляет backend-проверку через `cargo metadata` / `cargo check` и guarded `cargo run` с PID/state/log capture и ожиданием `/health` + `/api/v1/health`.
+Обычные `diagnose`, `plan`, `prepare-env`, `diagnose --section postgres`, `start-db`, `check-backend` и `start-backend` дополнительно сохраняют отчеты в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. Phase 1 проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL. Phase 2 читает env-контракт, показывает diff ключей, маскирует секреты и безопасно создает отсутствующие `backend/.env` / `frontend/.env.local` из example-файлов без перезаписи существующих env. Phase 3 проверяет PostgreSQL target из `DATABASE__URL`, умеет классифицировать частые проблемы БД и может поднять compose-сервис `postgres`, если configured port закрыт. Phase 4 добавляет backend-проверку через `cargo metadata` / `cargo check` и guarded `cargo run` с PID/state/log capture и ожиданием `/health` + `/api/v1/health`. Phase 5 добавляет frontend-подготовку через `npm ci` / `npm install`, install-marker для `node_modules`, guarded `npm run dev`, `frontend.log`, PID/state и проверку `VITE_API_BASE_URL` против backend health.
 
 Если env-файл уже существует, `prepare-env` не меняет его по умолчанию. Для аккуратного добавления недостающих ключей из example-файлов есть явный режим:
 
