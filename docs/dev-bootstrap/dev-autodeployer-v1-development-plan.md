@@ -664,6 +664,8 @@ Acceptance criteria:
 
 ## Phase 3 — PostgreSQL discovery and compose-assisted start
 
+Статус: implemented in `tools/devbootstrap.py` as PostgreSQL subsystem diagnostics plus guarded compose-assisted `start-db`.
+
 Цель:
 
 - закрыть самый частый blocker: “а база вообще жива?”.
@@ -671,31 +673,41 @@ Acceptance criteria:
 Команды:
 
 ```bash
-python tools/devbootstrap.py start-db
 python tools/devbootstrap.py diagnose --section postgres
+python tools/devbootstrap.py start-db
+python tools/devbootstrap.py start-db --dry-run
 ```
 
-Что реализовать:
+Реализованные детали Phase 3:
 
-- parse `DATABASE__URL`;
-- TCP connect check;
-- optional `psql` probe;
-- Docker/Compose discovery;
-- `docker compose -f docker-compose.dev.yml up -d postgres`;
-- compose container status/health read;
-- classification:
-  - port closed;
-  - port occupied;
-  - auth failed;
-  - db missing;
-  - compose unavailable;
-  - docker daemon unavailable.
+- effective `DATABASE__URL` читается из `backend/.env.example` + `backend/.env`;
+- report показывает `host`, `port`, `database`, `user` и masked URL без пароля;
+- TCP connect check проверяет именно host/port из `DATABASE__URL`, а не только дефолтный `5432`;
+- optional `psql` probe делает короткий `select current_database() || '|' || current_user`, если `psql` есть в PATH;
+- optional `pg_isready` probe добавляет readiness-сигнал, если утилита установлена;
+- Docker CLI, Docker daemon и Compose обнаруживаются отдельно;
+- поддерживаются Compose V2 (`docker compose`) и legacy `docker-compose`;
+- `start-db` запускает только сервис `postgres` из `docker-compose.dev.yml`;
+- compose start выполняется только когда configured PostgreSQL port закрыт;
+- если порт уже открыт, инструмент не трогает окружение, чтобы не снести чужой PostgreSQL;
+- `--dry-run` показывает planned compose command без запуска контейнеров;
+- report включает compose status и Docker health probe для контейнера `p2p-planner-postgres-dev`, если Docker доступен;
+- classification покрывает:
+  - `ready`;
+  - `port_closed`;
+  - `port_open_unverified`;
+  - `auth_failed`;
+  - `db_missing`;
+  - `database_url_invalid`;
+  - `compose_unavailable`;
+  - `docker_daemon_unavailable` через failures/actions при реальном `start-db`.
 
 Acceptance criteria:
 
 - на чистой машине без PostgreSQL, но с Docker, инструмент может поднять compose postgres;
-- если порт занят чужим PostgreSQL, инструмент не ломает окружение;
-- если база не та, report показывает db/user/host без пароля.
+- если порт занят чужим PostgreSQL, инструмент не ломает окружение и не запускает compose поверх открытого порта;
+- если база не та, report показывает db/user/host без пароля;
+- без Docker можно безопасно прогнать `diagnose --section postgres` и получить понятный next action.
 
 ---
 

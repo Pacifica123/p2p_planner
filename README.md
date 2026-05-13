@@ -42,16 +42,18 @@ docs/      ADR, архитектурные решения, OpenAPI, MVP scope
 
 ## Автодиагностика и env-подготовка dev-среды
 
-Первые слои будущего авторазвертывателя доступны как безопасные команды без запуска runtime-сервисов:
+Текущие слои будущего авторазвертывателя доступны как безопасные команды диагностики/env-подготовки и guarded-команда запуска PostgreSQL:
 
 ```bash
 python tools/devbootstrap.py diagnose --no-write-report
 python tools/devbootstrap.py plan --no-write-report
 python tools/devbootstrap.py prepare-env
+python tools/devbootstrap.py diagnose --section postgres --no-write-report
+python tools/devbootstrap.py start-db --dry-run
 python tools/devbootstrap.py status
 ```
 
-Обычные `diagnose`, `plan` и `prepare-env` дополнительно сохраняют отчеты в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. Phase 1 проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL. Phase 2 читает env-контракт, показывает diff ключей, маскирует секреты и безопасно создает отсутствующие `backend/.env` / `frontend/.env.local` из example-файлов без перезаписи существующих env.
+Обычные `diagnose`, `plan`, `prepare-env`, `diagnose --section postgres` и `start-db` дополнительно сохраняют отчеты в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. Phase 1 проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL. Phase 2 читает env-контракт, показывает diff ключей, маскирует секреты и безопасно создает отсутствующие `backend/.env` / `frontend/.env.local` из example-файлов без перезаписи существующих env. Phase 3 проверяет PostgreSQL target из `DATABASE__URL`, умеет классифицировать частые проблемы БД и может поднять compose-сервис `postgres`, если configured port закрыт.
 
 Если env-файл уже существует, `prepare-env` не меняет его по умолчанию. Для аккуратного добавления недостающих ключей из example-файлов есть явный режим:
 
