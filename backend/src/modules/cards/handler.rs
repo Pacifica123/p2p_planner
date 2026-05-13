@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    dto::{CreateCardRequest, ListCardsQuery, MoveCardRequest, UpdateCardRequest},
+    dto::{CreateCardRequest, ListCardsQuery, MoveCardRequest, ReorderColumnCardsRequest, UpdateCardRequest},
     service,
 };
 
@@ -80,6 +80,17 @@ pub async fn move_card(
     let actor = actor_user_id(&state, &headers).await?;
     let card = service::move_card(&state, actor, card_id, payload).await?;
     Ok(ok(card))
+}
+
+pub async fn reorder_column_cards(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(column_id): Path<Uuid>,
+    Json(payload): Json<ReorderColumnCardsRequest>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let cards = service::reorder_column_cards(&state, actor, column_id, payload).await?;
+    Ok(ok(cards))
 }
 
 pub async fn archive_card(

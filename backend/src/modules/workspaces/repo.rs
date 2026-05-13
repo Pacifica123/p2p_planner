@@ -327,6 +327,56 @@ pub async fn update_workspace(
     }
 }
 
+pub async fn archive_workspace(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<WorkspaceResponse> {
+    require_workspace_owner(pool, workspace_id, actor_user_id).await?;
+    let before = fetch_workspace(pool, workspace_id).await?;
+
+    let res = sqlx::query(
+        r#"
+        update workspaces
+        set archived_at = coalesce(archived_at, now()),
+            updated_at = now()
+        where id = $1
+          and deleted_at is null
+        "#,
+    )
+    .bind(workspace_id)
+    .execute(pool)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        return Err(AppError::not_found("Workspace not found"));
+    }
+
+    let workspace = fetch_workspace(pool, workspace_id).await?;
+    let _audit_id = record_audit(
+        pool,
+        &NewAuditLogEntry {
+            workspace_id: Some(workspace_id),
+            actor_user_id: Some(actor_user_id),
+            actor_device_id: None,
+            actor_replica_id: None,
+            action_type: "workspace.archived".to_string(),
+            target_entity_type: Some("workspace".to_string()),
+            target_entity_id: Some(workspace_id),
+            request_id: None,
+            metadata_jsonb: json!({
+                "name": workspace.name.clone(),
+                "visibility": workspace.visibility.clone(),
+                "wasArchived": before.is_archived,
+                "isArchived": workspace.is_archived,
+            }),
+        },
+    )
+    .await?;
+
+    Ok(workspace)
+}
+
 pub async fn delete_workspace(
     pool: &PgPool,
     actor_user_id: Uuid,

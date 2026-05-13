@@ -4120,18 +4120,18 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /cards/{cardId}/complete:
+  /cards/{cardId}/archive:
     post:
       tags:
       - cards
-      summary: Mark card as completed
+      summary: Archive card
       security:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/CardId'
       responses:
         '200':
-          description: Completed card
+          description: Archived card
           content:
             application/json:
               schema:
@@ -4144,18 +4144,18 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /cards/{cardId}/restore:
+  /cards/{cardId}/unarchive:
     post:
       tags:
       - cards
-      summary: Restore archived or completed card depending on state
+      summary: Unarchive card
       security:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/CardId'
       responses:
         '200':
-          description: Restored card
+          description: Unarchived card
           content:
             application/json:
               schema:

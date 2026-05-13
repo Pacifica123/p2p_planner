@@ -28,9 +28,9 @@
 | Auth/session | `Partial` | Frontend использует sign-up/sign-in/refresh/session/sign-out и `Authorization: Bearer ...`. `X-User-Id` остается legacy/dev-test fallback за флагом. | Довести security gates, negative auth smoke и production/dev profile boundaries. |
 | Workspace/board/column/card core CRUD | `Partial` | Основной flow уже рабочий: создать workspace, board, columns, cards; открыть board; редактировать card; move между columns. | Закрыть route mismatches вокруг archive/delete и reorder. |
 | Card DnD между columns | `Done` | Межколоночное перемещение использует `POST /cards/{cardId}/move`, backend route есть. | Оставить в v1 path. |
-| Card DnD внутри одной column | `Contract mismatch` | Frontend вызывает `POST /columns/{columnId}/cards/reorder`, но backend route отсутствует. | Либо реализовать route, либо временно отключить same-column reorder. Для v1 лучше реализовать. |
-| Workspace/board archive buttons | `Contract mismatch` | UI вызывает `POST /workspaces/{workspaceId}/archive` и `POST /boards/{boardId}/archive`, но backend сейчас имеет `DELETE /workspaces/{workspaceId}` и `DELETE /boards/{boardId}` с soft-delete semantics. | Выбрать канонику: добавить archive endpoints или переименовать UI/API в delete. Для UX лучше archive endpoints. |
-| Card archive/unarchive | `Partial` | Backend и frontend имеют `POST /cards/{cardId}/archive` и `/unarchive`; OpenAPI вместо этого описывает `/complete` и `/restore`. | Обновить OpenAPI под фактические routes или переименовать backend/frontend. |
+| Card DnD внутри одной column | `Done` | Frontend вызывает `POST /columns/{columnId}/cards/reorder`; backend route теперь реализован и возвращает список карточек колонки в `position asc`. | Оставить в v1 path и покрывать smoke/checks. |
+| Workspace/board archive buttons | `Done` | UI вызывает `POST /workspaces/{workspaceId}/archive` и `POST /boards/{boardId}/archive`; backend routes теперь реализованы через `archived_at`, а `DELETE` остается отдельной soft-delete/deletion семантикой. | Оставить archive как пользовательскую lifecycle-операцию v1; delete не смешивать с archive. |
+| Card archive/unarchive | `Done` | Backend, frontend и OpenAPI используют `POST /cards/{cardId}/archive` и `/unarchive`. | Оставить в v1 path. |
 | Appearance/customization | `Done` | User appearance и board appearance заведены, есть backend/frontend/API wiring и smoke/integration контекст. | Оставить в v1 path. |
 | Activity/history/audit | `Partial` | Board activity, card activity, workspace audit log заведены и наполняются core mutation-flow. | Оставить в v1 path, но помнить: labels/checklists/comments пока не пишут activity, потому что сами не реализованы. |
 | Labels | `Blocker` | Backend routes заведены, но repo возвращает `not_implemented`; OpenAPI path shape отличается от backend. Видимого frontend UI сейчас нет. | Для v1 либо реализовать минимальный slice, либо явно скрыть/отложить. Рекомендация: реализовать минимальный slice. |
@@ -72,8 +72,6 @@
 
 Что **пока не считать надежным ручным сценарием**:
 
-- архивирование workspace/board через UI;
-- reorder карточек внутри той же column;
 - labels/checklists/comments;
 - реальный offline/local-first runtime;
 - sync push/pull;
@@ -220,11 +218,11 @@ Frontend integration/import-export API helpers exist, but should remain internal
 | --- | --- | --- | --- |
 | Current user update | `PATCH /me` | Backend has `GET /me`, no `PATCH /me`. | Add backend route or remove/defer OpenAPI path. |
 | Device revoke | `POST /me/devices/{deviceId}/revoke` | Backend has `DELETE /me/devices/{deviceId}`. | Pick one canonical route. |
-| Workspace archive | `POST /workspaces/{workspaceId}/archive` | Frontend calls it; backend has `DELETE /workspaces/{workspaceId}` soft-delete. | Add archive route or change UI/OpenAPI to delete. |
-| Board archive | `POST /boards/{boardId}/archive` | Frontend calls it; backend has `DELETE /boards/{boardId}` soft-delete. | Add archive route or change UI/OpenAPI to delete. |
+| Workspace archive | `POST /workspaces/{workspaceId}/archive` | Frontend, backend and OpenAPI now match; archive sets `archived_at`. | Keep as v1 lifecycle route. |
+| Board archive | `POST /boards/{boardId}/archive` | Frontend, backend and OpenAPI now match; archive sets `archived_at`. | Keep as v1 lifecycle route. |
 | Column reorder | `POST /boards/{boardId}/columns/reorder` | Backend route absent; frontend does not currently call this exact route. | Implement or remove from beta OpenAPI. |
-| Card same-column reorder | `POST /columns/{columnId}/cards/reorder` | Frontend calls it; backend route absent. | Implement before v1 or disable same-column reorder. |
-| Card lifecycle | `POST /cards/{cardId}/complete`, `POST /cards/{cardId}/restore` | Backend/frontend use `/archive` and `/unarchive`; no `/complete` route. | Update OpenAPI to archive/unarchive, or change implementation. |
+| Card same-column reorder | `POST /columns/{columnId}/cards/reorder` | Frontend, backend and OpenAPI now match; backend validates that all cards belong to the target column. | Keep as v1 route and cover with smoke. |
+| Card lifecycle | `POST /cards/{cardId}/archive`, `POST /cards/{cardId}/unarchive` | Backend, frontend and OpenAPI now match. | Keep archive/unarchive terminology for v1. |
 | Labels | `/boards/{boardId}/labels/{labelId}`, `POST /cards/{cardId}/labels`, `DELETE /cards/{cardId}/labels/{labelId}` | Backend uses `/labels/{labelId}` and `PUT /cards/{cardId}/labels`; repo not implemented. | Implement minimal slice and align paths. |
 | Checklist item routes | `/checklists/items/{itemId}` | Backend uses `/checklist-items/{itemId}`; repo not implemented. | Pick canonical route while implementing. |
 | Sync pull | `POST /sync/pull` | Backend has `GET /sync/pull`; repo not implemented. | Pick canonical method before sync implementation. |
@@ -250,21 +248,20 @@ Frontend integration/import-export API helpers exist, but should remain internal
 - [x] Inventory OpenAPI paths from `docs/api/openapi.yaml`.
 - [x] Identify routes returning `not_implemented` or stub-only responses.
 - [x] Identify visible UI paths that can currently call missing backend routes.
-- [ ] Decide canonical route semantics for archive/delete/reorder/lifecycle.
-- [ ] Update backend/frontend/OpenAPI to the selected canonical contract.
+- [x] Decide canonical route semantics for archive/delete/reorder/lifecycle.
+- [x] Update backend/frontend/OpenAPI for archive/reorder/card lifecycle baseline.
 - [ ] Add contract parity smoke/check so these mismatches do not silently return.
 
 ### 2. Immediate blocker queue
 
 Recommended next patch order:
 
-1. **Archive/reorder contract fix**: workspace archive, board archive, same-column card reorder.
-2. **OpenAPI alignment**: card archive/unarchive, user/device routes, labels/checklists/comments canonical paths, sync method shape.
-3. **Card enrichment minimal slice**: labels/checklists/comments backend + frontend or explicit deferral/hiding.
-4. **Local-first runtime baseline**: local store, pending ops, offline/reconnect surface.
-5. **Sync baseline**: replicas, push/pull, idempotency, cursors.
-6. **Real export safety net**: at least one real portable export bundle path.
-7. **Security/release gates**: auth negative smoke, profile boundaries, CORS/JWT/session hardening.
+1. **Remaining OpenAPI alignment**: user/device routes, labels/checklists/comments canonical paths, sync method shape.
+2. **Card enrichment minimal slice**: labels/checklists/comments backend + frontend or explicit deferral/hiding.
+3. **Local-first runtime baseline**: local store, pending ops, offline/reconnect surface.
+4. **Sync baseline**: replicas, push/pull, idempotency, cursors.
+5. **Real export safety net**: at least one real portable export bundle path.
+6. **Security/release gates**: auth negative smoke, profile boundaries, CORS/JWT/session hardening.
 
 ## Release naming rule
 

@@ -15,6 +15,7 @@ pub fn router() -> Router<AppState> {
         .route("/cards/{cardId}", patch(handler::update_card))
         .route("/cards/{cardId}", delete(handler::delete_card))
         .route("/cards/{cardId}/move", post(handler::move_card))
+        .route("/columns/{columnId}/cards/reorder", post(handler::reorder_column_cards))
         .route("/cards/{cardId}/archive", post(handler::archive_card))
         .route("/cards/{cardId}/unarchive", post(handler::unarchive_card))
 }

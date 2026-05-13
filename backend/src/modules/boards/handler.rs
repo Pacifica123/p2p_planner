@@ -71,6 +71,16 @@ pub async fn delete_board(
     Ok(ok(board))
 }
 
+pub async fn archive_board(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(board_id): Path<Uuid>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let board = service::archive_board(&state, actor, board_id).await?;
+    Ok(ok(board))
+}
+
 pub async fn list_columns(
     State(state): State<AppState>,
     headers: HeaderMap,

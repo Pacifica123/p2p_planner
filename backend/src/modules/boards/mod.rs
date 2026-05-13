@@ -14,6 +14,7 @@ pub fn router() -> Router<AppState> {
         .route("/boards/{boardId}", get(handler::get_board))
         .route("/boards/{boardId}", patch(handler::update_board))
         .route("/boards/{boardId}", delete(handler::delete_board))
+        .route("/boards/{boardId}/archive", post(handler::archive_board))
         .route("/boards/{boardId}/columns", get(handler::list_columns))
         .route("/boards/{boardId}/columns", post(handler::create_column))
         .route("/columns/{columnId}", patch(handler::update_column))

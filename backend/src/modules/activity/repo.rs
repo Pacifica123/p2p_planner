@@ -12,6 +12,7 @@ use super::dto::{ActivityActorResponse, ActivityEntryResponse, ActivityListRespo
 const BOARD_FEED_KINDS: &[&str] = &[
     "board.created",
     "board.updated",
+    "board.archived",
     "board.deleted",
     "board.appearance.updated",
     "column.created",
@@ -20,6 +21,7 @@ const BOARD_FEED_KINDS: &[&str] = &[
     "column.reordered",
     "card.created",
     "card.moved",
+    "card.reordered",
     "card.completed",
     "card.reopened",
     "card.archived",

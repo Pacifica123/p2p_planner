@@ -387,6 +387,68 @@ pub async fn update_board(
     Ok(board)
 }
 
+pub async fn archive_board(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    board_id: Uuid,
+) -> AppResult<BoardResponse> {
+    let workspace_id = board_workspace_id(pool, board_id).await?;
+    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    let before = fetch_board(pool, board_id).await?;
+
+    let res = sqlx::query(
+        "update boards set archived_at = coalesce(archived_at, now()), updated_at = now() where id = $1 and deleted_at is null",
+    )
+    .bind(board_id)
+    .execute(pool)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        return Err(AppError::not_found("Board not found"));
+    }
+
+    let board = fetch_board(pool, board_id).await?;
+    let audit_id = record_audit(
+        pool,
+        &NewAuditLogEntry {
+            workspace_id: Some(workspace_id),
+            actor_user_id: Some(actor_user_id),
+            actor_device_id: None,
+            actor_replica_id: None,
+            action_type: "board.archived".to_string(),
+            target_entity_type: Some("board".to_string()),
+            target_entity_id: Some(board_id),
+            request_id: None,
+            metadata_jsonb: json!({
+                "name": board.name.clone(),
+                "wasArchived": before.is_archived,
+                "isArchived": board.is_archived,
+            }),
+        },
+    )
+    .await?;
+    let _activity_id = record_activity(
+        pool,
+        &NewActivityEntry {
+            workspace_id,
+            board_id,
+            card_id: None,
+            actor_user_id: Some(actor_user_id),
+            kind: "board.archived",
+            entity_type: "board",
+            entity_id: board_id,
+            field_mask: vec!["isArchived".to_string()],
+            payload_jsonb: json!({"boardName": board.name.clone()}),
+            request_id: None,
+            source_change_event_id: None,
+            source_audit_log_id: Some(audit_id),
+        },
+    )
+    .await?;
+
+    Ok(board)
+}
+
 pub async fn delete_board(
     pool: &PgPool,
     actor_user_id: Uuid,

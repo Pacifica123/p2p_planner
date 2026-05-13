@@ -65,6 +65,14 @@ pub async fn delete_board(
     super::repo::delete_board(&state.db, actor_user_id, board_id).await
 }
 
+pub async fn archive_board(
+    state: &AppState,
+    actor_user_id: Uuid,
+    board_id: Uuid,
+) -> AppResult<BoardResponse> {
+    super::repo::archive_board(&state.db, actor_user_id, board_id).await
+}
+
 pub async fn list_columns(
     state: &AppState,
     actor_user_id: Uuid,

@@ -138,6 +138,7 @@ def main():
         'board_id': None,
         'column_id': None,
         'card_id': None,
+        'second_card_id': None,
     }
 
     try:
@@ -175,6 +176,12 @@ def main():
         }, expected_status=201)
         created['card_id'] = data_id(card)
 
+        _, second_card = request('POST', f"/boards/{created['board_id']}/cards", {
+            'title': 'Second smoke card',
+            'columnId': created['column_id'],
+        }, expected_status=201)
+        created['second_card_id'] = data_id(second_card)
+
         request('GET', f"/cards/{created['card_id']}")
         request('PATCH', f"/cards/{created['card_id']}", {
             'title': 'Renamed smoke card',
@@ -184,9 +191,24 @@ def main():
             'targetColumnId': created['column_id'],
             'position': 2048.0,
         })
+        _, reorder_payload = request('POST', f"/columns/{created['column_id']}/cards/reorder", {
+            'items': [
+                {'cardId': created['second_card_id'], 'position': 1024.0},
+                {'cardId': created['card_id'], 'position': 2048.0},
+            ],
+        })
+        reordered_cards = api_data(reorder_payload)['items']
+        assert_equal(reordered_cards[0]['id'], created['second_card_id'], 'reorder first card')
+        assert_equal(reordered_cards[1]['id'], created['card_id'], 'reorder second card')
         request('POST', f"/cards/{created['card_id']}/archive")
         request('POST', f"/cards/{created['card_id']}/unarchive")
         request('GET', f"/boards/{created['board_id']}/cards")
+
+        _, archived_board_payload = request('POST', f"/boards/{created['board_id']}/archive")
+        assert_true(api_data(archived_board_payload)['isArchived'], 'board archived')
+
+        _, archived_workspace_payload = request('POST', f"/workspaces/{created['workspace_id']}/archive")
+        assert_true(api_data(archived_workspace_payload)['isArchived'], 'workspace archived')
 
         _, board_activity_payload = request('GET', f"/boards/{created['board_id']}/activity")
         board_activity = api_data(board_activity_payload)

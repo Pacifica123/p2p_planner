@@ -71,6 +71,14 @@ pub async fn delete_workspace(
     super::repo::delete_workspace(&state.db, actor_user_id, workspace_id).await
 }
 
+pub async fn archive_workspace(
+    state: &AppState,
+    actor_user_id: Uuid,
+    workspace_id: Uuid,
+) -> AppResult<WorkspaceResponse> {
+    super::repo::archive_workspace(&state.db, actor_user_id, workspace_id).await
+}
+
 pub async fn list_members(
     state: &AppState,
     actor_user_id: Uuid,

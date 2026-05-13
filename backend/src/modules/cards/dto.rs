@@ -56,6 +56,19 @@ pub struct MoveCardRequest {
     pub position: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderColumnCardItem {
+    pub card_id: Uuid,
+    pub position: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderColumnCardsRequest {
+    pub items: Vec<ReorderColumnCardItem>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PageInfo {

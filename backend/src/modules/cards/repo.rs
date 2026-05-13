@@ -8,15 +8,16 @@ use crate::{
         activity::repo::{record_activity, NewActivityEntry},
         audit::repo::{record_audit, NewAuditLogEntry},
         common::{
-            board_workspace_id, card_board_and_workspace_id, ensure_user_exists, next_position_for_card,
-            normalize_limit, require_workspace_access, require_workspace_admin, trim_to_option,
+            board_workspace_id, card_board_and_workspace_id, column_board_and_workspace_id, ensure_user_exists,
+            next_position_for_card, normalize_limit, require_workspace_access, require_workspace_admin,
+            trim_to_option,
         },
     },
 };
 
 use super::dto::{
     CardListResponse, CardResponse, CreateCardRequest, ListCardsQuery, MoveCardRequest, PageInfo,
-    UpdateCardRequest,
+    ReorderColumnCardsRequest, UpdateCardRequest,
 };
 
 fn map_card(row: &sqlx::postgres::PgRow) -> AppResult<CardResponse> {
@@ -664,6 +665,123 @@ pub async fn move_card(
         .await?;
     }
     Ok(card)
+}
+
+pub async fn reorder_column_cards(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    column_id: Uuid,
+    payload: ReorderColumnCardsRequest,
+) -> AppResult<CardListResponse> {
+    let (board_id, workspace_id) = column_board_and_workspace_id(pool, column_id).await?;
+    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+
+    let card_ids = payload.items.iter().map(|item| item.card_id).collect::<Vec<_>>();
+    let existing_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)::bigint
+        from cards
+        where board_id = $1
+          and column_id = $2
+          and id = any($3)
+          and deleted_at is null
+        "#,
+    )
+    .bind(board_id)
+    .bind(column_id)
+    .bind(&card_ids)
+    .fetch_one(pool)
+    .await?;
+
+    if existing_count != card_ids.len() as i64 {
+        return Err(AppError::bad_request(
+            "All reordered cards must belong to the target column",
+        ));
+    }
+
+    let mut tx = pool.begin().await?;
+    for item in &payload.items {
+        sqlx::query(
+            r#"
+            update cards
+            set position = $3
+            where id = $1
+              and column_id = $2
+              and board_id = $4
+              and deleted_at is null
+            "#,
+        )
+        .bind(item.card_id)
+        .bind(column_id)
+        .bind(item.position)
+        .bind(board_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    let items_json = payload
+        .items
+        .iter()
+        .map(|item| json!({"cardId": item.card_id.to_string(), "position": item.position}))
+        .collect::<Vec<_>>();
+    let audit_id = record_audit(
+        &mut *tx,
+        &NewAuditLogEntry {
+            workspace_id: Some(workspace_id),
+            actor_user_id: Some(actor_user_id),
+            actor_device_id: None,
+            actor_replica_id: None,
+            action_type: "card.reordered".to_string(),
+            target_entity_type: Some("column".to_string()),
+            target_entity_id: Some(column_id),
+            request_id: None,
+            metadata_jsonb: json!({
+                "boardId": board_id.to_string(),
+                "columnId": column_id.to_string(),
+                "items": items_json.clone(),
+            }),
+        },
+    )
+    .await?;
+    let _activity_id = record_activity(
+        &mut *tx,
+        &NewActivityEntry {
+            workspace_id,
+            board_id,
+            card_id: None,
+            actor_user_id: Some(actor_user_id),
+            kind: "card.reordered",
+            entity_type: "column",
+            entity_id: column_id,
+            field_mask: vec!["position".to_string()],
+            payload_jsonb: json!({
+                "columnId": column_id.to_string(),
+                "items": items_json,
+            }),
+            request_id: None,
+            source_change_event_id: None,
+            source_audit_log_id: Some(audit_id),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+
+    list_cards(
+        pool,
+        actor_user_id,
+        board_id,
+        ListCardsQuery {
+            limit: Some(100),
+            cursor: None,
+            q: None,
+            column_id: Some(column_id.to_string()),
+            label_id: None,
+            completed: None,
+            sort_by: Some("position".to_string()),
+            sort_dir: Some("asc".to_string()),
+        },
+    )
+    .await
 }
 
 pub async fn archive_card(

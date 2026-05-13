@@ -69,6 +69,16 @@ pub async fn delete_workspace(
     Ok(ok(workspace))
 }
 
+pub async fn archive_workspace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<Uuid>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let workspace = service::archive_workspace(&state, actor, workspace_id).await?;
+    Ok(ok(workspace))
+}
+
 pub async fn list_members(
     State(state): State<AppState>,
     headers: HeaderMap,

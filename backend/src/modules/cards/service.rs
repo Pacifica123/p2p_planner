@@ -1,10 +1,12 @@
+use std::collections::HashSet;
+
 use uuid::Uuid;
 
 use crate::{error::{AppError, AppResult}, state::AppState};
 
 use super::dto::{
     CardListResponse, CardResponse, CreateCardRequest, ListCardsQuery, MoveCardRequest,
-    UpdateCardRequest,
+    ReorderColumnCardsRequest, UpdateCardRequest,
 };
 
 fn normalize_status(value: &str) -> Option<&'static str> {
@@ -100,6 +102,29 @@ pub async fn move_card(
     payload: MoveCardRequest,
 ) -> AppResult<CardResponse> {
     super::repo::move_card(&state.db, actor_user_id, card_id, payload).await
+}
+
+pub async fn reorder_column_cards(
+    state: &AppState,
+    actor_user_id: Uuid,
+    column_id: Uuid,
+    payload: ReorderColumnCardsRequest,
+) -> AppResult<CardListResponse> {
+    if payload.items.is_empty() {
+        return Err(AppError::bad_request("At least one card item is required"));
+    }
+
+    let mut seen = HashSet::with_capacity(payload.items.len());
+    for item in &payload.items {
+        if !seen.insert(item.card_id) {
+            return Err(AppError::bad_request("Duplicate cardId in reorder payload"));
+        }
+        if !item.position.is_finite() {
+            return Err(AppError::bad_request("Card position must be a finite number"));
+        }
+    }
+
+    super::repo::reorder_column_cards(&state.db, actor_user_id, column_id, payload).await
 }
 
 pub async fn archive_card(
