@@ -615,6 +615,8 @@ Acceptance criteria:
 
 ## Phase 2 — env planner and safe env creation
 
+Статус: implemented in `tools/devbootstrap.py` as `plan` / `prepare-env`.
+
 Цель:
 
 - научить инструмент понимать env-контракт проекта.
@@ -647,6 +649,16 @@ Acceptance criteria:
 - существующие env не перетираются;
 - report объясняет missing/extra/mismatched keys;
 - secrets не попадают в логи.
+
+Реализованные детали Phase 2:
+
+- `plan` строит read-only env-план и может писать `.dev-bootstrap/runs/<timestamp>_plan/report.md`;
+- `prepare-env` создает отсутствующие `backend/.env` и `frontend/.env.local` из example-файлов;
+- существующие env-файлы по умолчанию не изменяются;
+- `prepare-env --add-missing-keys` добавляет недостающие ключи из example-файла только после timestamped backup рядом с env-файлом;
+- значения с `SECRET`, `PASSWORD`, `TOKEN`, `COOKIE`, `DATABASE__URL` маскируются в отчетах и JSON;
+- выполняется sanity-check согласованности `APP__HOST`, `APP__PORT`, `DATABASE__URL`, `HTTP__CORS_ALLOWED_ORIGINS`, `VITE_API_BASE_URL` и `AUTH__ENABLE_DEV_HEADER_AUTH=false`;
+- `plan --no-write-report` и `prepare-env --no-write-report` подходят для быстрых devctl/check прогонов.
 
 ---
 

@@ -40,16 +40,26 @@ frontend/  React + Vite + TanStack Query
 docs/      ADR, архитектурные решения, OpenAPI, MVP scope
 ```
 
-## Автодиагностика dev-среды
+## Автодиагностика и env-подготовка dev-среды
 
-Первый слой будущего авторазвертывателя уже доступен как read-only диагностика:
+Первые слои будущего авторазвертывателя доступны как безопасные команды без запуска runtime-сервисов:
 
 ```bash
 python tools/devbootstrap.py diagnose --no-write-report
+python tools/devbootstrap.py plan --no-write-report
+python tools/devbootstrap.py prepare-env
 python tools/devbootstrap.py status
 ```
 
-Обычный `diagnose` дополнительно сохраняет отчет в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. На phase 1 инструмент еще не запускает PostgreSQL/backend/frontend, а только проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL.
+Обычные `diagnose`, `plan` и `prepare-env` дополнительно сохраняют отчеты в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. Phase 1 проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL. Phase 2 читает env-контракт, показывает diff ключей, маскирует секреты и безопасно создает отсутствующие `backend/.env` / `frontend/.env.local` из example-файлов без перезаписи существующих env.
+
+Если env-файл уже существует, `prepare-env` не меняет его по умолчанию. Для аккуратного добавления недостающих ключей из example-файлов есть явный режим:
+
+```bash
+python tools/devbootstrap.py prepare-env --add-missing-keys
+```
+
+Перед таким изменением создается backup рядом с исходным env-файлом.
 
 ## Быстрый запуск
 
