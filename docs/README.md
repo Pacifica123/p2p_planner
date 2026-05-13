@@ -18,6 +18,7 @@
 - `sync/` — glossary, протокол синхронизации и каноническая conflict policy.
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
+- `dev-bootstrap/` — мотивация, каталог рисков и план разработки будущего авторазвертывателя local dev-среды.
 
 ## Зафиксированные принципы
 
@@ -53,6 +54,9 @@
    `architecture/testing-application-guide-v1.md`,
    `architecture/deployment-packaging-v1.md`
    и `architecture/project-structure.md`.
+6. Затем `dev-bootstrap/dev-autodeployer-manifesto.md`,
+   `dev-bootstrap/deployment-pitfalls-catalog.md` и
+   `dev-bootstrap/dev-autodeployer-v1-development-plan.md` для будущей автоматизации локального разворачивания.
 6. И только потом `api/openapi.yaml`, `sync/protocol.md` и
    `sync/conflict-resolution.md`.
 
@@ -93,3 +97,9 @@ local-first, sync и optional p2p.
 - `docs/product/beta-scope-v1.md` — beta scope v1: финальная release-plan граница для web-first beta без native mobile, с beta backlog, must-have/nice-to-have, release gates, demoable flows и mobile/repo/release решением.
 
 - `docs/product/v1-execution-roadmap.md` — execution roadmap перед v1: статусы Done/Partial/Blocker/Deferred, ручной testable path, baseline backend/frontend/OpenAPI parity sweep и очередь ближайших blockers.
+- `docs/dev-bootstrap/dev-autodeployer-manifesto.md` — философия будущего кастомного авторазвертывателя: проверяемая автоматизация вместо магического shell-скрипта.
+
+- `docs/dev-bootstrap/deployment-pitfalls-catalog.md` — каталог рисков локального разворачивания: ОС, инструменты, env, PostgreSQL, backend, frontend, smoke, процессы и cleanup.
+
+- `docs/dev-bootstrap/dev-autodeployer-v1-development-plan.md` — детальный план разработки авторазвертывателя до v1: команды, фазы, проверки, acceptance criteria и граница минимально полезного инструмента.
+
