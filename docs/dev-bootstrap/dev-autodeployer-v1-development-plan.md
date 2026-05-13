@@ -713,6 +713,8 @@ Acceptance criteria:
 
 ## Phase 4 — backend check and backend start
 
+Статус: implemented in `tools/devbootstrap.py` as `check-backend` / `start-backend` with cargo metadata/check, backend port preflight, guarded `cargo run`, PID/state/log capture, health wait and failure classification.
+
 Цель:
 
 - поднять backend до health и дать понятный диагноз при runtime failure.

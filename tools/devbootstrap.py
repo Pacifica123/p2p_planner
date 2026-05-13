@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TOOL_VERSION = "0.3.0-phase3"
+TOOL_VERSION = "0.4.0-phase4"
 STATE_VERSION = 1
 BOOTSTRAP_DIR_NAME = ".dev-bootstrap"
 DEFAULT_PORTS = {
@@ -1940,6 +1940,617 @@ def command_start_db(args: argparse.Namespace) -> int:
         print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
     return 1 if result.failures and not args.dry_run else 0
 
+
+@dataclass
+class BackendCheck:
+    code: str
+    status: str
+    message: str
+    evidence: str | None = None
+
+
+@dataclass
+class BackendAction:
+    code: str
+    status: str
+    message: str
+    command: str | None = None
+    evidence: str | None = None
+
+
+@dataclass
+class BackendResult:
+    generated_at: str
+    tool_version: str
+    project_root: str | None
+    invoked_from: str
+    mode: str
+    dry_run: bool = False
+    backend_host: str | None = None
+    backend_port: int | None = None
+    backend_port_parse_error: str | None = None
+    backend_port_probe: PortProbe | None = None
+    health: list[HttpProbe] = field(default_factory=list)
+    state_backend: dict[str, Any] = field(default_factory=dict)
+    cargo_version: ProcessProbe | None = None
+    rustc_version: ProcessProbe | None = None
+    cargo_metadata: ProcessProbe | None = None
+    cargo_check: ProcessProbe | None = None
+    process_pid: int | None = None
+    process_alive: bool | None = None
+    process_returncode: int | None = None
+    run_id: str | None = None
+    log_path: str | None = None
+    classification: str = "unknown"
+    checks: list[BackendCheck] = field(default_factory=list)
+    actions: list[BackendAction] = field(default_factory=list)
+    failures: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    report_dir: str | None = None
+
+
+def backend_effective_env(project_root: Path) -> dict[str, str]:
+    return effective_env_values_for(project_root, "backend")
+
+
+def parse_backend_host_port(project_root: Path) -> tuple[str, int, str | None]:
+    values = backend_effective_env(project_root)
+    host = values.get("APP__HOST", "127.0.0.1") or "127.0.0.1"
+    raw_port = values.get("APP__PORT", str(DEFAULT_PORTS["backend"])) or str(DEFAULT_PORTS["backend"])
+    try:
+        port = int(raw_port)
+    except ValueError:
+        return host, DEFAULT_PORTS["backend"], f"APP__PORT is not an integer: {raw_port}"
+    if port <= 0 or port > 65535:
+        return host, DEFAULT_PORTS["backend"], f"APP__PORT is outside TCP port range: {raw_port}"
+    return host, port, None
+
+
+def http_probe_host(bind_host: str | None) -> str:
+    if bind_host in {None, "", "0.0.0.0", "::", "[::]"}:
+        return "127.0.0.1"
+    return str(bind_host)
+
+
+def backend_health_urls(host: str | None, port: int | None) -> dict[str, str]:
+    probe_host = http_probe_host(host)
+    probe_port = port or DEFAULT_PORTS["backend"]
+    return {
+        "backend_health_root": f"http://{probe_host}:{probe_port}/health",
+        "backend_health_api": f"http://{probe_host}:{probe_port}/api/v1/health",
+    }
+
+
+def probe_backend_health(host: str | None, port: int | None, *, timeout: float = 1.5) -> list[HttpProbe]:
+    return [probe_http(name, url, timeout=timeout) for name, url in backend_health_urls(host, port).items()]
+
+
+def backend_health_ready(probes: list[HttpProbe]) -> bool:
+    expected = {"backend_health_root", "backend_health_api"}
+    seen = {probe.name for probe in probes if probe.reachable and probe.status and 200 <= probe.status < 300}
+    return expected.issubset(seen)
+
+
+def command_output_text(probe: ProcessProbe | None) -> str:
+    if probe is None:
+        return ""
+    return "\n".join(part for part in [probe.stdout, probe.stderr, probe.error or ""] if part).strip()
+
+
+def tail_text(text: str, *, max_chars: int = 12000) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
+
+
+def read_log_tail(path: Path | None, *, max_chars: int = 20000) -> str:
+    if path is None or not path.exists():
+        return ""
+    try:
+        return tail_text(path.read_text(encoding="utf-8", errors="replace"), max_chars=max_chars)
+    except OSError as exc:
+        return f"<could not read log: {exc}>"
+
+
+def sanitize_backend_log(text: str, project_root: Path | None = None) -> str:
+    if not text:
+        return ""
+    cleaned = text
+    if project_root is not None:
+        db_url = backend_effective_env(project_root).get("DATABASE__URL")
+        if db_url:
+            cleaned = cleaned.replace(db_url, mask_database_url(db_url))
+            try:
+                parsed = urllib.parse.urlsplit(db_url)
+                if parsed.password:
+                    cleaned = cleaned.replace(urllib.parse.unquote(parsed.password), "***")
+            except Exception:
+                pass
+    return "\n".join(cleaned.strip().splitlines()[-40:])
+
+
+def classify_backend_failure(text: str, default: str) -> str:
+    lower = text.lower()
+    if "address already in use" in lower or "os error 98" in lower or "os error 10048" in lower:
+        return "port_conflict"
+    if "migration" in lower and "missing in the resolved migrations" in lower:
+        return "migration_drift"
+    if "migration" in lower and ("failed" in lower or "error" in lower):
+        return "migration_failed"
+    if "password authentication failed" in lower or "authentication failed" in lower:
+        return "postgres_auth_failed"
+    if "database" in lower and "does not exist" in lower:
+        return "database_missing"
+    if "connection refused" in lower or "could not connect" in lower or "connection error" in lower:
+        return "postgres_unavailable"
+    if "could not compile" in lower or "compilation failed" in lower or "error[" in lower:
+        return "cargo_check_failed"
+    if "timeout" in lower:
+        return "backend_health_timeout"
+    return default
+
+
+def run_backend_command_probe(
+    name: str,
+    command: list[str],
+    *,
+    project_root: Path,
+    cwd: Path,
+    timeout: int,
+    log_path: Path | None = None,
+) -> ProcessProbe:
+    probe = run_process_probe(name, command, cwd=cwd, timeout=timeout)
+    if log_path is not None:
+        lines = [
+            f"$ {command_as_text(command)}",
+            f"cwd: {rel(cwd, project_root)}",
+            f"exit: {probe.returncode if probe.returncode is not None else probe.error or '<none>'}",
+            "",
+            "## stdout",
+            probe.stdout or "<empty>",
+            "",
+            "## stderr",
+            probe.stderr or probe.error or "<empty>",
+            "",
+        ]
+        log_path.write_text("\n".join(lines), encoding="utf-8")
+    return probe
+
+
+def state_backend_entry(project_root: Path) -> dict[str, Any]:
+    state = read_json(project_root / BOOTSTRAP_DIR_NAME / "state.json")
+    processes = state.get("processes") if isinstance(state.get("processes"), dict) else {}
+    backend = processes.get("backend") if isinstance(processes.get("backend"), dict) else {}
+    if not backend:
+        return {}
+    pid_raw = backend.get("pid")
+    try:
+        pid = int(pid_raw)
+    except (TypeError, ValueError):
+        pid = -1
+    backend = dict(backend)
+    backend["alive"] = pid_alive(pid)
+    return backend
+
+
+def update_process_state(
+    project_root: Path,
+    *,
+    process_name: str,
+    pid: int,
+    cwd: Path,
+    command: list[str],
+    started_at: str,
+    run_id_value: str,
+    log_path: Path | None,
+    report_dir: Path | None,
+) -> None:
+    state_path = project_root / BOOTSTRAP_DIR_NAME / "state.json"
+    state = read_json(state_path)
+    if "_error" in state:
+        state = {}
+    processes = state.get("processes") if isinstance(state.get("processes"), dict) else {}
+    processes[process_name] = {
+        "pid": pid,
+        "cwd": rel(cwd, project_root),
+        "command": command_as_text(command),
+        "startedAt": started_at,
+        "runId": run_id_value,
+        "logPath": rel(log_path, project_root) if log_path else None,
+    }
+    state["version"] = STATE_VERSION
+    state["activeRunId"] = run_id_value
+    state["processes"] = processes
+    last_reports = state.get("lastReports") if isinstance(state.get("lastReports"), list) else []
+    if report_dir is not None:
+        last_reports.append(rel(report_dir, project_root))
+        state["lastReports"] = last_reports[-20:]
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(state_path, state)
+
+
+def build_backend_result(project_root: Path | None, invoked_from: Path, *, mode: str, dry_run: bool = False) -> BackendResult:
+    result = BackendResult(
+        generated_at=iso_now(),
+        tool_version=TOOL_VERSION,
+        project_root=str(project_root) if project_root else None,
+        invoked_from=str(invoked_from),
+        mode=mode,
+        dry_run=dry_run,
+    )
+    if project_root is None:
+        result.classification = "invalid_project_root"
+        result.failures.append({"code": "invalid_project_root", "message": "Could not find project root."})
+        result.next_actions.append("Run this command from the project root, tools/, backend/ or frontend/ directory.")
+        return result
+
+    host, port, port_error = parse_backend_host_port(project_root)
+    result.backend_host = host
+    result.backend_port = port
+    result.backend_port_parse_error = port_error
+    result.backend_port_probe = probe_port("backend", port, host=http_probe_host(host))
+    result.health = probe_backend_health(host, port)
+    result.state_backend = state_backend_entry(project_root)
+    result.cargo_version = run_process_probe("cargo_version", ["cargo", "--version"], cwd=project_root, timeout=8)
+    result.rustc_version = run_process_probe("rustc_version", ["rustc", "--version"], cwd=project_root, timeout=8)
+
+    if port_error:
+        result.warnings.append({"code": "backend_port_parse", "message": port_error})
+    if result.state_backend:
+        if result.state_backend.get("alive"):
+            result.warnings.append(
+                {
+                    "code": "backend_process_registered",
+                    "message": f"state.json already contains alive backend pid={result.state_backend.get('pid')}.",
+                }
+            )
+        else:
+            result.warnings.append(
+                {
+                    "code": "backend_stale_process",
+                    "message": f"state.json contains stale backend pid={result.state_backend.get('pid')}; it is not alive.",
+                }
+            )
+    return result
+
+
+def add_backend_preflight_checks(result: BackendResult) -> None:
+    if result.cargo_version:
+        status = "ok" if process_probe_ok(result.cargo_version) else "fail"
+        result.checks.append(BackendCheck("cargo_version", status, "Cargo availability check.", first_output_line(result.cargo_version)))
+    if result.rustc_version:
+        status = "ok" if process_probe_ok(result.rustc_version) else "fail"
+        result.checks.append(BackendCheck("rustc_version", status, "Rust compiler availability check.", first_output_line(result.rustc_version)))
+    if result.backend_port_probe:
+        status = "warn" if result.backend_port_probe.open else "ok"
+        message = f"Backend TCP port {result.backend_port_probe.host}:{result.backend_port_probe.port} is {'open' if result.backend_port_probe.open else 'closed/free'}."
+        evidence = "tcp connect succeeded" if result.backend_port_probe.open else (result.backend_port_probe.error or "")
+        result.checks.append(BackendCheck("backend_port_preflight", status, message, evidence))
+    if result.health:
+        for probe in result.health:
+            status = "ok" if probe.reachable and probe.status and 200 <= probe.status < 300 else "warn"
+            evidence = probe.error or (f"{probe.duration_ms} ms" if probe.duration_ms is not None else None)
+            message = f"{probe.url} returned HTTP {probe.status}." if probe.reachable else f"{probe.url} is not reachable."
+            result.checks.append(BackendCheck(probe.name, status, message, evidence))
+
+
+def finalize_backend_check_classification(result: BackendResult, project_root: Path, *, operation: str) -> None:
+    add_backend_preflight_checks(result)
+    if not process_probe_ok(result.cargo_version):
+        result.classification = "missing_prerequisite"
+        result.failures.append({"code": "missing_cargo", "message": "cargo is not available on PATH."})
+        result.next_actions.append("Install Rust/Cargo or use a shell where cargo is available, then rerun check-backend.")
+        return
+    if not process_probe_ok(result.rustc_version):
+        result.classification = "missing_prerequisite"
+        result.failures.append({"code": "missing_rustc", "message": "rustc is not available on PATH."})
+        result.next_actions.append("Install Rust toolchain or repair PATH, then rerun check-backend.")
+        return
+    if result.cargo_metadata is not None:
+        status = "ok" if process_probe_ok(result.cargo_metadata) else "fail"
+        result.checks.append(BackendCheck("cargo_metadata", status, "cargo metadata completed.", first_output_line(result.cargo_metadata)))
+        if not process_probe_ok(result.cargo_metadata):
+            text = command_output_text(result.cargo_metadata)
+            result.classification = classify_backend_failure(text, "cargo_metadata_failed")
+            result.failures.append({"code": result.classification, "message": "cargo metadata failed."})
+            result.next_actions.append("Review cargo-metadata.log and Cargo.toml/Cargo.lock before trying to run the backend.")
+            return
+    if result.cargo_check is not None:
+        status = "ok" if process_probe_ok(result.cargo_check) else "fail"
+        result.checks.append(BackendCheck("cargo_check", status, "cargo check completed.", first_output_line(result.cargo_check)))
+        if not process_probe_ok(result.cargo_check):
+            text = command_output_text(result.cargo_check)
+            result.classification = classify_backend_failure(text, "cargo_check_failed")
+            result.failures.append({"code": result.classification, "message": "cargo check failed."})
+            result.next_actions.append("Fix the Rust compile error from cargo-check.log. Do not start backend until cargo check passes.")
+            return
+    if operation == "check-backend":
+        result.classification = "backend_check_ok"
+        result.next_actions.append("Backend compile preflight passed. Continue with `python tools/devbootstrap.py start-backend` when PostgreSQL is ready.")
+
+
+def render_backend_report(result: BackendResult) -> str:
+    lines: list[str] = []
+    lines.append(f"# devbootstrap {result.mode} report")
+    lines.append("")
+    lines.append(f"- Generated at: `{result.generated_at}`")
+    lines.append(f"- Tool version: `{result.tool_version}`")
+    lines.append(f"- Invoked from: `{result.invoked_from}`")
+    lines.append(f"- Project root: `{result.project_root or 'not found'}`")
+    lines.append(f"- Classification: `{result.classification}`")
+    lines.append(f"- Dry run: `{result.dry_run}`")
+    if result.backend_host is not None and result.backend_port is not None:
+        lines.append(f"- Backend bind/probe: `{result.backend_host}:{result.backend_port}`")
+    if result.process_pid is not None:
+        lines.append(f"- Backend PID: `{result.process_pid}`")
+    if result.log_path:
+        lines.append(f"- Backend log: `{result.log_path}`")
+    lines.append("")
+
+    lines.append("## Checks")
+    lines.append("")
+    if result.checks:
+        lines.append("| Status | Code | Message | Evidence |")
+        lines.append("|---|---|---|---|")
+        for check in result.checks:
+            evidence = (check.evidence or "").replace("\n", "<br>")
+            lines.append(f"| {check.status} | `{check.code}` | {check.message} | `{evidence}` |")
+    else:
+        lines.append("No checks recorded.")
+    lines.append("")
+
+    lines.append("## Actions")
+    lines.append("")
+    if result.actions:
+        for action in result.actions:
+            command = f" `{action.command}`" if action.command else ""
+            evidence = f" Evidence: `{action.evidence}`" if action.evidence else ""
+            lines.append(f"- **{action.status}** `{action.code}` — {action.message}{command}.{evidence}")
+    else:
+        lines.append("No actions were executed.")
+    lines.append("")
+
+    lines.append("## Findings")
+    lines.append("")
+    if not result.failures and not result.warnings:
+        lines.append("- No backend findings.")
+    for failure in result.failures:
+        lines.append(f"- **FAIL** `{failure['code']}` — {failure['message']}")
+    for warning in result.warnings:
+        lines.append(f"- **WARN** `{warning['code']}` — {warning['message']}")
+    lines.append("")
+
+    lines.append("## Next safe actions")
+    lines.append("")
+    if result.next_actions:
+        for action in result.next_actions:
+            lines.append(f"- {action}")
+    else:
+        lines.append("- Continue with the next devbootstrap phase.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_backend_reports(project_root: Path, result: BackendResult, command: str, report_dir: Path | None = None) -> Path:
+    if report_dir is None:
+        report_dir = create_report_dir(project_root, command)
+    result.report_dir = rel(report_dir, project_root)
+    write_json(report_dir / f"{command}.json", as_jsonable(result))
+    (report_dir / "report.md").write_text(render_backend_report(result), encoding="utf-8")
+    return report_dir
+
+
+def print_backend_summary(result: BackendResult) -> None:
+    print_header(f"devbootstrap {result.mode}")
+    print(f"Tool version: {result.tool_version}")
+    print(f"Project root: {result.project_root or 'not found'}")
+    print(f"Classification: {result.classification}")
+    if result.backend_host is not None and result.backend_port is not None:
+        print(f"Backend target: {result.backend_host}:{result.backend_port}")
+    if result.process_pid is not None:
+        alive_text = "alive" if result.process_alive else "not alive"
+        print(f"Backend process: pid={result.process_pid} {alive_text}")
+    print("\nChecks:")
+    for check in result.checks:
+        evidence = f" — {check.evidence}" if check.evidence else ""
+        print(f"  - {check.status.upper()} {check.code}: {check.message}{evidence}")
+    if result.actions:
+        print("\nActions:")
+        for action in result.actions:
+            command = f" — {action.command}" if action.command else ""
+            evidence = f" — {action.evidence}" if action.evidence else ""
+            print(f"  - {action.status.upper()} {action.code}: {action.message}{command}{evidence}")
+    if result.failures or result.warnings:
+        print("\nFindings:")
+        for failure in result.failures:
+            print(f"  - FAIL {failure['code']}: {failure['message']}")
+        for warning in result.warnings:
+            print(f"  - WARN {warning['code']}: {warning['message']}")
+    else:
+        print("\nFindings: no backend findings")
+    if result.next_actions:
+        print("\nNext safe actions:")
+        for action in result.next_actions:
+            print(f"  - {action}")
+    if result.report_dir:
+        print(f"\nReport: {result.report_dir}/report.md")
+
+
+def command_check_backend(args: argparse.Namespace) -> int:
+    invoked_from = Path.cwd()
+    project_root = find_project_root(invoked_from)
+    result = build_backend_result(project_root, invoked_from, mode="check-backend", dry_run=args.dry_run)
+    report_dir: Path | None = None
+    if project_root is not None and not args.no_write_report:
+        report_dir = create_report_dir(project_root, "check-backend")
+        result.report_dir = rel(report_dir, project_root)
+    if project_root is not None:
+        backend_dir = project_root / "backend"
+        if args.dry_run:
+            result.actions.append(BackendAction("cargo_metadata", "planned", "Would run cargo metadata for backend.", "cargo metadata --format-version 1 --no-deps"))
+            result.actions.append(BackendAction("cargo_check", "planned", "Would run cargo check for backend.", "cargo check"))
+            result.classification = "dry_run"
+            result.next_actions.append("Run without --dry-run to execute cargo metadata and cargo check.")
+            add_backend_preflight_checks(result)
+        else:
+            metadata_log = report_dir / "cargo-metadata.log" if report_dir else None
+            check_log = report_dir / "cargo-check.log" if report_dir else None
+            result.cargo_metadata = run_backend_command_probe(
+                "cargo_metadata",
+                ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+                project_root=project_root,
+                cwd=backend_dir,
+                timeout=args.metadata_timeout_seconds,
+                log_path=metadata_log,
+            )
+            if process_probe_ok(result.cargo_metadata):
+                result.cargo_check = run_backend_command_probe(
+                    "cargo_check",
+                    ["cargo", "check"],
+                    project_root=project_root,
+                    cwd=backend_dir,
+                    timeout=args.timeout_seconds,
+                    log_path=check_log,
+                )
+            finalize_backend_check_classification(result, project_root, operation="check-backend")
+    if project_root is not None and not args.no_write_report:
+        write_backend_reports(project_root, result, "check-backend", report_dir)
+    print_backend_summary(result)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
+    return 1 if result.failures and not args.dry_run else 0
+
+
+def launch_backend_process(project_root: Path, report_dir: Path) -> tuple[subprocess.Popen[Any], Path]:
+    backend_dir = project_root / "backend"
+    log_path = report_dir / "backend.log"
+    log_handle = log_path.open("ab", buffering=0)
+    header = f"\n== devbootstrap start-backend {iso_now()} ==\n$ cargo run\ncwd: {rel(backend_dir, project_root)}\n\n".encode("utf-8", errors="replace")
+    log_handle.write(header)
+    try:
+        process = subprocess.Popen(
+            ["cargo", "run"],
+            cwd=str(backend_dir),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception:
+        log_handle.close()
+        raise
+    # The child keeps the file descriptor open. The parent can close its copy.
+    log_handle.close()
+    return process, log_path
+
+
+def wait_for_backend_health(process: subprocess.Popen[Any], host: str | None, port: int | None, *, timeout_seconds: int) -> tuple[bool, list[HttpProbe], int | None]:
+    deadline = time.monotonic() + timeout_seconds
+    last_probes: list[HttpProbe] = []
+    while time.monotonic() < deadline:
+        returncode = process.poll()
+        last_probes = probe_backend_health(host, port, timeout=1.0)
+        if backend_health_ready(last_probes):
+            return True, last_probes, returncode
+        if returncode is not None:
+            return False, last_probes, returncode
+        time.sleep(1.0)
+    return False, last_probes, process.poll()
+
+
+def command_start_backend(args: argparse.Namespace) -> int:
+    invoked_from = Path.cwd()
+    project_root = find_project_root(invoked_from)
+    result = build_backend_result(project_root, invoked_from, mode="start-backend", dry_run=args.dry_run)
+    report_dir: Path | None = None
+    if project_root is not None and (not args.no_write_report or not args.dry_run):
+        report_dir = create_report_dir(project_root, "start-backend")
+        result.report_dir = rel(report_dir, project_root)
+
+    if project_root is not None:
+        add_backend_preflight_checks(result)
+        if backend_health_ready(result.health):
+            result.classification = "backend_already_running"
+            result.actions.append(BackendAction("start_backend_noop", "ok", "Backend health is already reachable; cargo run was not started."))
+            result.next_actions.append("Continue with frontend phases or run smoke checks.")
+        elif result.backend_port_probe and result.backend_port_probe.open:
+            result.classification = "port_conflict"
+            result.failures.append({"code": "port_conflict", "message": "Backend port is open but health endpoints are not healthy. devbootstrap will not kill a foreign process."})
+            result.next_actions.append("Inspect the process on the backend port manually, or stop the old backend you own and rerun start-backend.")
+        elif not process_probe_ok(result.cargo_version):
+            result.classification = "missing_prerequisite"
+            result.failures.append({"code": "missing_cargo", "message": "cargo is not available on PATH."})
+            result.next_actions.append("Install Rust/Cargo or use a shell where cargo is available, then rerun start-backend.")
+        elif args.dry_run:
+            result.classification = "dry_run"
+            result.actions.append(BackendAction("cargo_run", "planned", "Would start backend with cargo run and wait for health.", "cargo run"))
+            result.next_actions.append("Run without --dry-run when PostgreSQL is ready.")
+        else:
+            command = ["cargo", "run"]
+            run_id_value = run_id("start-backend")
+            result.run_id = run_id_value
+            try:
+                process, log_path = launch_backend_process(project_root, report_dir or create_report_dir(project_root, "start-backend"))
+                if result.report_dir is None:
+                    result.report_dir = rel(log_path.parent, project_root)
+                result.process_pid = process.pid
+                result.log_path = rel(log_path, project_root)
+                result.actions.append(BackendAction("cargo_run", "started", "Started backend process with cargo run.", command_as_text(command), f"pid={process.pid}"))
+                ready, probes, returncode = wait_for_backend_health(process, result.backend_host, result.backend_port, timeout_seconds=args.timeout_seconds)
+                result.health = probes
+                result.process_returncode = returncode
+                result.process_alive = process.poll() is None
+                if ready:
+                    result.classification = "backend_started"
+                    result.checks.append(BackendCheck("backend_health_wait", "ok", "Backend health endpoints became ready.", f"timeout={args.timeout_seconds}s"))
+                    update_process_state(
+                        project_root,
+                        process_name="backend",
+                        pid=process.pid,
+                        cwd=project_root / "backend",
+                        command=command,
+                        started_at=result.generated_at,
+                        run_id_value=run_id_value,
+                        log_path=log_path,
+                        report_dir=log_path.parent,
+                    )
+                    result.next_actions.append("Backend is running. Continue with frontend preparation/start phases.")
+                else:
+                    log_tail = sanitize_backend_log(read_log_tail(log_path), project_root)
+                    default = "backend_start_failed" if returncode is not None else "backend_health_timeout"
+                    result.classification = classify_backend_failure(log_tail, default)
+                    result.checks.append(BackendCheck("backend_health_wait", "fail", "Backend health endpoints did not become ready.", f"timeout={args.timeout_seconds}s"))
+                    result.failures.append({"code": result.classification, "message": "Backend did not reach healthy state after cargo run."})
+                    if result.process_alive:
+                        update_process_state(
+                            project_root,
+                            process_name="backend",
+                            pid=process.pid,
+                            cwd=project_root / "backend",
+                            command=command,
+                            started_at=result.generated_at,
+                            run_id_value=run_id_value,
+                            log_path=log_path,
+                            report_dir=log_path.parent,
+                        )
+                        result.next_actions.append("Backend process is still alive but health timed out. Inspect backend.log and stop it manually if needed until stop phase exists.")
+                    else:
+                        result.next_actions.append("Inspect backend.log for the classified failure before retrying.")
+            except FileNotFoundError:
+                result.classification = "missing_prerequisite"
+                result.failures.append({"code": "missing_cargo", "message": "cargo run could not be started because cargo was not found."})
+            except OSError as exc:
+                result.classification = "backend_start_failed"
+                result.failures.append({"code": "backend_start_failed", "message": f"Could not start cargo run: {exc}"})
+    if project_root is not None and report_dir is not None:
+        write_backend_reports(project_root, result, "start-backend", report_dir)
+    print_backend_summary(result)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
+    return 1 if result.failures and not args.dry_run else 0
+
 def print_diagnose_summary(result: DiagnoseResult) -> None:
     print_header("devbootstrap diagnose")
     print(f"Tool version: {result.tool_version}")
@@ -2057,6 +2668,21 @@ def build_parser() -> argparse.ArgumentParser:
     start_db.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     start_db.set_defaults(func=command_start_db)
 
+    check_backend = subparsers.add_parser("check-backend", help="Run backend Rust preflight checks: cargo metadata and cargo check.")
+    check_backend.add_argument("--dry-run", action="store_true", help="Show what would be checked without running cargo metadata/check.")
+    check_backend.add_argument("--metadata-timeout-seconds", type=int, default=60, help="Timeout for cargo metadata.")
+    check_backend.add_argument("--timeout-seconds", type=int, default=240, help="Timeout for cargo check.")
+    check_backend.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap report files.")
+    check_backend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
+    check_backend.set_defaults(func=command_check_backend)
+
+    start_backend = subparsers.add_parser("start-backend", help="Start backend with cargo run, capture logs and wait for health.")
+    start_backend.add_argument("--dry-run", action="store_true", help="Show what would be started without running cargo run.")
+    start_backend.add_argument("--timeout-seconds", type=int, default=180, help="How long to wait for backend health after cargo run.")
+    start_backend.add_argument("--no-write-report", action="store_true", help="Skip report files when used with --dry-run; real start still writes logs/state.")
+    start_backend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
+    start_backend.set_defaults(func=command_start_backend)
+
     plan = subparsers.add_parser("plan", help="Build a safe env/bootstrap plan without changing files.")
     plan.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap report files.")
     plan.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
@@ -2072,7 +2698,6 @@ def build_parser() -> argparse.ArgumentParser:
     status.set_defaults(func=command_status)
 
     return parser
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
