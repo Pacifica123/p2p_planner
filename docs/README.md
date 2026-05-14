@@ -18,7 +18,7 @@
 - `sync/` — glossary, протокол синхронизации и каноническая conflict policy.
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
-- `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, а также frontend `prepare-frontend` / guarded `start-frontend`.
+- `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, а также one-command `up` pipeline.
 
 ## Зафиксированные принципы
 
@@ -101,5 +101,5 @@ local-first, sync и optional p2p.
 
 - `docs/dev-bootstrap/deployment-pitfalls-catalog.md` — каталог рисков локального разворачивания: ОС, инструменты, env, PostgreSQL, backend, frontend, smoke, процессы и cleanup.
 
-- `docs/dev-bootstrap/dev-autodeployer-v1-development-plan.md` — детальный план разработки авторазвертывателя до v1: команды, фазы, проверки, acceptance criteria и граница минимально полезного инструмента. Phase 1 baseline, Phase 2 env planner, Phase 3 PostgreSQL bootstrap, Phase 4 backend check/start и Phase 5 frontend prepare/start уже реализованы в `tools/devbootstrap.py`.
+- `docs/dev-bootstrap/dev-autodeployer-v1-development-plan.md` — детальный план разработки авторазвертывателя до v1: команды, фазы, проверки, acceptance criteria и граница минимально полезного инструмента. Phase 1 baseline, Phase 2 env planner, Phase 3 PostgreSQL bootstrap, Phase 4 backend check/start, Phase 5 frontend prepare/start и Phase 6 one-command `up` уже реализованы в `tools/devbootstrap.py`.
 

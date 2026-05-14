@@ -13,6 +13,7 @@ Commands:
     python tools/devbootstrap.py start-backend
     python tools/devbootstrap.py prepare-frontend
     python tools/devbootstrap.py start-frontend
+    python tools/devbootstrap.py up
     python tools/devbootstrap.py status
 
 The tool intentionally uses only Python standard library modules.
@@ -38,7 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TOOL_VERSION = "0.5.0-phase5"
+TOOL_VERSION = "0.6.0-phase6"
 STATE_VERSION = 1
 BOOTSTRAP_DIR_NAME = ".dev-bootstrap"
 DEFAULT_PORTS = {
@@ -3272,6 +3273,424 @@ def command_start_frontend(args: argparse.Namespace) -> int:
         print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
     return 1 if result.failures and not args.dry_run else 0
 
+
+@dataclass
+class UpStep:
+    name: str
+    status: str
+    message: str
+    command: list[str] = field(default_factory=list)
+    returncode: int | None = None
+    log_path: str | None = None
+    duration_ms: int | None = None
+    blocking: bool = True
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class UpResult:
+    generated_at: str
+    tool_version: str
+    project_root: str | None
+    invoked_from: str
+    dry_run: bool
+    smoke_level: str
+    yes: bool
+    run_id: str
+    report_dir: str | None = None
+    backend_urls: dict[str, str] = field(default_factory=dict)
+    frontend_url: str | None = None
+    steps: list[UpStep] = field(default_factory=list)
+    failures: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    classification: str = "unknown"
+
+
+def append_report_to_state(project_root: Path, report_dir: Path, run_id_value: str) -> None:
+    state_path = project_root / BOOTSTRAP_DIR_NAME / "state.json"
+    state = read_json(state_path)
+    if "_error" in state:
+        state = {}
+    state["version"] = STATE_VERSION
+    state["activeRunId"] = run_id_value
+    processes = state.get("processes") if isinstance(state.get("processes"), dict) else {}
+    state["processes"] = processes
+    last_reports = state.get("lastReports") if isinstance(state.get("lastReports"), list) else []
+    last_reports.append(rel(report_dir, project_root))
+    state["lastReports"] = last_reports[-20:]
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(state_path, state)
+
+
+def up_command_display(command: list[str]) -> str:
+    return " ".join(command)
+
+
+def run_up_subcommand(
+    *,
+    project_root: Path,
+    report_dir: Path,
+    step_name: str,
+    command: list[str],
+    timeout_seconds: int,
+) -> UpStep:
+    started = time.monotonic()
+    log_path = report_dir / f"{len(list(report_dir.glob('*.log'))) + 1:02d}_{step_name}.log"
+    full_command = [sys.executable, str(project_root / "tools" / "devbootstrap.py"), *command]
+    try:
+        completed = subprocess.run(
+            full_command,
+            cwd=str(project_root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        stdout = safe_decode(completed.stdout)
+        stderr = safe_decode(completed.stderr)
+        duration_ms = int((time.monotonic() - started) * 1000)
+        log_path.write_text(
+            "\n".join(
+                [
+                    f"$ {up_command_display(full_command)}",
+                    f"cwd: {project_root}",
+                    f"exit: {completed.returncode}",
+                    f"duration_ms: {duration_ms}",
+                    "",
+                    "## stdout",
+                    stdout or "<empty>",
+                    "",
+                    "## stderr",
+                    stderr or "<empty>",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        status = "ok" if completed.returncode == 0 else "failed"
+        message = "step completed" if completed.returncode == 0 else "step failed; see log"
+        return UpStep(
+            name=step_name,
+            status=status,
+            message=message,
+            command=full_command,
+            returncode=completed.returncode,
+            log_path=rel(log_path, project_root),
+            duration_ms=duration_ms,
+        )
+    except subprocess.TimeoutExpired as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        log_path.write_text(
+            "\n".join(
+                [
+                    f"$ {up_command_display(full_command)}",
+                    f"cwd: {project_root}",
+                    "exit: timeout",
+                    f"duration_ms: {duration_ms}",
+                    "",
+                    "## stdout",
+                    safe_decode(exc.stdout) or "<empty>",
+                    "",
+                    "## stderr",
+                    safe_decode(exc.stderr) or "<empty>",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return UpStep(
+            name=step_name,
+            status="failed",
+            message=f"step timed out after {timeout_seconds}s; see log",
+            command=full_command,
+            returncode=None,
+            log_path=rel(log_path, project_root),
+            duration_ms=duration_ms,
+        )
+    except OSError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        log_path.write_text(
+            f"$ {up_command_display(full_command)}\ncwd: {project_root}\nerror: {exc}\n",
+            encoding="utf-8",
+        )
+        return UpStep(
+            name=step_name,
+            status="failed",
+            message=f"could not execute step: {exc}",
+            command=full_command,
+            returncode=None,
+            log_path=rel(log_path, project_root),
+            duration_ms=duration_ms,
+        )
+
+
+def add_up_step(result: UpResult, step: UpStep) -> bool:
+    result.steps.append(step)
+    if step.status == "failed":
+        result.failures.append({"code": f"up_{step.name}_failed", "message": step.message})
+        result.classification = f"failed_at_{step.name}"
+        result.next_actions.append(f"Inspect `{step.log_path}` and rerun `python tools/devbootstrap.py {step.name.replace('_', '-')}` or `up` after fixing the issue.")
+        return False
+    if step.status == "warn":
+        result.warnings.append({"code": f"up_{step.name}_warning", "message": step.message})
+    return True
+
+
+def add_up_skipped_step(result: UpResult, name: str, message: str) -> None:
+    result.steps.append(UpStep(name=name, status="skipped", message=message, blocking=False))
+
+
+def run_up_quick_smoke(project_root: Path, report_dir: Path, result: UpResult, *, dry_run: bool) -> bool:
+    if result.smoke_level == "none":
+        add_up_skipped_step(result, "smoke_quick", "smoke-level=none; quick HTTP smoke skipped")
+        return True
+    if result.smoke_level in {"standard", "full"}:
+        result.warnings.append(
+            {
+                "code": "smoke_level_deferred",
+                "message": f"smoke --level {result.smoke_level} is planned for Phase 7; Phase 6 runs quick HTTP smoke only.",
+            }
+        )
+    if dry_run:
+        result.steps.append(UpStep("smoke_quick", "planned", "would probe backend health and frontend root", blocking=True))
+        return True
+
+    host, port, _ = parse_backend_host_port(project_root)
+    backend_probes = probe_backend_health(host, port, timeout=2.0)
+    frontend_env = frontend_effective_env(project_root)
+    frontend_host, frontend_port, _ = parse_frontend_host_port(project_root)
+    frontend_url = frontend_root_url(frontend_host, frontend_port)
+    frontend_probe = probe_http("frontend_root", frontend_url, timeout=2.0)
+    result.backend_urls = backend_health_urls(host, port)
+    result.frontend_url = frontend_url
+
+    smoke_payload = {
+        "backend": as_jsonable(backend_probes),
+        "frontend": as_jsonable(frontend_probe),
+    }
+    smoke_json = report_dir / "quick-smoke.json"
+    write_json(smoke_json, smoke_payload)
+    backend_ok = backend_health_ready(backend_probes)
+    frontend_ok = frontend_ready(frontend_probe)
+    status = "ok" if backend_ok and frontend_ok else "failed"
+    message = "quick smoke passed" if status == "ok" else "quick smoke failed; backend/frontend HTTP probes are not all healthy"
+    step = UpStep(
+        name="smoke_quick",
+        status=status,
+        message=message,
+        log_path=rel(smoke_json, project_root),
+        details={"backend_ok": backend_ok, "frontend_ok": frontend_ok},
+    )
+    return add_up_step(result, step)
+
+
+def render_up_report(result: UpResult) -> str:
+    lines: list[str] = []
+    lines.append("# devbootstrap up report")
+    lines.append("")
+    lines.append(f"- Generated at: `{result.generated_at}`")
+    lines.append(f"- Tool version: `{result.tool_version}`")
+    lines.append(f"- Project root: `{result.project_root or 'not found'}`")
+    lines.append(f"- Invoked from: `{result.invoked_from}`")
+    lines.append(f"- Run ID: `{result.run_id}`")
+    lines.append(f"- Dry run: `{result.dry_run}`")
+    lines.append(f"- Smoke level: `{result.smoke_level}`")
+    lines.append(f"- Classification: `{result.classification}`")
+    if result.backend_urls:
+        lines.append("")
+        lines.append("## Runtime URLs")
+        lines.append("")
+        for name, url in result.backend_urls.items():
+            lines.append(f"- `{name}`: `{url}`")
+        if result.frontend_url:
+            lines.append(f"- `frontend`: `{result.frontend_url}`")
+    lines.append("")
+    lines.append("## Pipeline steps")
+    lines.append("")
+    lines.append("| Step | Status | Return | Duration | Log | Message |")
+    lines.append("|---|---|---:|---:|---|---|")
+    for step in result.steps:
+        ret = "" if step.returncode is None else str(step.returncode)
+        duration = "" if step.duration_ms is None else str(step.duration_ms)
+        log = f"`{step.log_path}`" if step.log_path else ""
+        lines.append(f"| `{step.name}` | {step.status} | {ret} | {duration} ms | {log} | {step.message} |")
+    lines.append("")
+    lines.append("## Findings")
+    lines.append("")
+    if not result.failures and not result.warnings:
+        lines.append("- No blocking findings from up pipeline.")
+    for failure in result.failures:
+        lines.append(f"- **FAIL** `{failure['code']}` — {failure['message']}")
+    for warning in result.warnings:
+        lines.append(f"- **WARN** `{warning['code']}` — {warning['message']}")
+    lines.append("")
+    lines.append("## Next safe actions")
+    lines.append("")
+    if result.next_actions:
+        for action in result.next_actions:
+            lines.append(f"- {action}")
+    elif result.classification == "ok":
+        lines.append("- Open the frontend URL and continue manual development checks.")
+        lines.append("- Use `python tools/devbootstrap.py status` to inspect tracked processes.")
+    else:
+        lines.append("- Inspect the step logs above and rerun `python tools/devbootstrap.py up` after fixing the issue.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_up_reports(project_root: Path, result: UpResult, report_dir: Path) -> None:
+    result.report_dir = rel(report_dir, project_root)
+    write_json(report_dir / "up.json", as_jsonable(result))
+    (report_dir / "report.md").write_text(render_up_report(result), encoding="utf-8")
+    append_report_to_state(project_root, report_dir, result.run_id)
+
+
+def print_up_summary(result: UpResult) -> None:
+    print_header("devbootstrap up")
+    print(f"Tool version: {result.tool_version}")
+    print(f"Project root: {result.project_root or 'not found'}")
+    print(f"Classification: {result.classification}")
+    print(f"Dry run: {result.dry_run}")
+    if result.backend_urls or result.frontend_url:
+        print("\nRuntime URLs:")
+        for name, url in result.backend_urls.items():
+            print(f"  - {name}: {url}")
+        if result.frontend_url:
+            print(f"  - frontend: {result.frontend_url}")
+    print("\nSteps:")
+    for step in result.steps:
+        suffix = f" — {step.log_path}" if step.log_path else ""
+        print(f"  - {step.status.upper()} {step.name}: {step.message}{suffix}")
+    if result.failures or result.warnings:
+        print("\nFindings:")
+        for failure in result.failures:
+            print(f"  - FAIL {failure['code']}: {failure['message']}")
+        for warning in result.warnings:
+            print(f"  - WARN {warning['code']}: {warning['message']}")
+    else:
+        print("\nFindings: no blocking findings from up pipeline")
+    if result.next_actions:
+        print("\nNext safe actions:")
+        for action in result.next_actions:
+            print(f"  - {action}")
+    if result.report_dir:
+        print(f"\nReport: {result.report_dir}/report.md")
+
+
+def command_up(args: argparse.Namespace) -> int:
+    invoked_from = Path.cwd()
+    project_root = find_project_root(invoked_from)
+    run_id_value = run_id("up")
+    result = UpResult(
+        generated_at=iso_now(),
+        tool_version=TOOL_VERSION,
+        project_root=str(project_root) if project_root else None,
+        invoked_from=str(invoked_from),
+        dry_run=args.dry_run,
+        smoke_level=args.smoke_level,
+        yes=args.yes,
+        run_id=run_id_value,
+    )
+    if project_root is None:
+        result.classification = "invalid_project_root"
+        result.failures.append({"code": "invalid_project_root", "message": "Could not find project root."})
+        result.next_actions.append("Run this command from the project root, tools/, backend/ or frontend/ directory.")
+        print_up_summary(result)
+        if args.json:
+            print("\nJSON:")
+            print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
+        return 1
+
+    report_dir = project_root / BOOTSTRAP_DIR_NAME / "runs" / run_id_value
+    report_dir.mkdir(parents=True, exist_ok=False)
+    result.report_dir = rel(report_dir, project_root)
+
+    timeout = max(30, args.step_timeout_seconds)
+    pipeline: list[tuple[str, list[str], int]] = [
+        ("diagnose", ["diagnose", "--no-write-report", "--json"], timeout),
+        ("plan", ["plan", "--no-write-report", "--json"], timeout),
+    ]
+
+    if args.dry_run:
+        pipeline.append(("prepare_env", ["plan", "--no-write-report", "--json"], timeout))
+    else:
+        pipeline.append(("prepare_env", ["prepare-env", "--no-write-report", "--json"], timeout))
+
+    if args.skip_db_start:
+        pipeline.append(("start_db", ["__skip__", "--skip-db-start was provided"], 0))
+    else:
+        command = ["start-db", "--no-write-report", "--json", "--timeout-seconds", str(args.db_timeout_seconds)]
+        if args.dry_run:
+            command.insert(1, "--dry-run")
+        pipeline.append(("start_db", command, args.db_timeout_seconds + 30))
+
+    if args.skip_cargo_check:
+        pipeline.append(("check_backend", ["__skip__", "--skip-cargo-check was provided"], 0))
+    else:
+        command = ["check-backend", "--no-write-report", "--json", "--timeout-seconds", str(args.cargo_check_timeout_seconds)]
+        if args.dry_run:
+            command.insert(1, "--dry-run")
+        pipeline.append(("check_backend", command, args.cargo_check_timeout_seconds + 30))
+
+    command = ["start-backend", "--no-write-report", "--json", "--timeout-seconds", str(args.backend_timeout_seconds)]
+    if args.dry_run:
+        command.insert(1, "--dry-run")
+    pipeline.append(("start_backend", command, args.backend_timeout_seconds + 30))
+
+    if args.skip_install:
+        pipeline.append(("prepare_frontend", ["__skip__", "--skip-install was provided"], 0))
+    else:
+        command = ["prepare-frontend", "--no-write-report", "--json", "--timeout-seconds", str(args.npm_timeout_seconds)]
+        if args.dry_run:
+            command.insert(1, "--dry-run")
+        pipeline.append(("prepare_frontend", command, args.npm_timeout_seconds + 30))
+
+    command = ["start-frontend", "--no-write-report", "--json", "--timeout-seconds", str(args.frontend_timeout_seconds)]
+    if args.dry_run:
+        command.insert(1, "--dry-run")
+    pipeline.append(("start_frontend", command, args.frontend_timeout_seconds + 30))
+
+    keep_going = True
+    for step_name, command, step_timeout in pipeline:
+        if not keep_going:
+            add_up_skipped_step(result, step_name, "skipped because an earlier blocking step failed")
+            continue
+        if command and command[0] == "__skip__":
+            add_up_skipped_step(result, step_name, command[1] if len(command) > 1 else "step skipped")
+            continue
+        step = run_up_subcommand(
+            project_root=project_root,
+            report_dir=report_dir,
+            step_name=step_name,
+            command=command,
+            timeout_seconds=step_timeout,
+        )
+        if args.dry_run and step_name == "prepare_env" and step.status == "ok":
+            step.status = "planned"
+            step.message = "would create missing env files from examples; see env plan log"
+        keep_going = add_up_step(result, step)
+
+    if keep_going:
+        keep_going = run_up_quick_smoke(project_root, report_dir, result, dry_run=args.dry_run)
+    else:
+        add_up_skipped_step(result, "smoke_quick", "skipped because an earlier blocking step failed")
+
+    if result.classification == "unknown":
+        result.classification = "dry_run" if args.dry_run else "ok"
+    if result.classification == "ok":
+        host, port, _ = parse_backend_host_port(project_root)
+        result.backend_urls = backend_health_urls(host, port)
+        frontend_host, frontend_port, _ = parse_frontend_host_port(project_root)
+        result.frontend_url = frontend_root_url(frontend_host, frontend_port)
+        result.next_actions.append("Backend and frontend look alive. Continue with manual checks or future Phase 7 smoke gates.")
+    write_up_reports(project_root, result, report_dir)
+    print_up_summary(result)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
+    return 1 if result.failures and not args.dry_run else 0
+
 def print_diagnose_summary(result: DiagnoseResult) -> None:
     print_header("devbootstrap diagnose")
     print(f"Tool version: {result.tool_version}")
@@ -3430,6 +3849,22 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_env.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap report files.")
     prepare_env.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     prepare_env.set_defaults(func=command_prepare_env)
+
+    up = subparsers.add_parser("up", help="Run the safe one-command dev environment pipeline.")
+    up.add_argument("--dry-run", action="store_true", help="Show the up pipeline without changing env files or starting processes.")
+    up.add_argument("--skip-install", action="store_true", help="Skip frontend dependency installation/preparation.")
+    up.add_argument("--skip-cargo-check", action="store_true", help="Skip cargo metadata/check before backend start.")
+    up.add_argument("--skip-db-start", action="store_true", help="Skip compose-assisted PostgreSQL start.")
+    up.add_argument("--smoke-level", choices=["quick", "standard", "full", "none"], default="quick", help="Smoke level after startup; Phase 6 implements quick HTTP smoke and defers standard/full to Phase 7.")
+    up.add_argument("--yes", action="store_true", help="Allow non-destructive automatic steps; this never permits DB reset or killing foreign processes.")
+    up.add_argument("--step-timeout-seconds", type=int, default=120, help="Timeout for short diagnose/plan/prepare-env steps.")
+    up.add_argument("--db-timeout-seconds", type=int, default=60, help="Timeout for start-db readiness.")
+    up.add_argument("--cargo-check-timeout-seconds", type=int, default=240, help="Timeout for cargo check.")
+    up.add_argument("--backend-timeout-seconds", type=int, default=180, help="Timeout for backend health after cargo run.")
+    up.add_argument("--npm-timeout-seconds", type=int, default=300, help="Timeout for npm ci/install.")
+    up.add_argument("--frontend-timeout-seconds", type=int, default=120, help="Timeout for frontend readiness after npm run dev.")
+    up.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
+    up.set_defaults(func=command_up)
 
     status = subparsers.add_parser("status", help="Show devbootstrap runtime state if it exists.")
     status.set_defaults(func=command_status)

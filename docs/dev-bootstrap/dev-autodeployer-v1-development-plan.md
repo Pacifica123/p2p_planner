@@ -802,6 +802,8 @@ Acceptance criteria:
 
 ## Phase 6 — one-command `up`
 
+Статус: implemented in `tools/devbootstrap.py` as one-command safe orchestration over Phase 1–5 commands.
+
 Цель:
 
 - собрать безопасный happy path.
@@ -810,32 +812,53 @@ Acceptance criteria:
 
 ```bash
 python tools/devbootstrap.py up
+python tools/devbootstrap.py up --dry-run
 ```
 
-Pipeline:
+Реализованный pipeline:
 
 ```text
 diagnose
 → plan
-→ prepare-env
+→ prepare-env          # в --dry-run заменяется read-only env plan
 → start-db
 → check-backend
 → start-backend
 → prepare-frontend
 → start-frontend
-→ smoke --level quick
+→ quick HTTP smoke     # backend health + frontend root
 → report
 ```
 
 Опции:
 
 ```bash
+--dry-run
 --skip-install
 --skip-cargo-check
 --skip-db-start
 --smoke-level quick|standard|full|none
 --yes
+--step-timeout-seconds N
+--db-timeout-seconds N
+--cargo-check-timeout-seconds N
+--backend-timeout-seconds N
+--npm-timeout-seconds N
+--frontend-timeout-seconds N
 ```
+
+Реализованные детали Phase 6:
+
+- `up` запускает уже существующие команды как отдельные безопасные subcommand-шаги и сохраняет их stdout/stderr в единую папку `.dev-bootstrap/runs/<timestamp>_up/`;
+- каждый шаг получает отдельный лог `01_diagnose.log`, `02_plan.log`, ... и общий `up.json` + `report.md`;
+- pipeline останавливается на первом блокирующем failure и помечает последующие шаги как skipped;
+- `--dry-run` не создает env-файлы, не стартует Docker/Cargo/npm процессы и использует read-only варианты шагов;
+- `--skip-db-start`, `--skip-cargo-check`, `--skip-install` явно отражаются в report как skipped, а не исчезают из pipeline;
+- `--smoke-level none` отключает финальный quick smoke;
+- `--smoke-level standard|full` пока не запускает тяжелые gates: Phase 6 честно предупреждает, что полноценные standard/full smoke относятся к Phase 7, и выполняет только quick HTTP smoke;
+- `--yes` зарезервирован под non-destructive автоматизацию и не разрешает reset DB, удаление volumes или убийство чужих процессов;
+- общий report добавляется в `.dev-bootstrap/state.json` как последний report;
+- итоговый report содержит runtime URL backend/frontend, если pipeline дошел до успешного старта.
 
 Правила:
 
@@ -848,7 +871,8 @@ Acceptance criteria:
 
 - на машине с prerequisites инструмент доводит проект до backend + frontend alive;
 - повторный запуск не ломает уже поднятую среду;
-- report содержит URL backend/frontend и путь к логам.
+- report содержит URL backend/frontend и путь к логам;
+- `python tools/devbootstrap.py up --dry-run` можно запускать как безопасный devctl/check smoke без Docker/Rust/Node side effects.
 
 ---
 
