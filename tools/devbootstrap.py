@@ -16,6 +16,7 @@ Commands:
     python tools/devbootstrap.py up
     python tools/devbootstrap.py smoke
     python tools/devbootstrap.py status
+    python tools/devbootstrap.py stop
 
 The tool intentionally uses only Python standard library modules.
 """
@@ -28,6 +29,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -41,7 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TOOL_VERSION = "0.7.0-phase7"
+TOOL_VERSION = "0.8.0-phase8"
 STATE_VERSION = 1
 BOOTSTRAP_DIR_NAME = ".dev-bootstrap"
 DEFAULT_PORTS = {
@@ -433,6 +435,20 @@ def pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def popen_process_group_kwargs() -> dict[str, Any]:
+    """Return cross-platform kwargs that make later owned-process stop safer.
+
+    POSIX starts a new session so `stop` can terminate the process group.
+    Windows starts a new process group when the flag is available; `stop` then
+    still uses PID-based termination because Python stdlib does not expose a
+    complete process-tree API there.
+    """
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        return {"creationflags": creationflags} if creationflags else {}
+    return {"start_new_session": True}
 
 
 def summarize_state(project_root: Path) -> dict[str, Any]:
@@ -2445,6 +2461,7 @@ def launch_backend_process(project_root: Path, report_dir: Path) -> tuple[subpro
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            **popen_process_group_kwargs(),
         )
     except Exception:
         log_handle.close()
@@ -2543,7 +2560,7 @@ def command_start_backend(args: argparse.Namespace) -> int:
                             log_path=log_path,
                             report_dir=log_path.parent,
                         )
-                        result.next_actions.append("Backend process is still alive but health timed out. Inspect backend.log and stop it manually if needed until stop phase exists.")
+                        result.next_actions.append("Backend process is still alive but health timed out. Inspect backend.log, then run `python tools/devbootstrap.py stop` if the tracked backend must be cleaned up.")
                     else:
                         result.next_actions.append("Inspect backend.log for the classified failure before retrying.")
             except FileNotFoundError:
@@ -3112,7 +3129,7 @@ def launch_frontend_process(project_root: Path, report_dir: Path, host: str, por
             stdout=log_file,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            start_new_session=(os.name != "nt"),
+            **popen_process_group_kwargs(),
         )
     return process, log_path, command
 
@@ -3258,7 +3275,7 @@ def command_start_frontend(args: argparse.Namespace) -> int:
                             log_path=log_path,
                             report_dir=log_path.parent,
                         )
-                        result.next_actions.append("Frontend process is still alive but root timed out. Inspect frontend.log and stop it manually if needed until stop phase exists.")
+                        result.next_actions.append("Frontend process is still alive but root timed out. Inspect frontend.log, then run `python tools/devbootstrap.py stop` if the tracked frontend must be cleaned up.")
                     else:
                         result.next_actions.append("Inspect frontend.log for the classified failure before retrying.")
             except FileNotFoundError:
@@ -4186,6 +4203,547 @@ def command_up(args: argparse.Namespace) -> int:
         print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
     return 1 if result.failures and not args.dry_run else 0
 
+
+@dataclass
+class StopTarget:
+    name: str
+    pid: int | None
+    cwd: str | None
+    command: str | None
+    log_path: str | None = None
+    run_id: str | None = None
+    alive_before: bool = False
+    alive_after: bool | None = None
+    verification_status: str = "unknown"
+    verification_evidence: str = ""
+    action: str = "pending"
+    error: str | None = None
+
+
+@dataclass
+class StopDbAction:
+    status: str
+    command: str | None = None
+    message: str = ""
+    evidence: str | None = None
+
+
+@dataclass
+class StopResult:
+    generated_at: str
+    tool_version: str
+    project_root: str | None
+    invoked_from: str
+    dry_run: bool
+    include_db: bool
+    force: bool
+    timeout_seconds: int
+    run_id: str
+    classification: str = "unknown"
+    targets: list[StopTarget] = field(default_factory=list)
+    db_action: StopDbAction | None = None
+    ports_after: list[PortProbe] = field(default_factory=list)
+    http_after: list[HttpProbe] = field(default_factory=list)
+    failures: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    report_dir: str | None = None
+
+
+def process_table_state(project_root: Path) -> tuple[Path, dict[str, Any], dict[str, dict[str, Any]]]:
+    state_path = project_root / BOOTSTRAP_DIR_NAME / "state.json"
+    state = read_json(state_path)
+    if "_error" in state:
+        return state_path, state, {}
+    processes_raw = state.get("processes") if isinstance(state.get("processes"), dict) else {}
+    processes: dict[str, dict[str, Any]] = {}
+    for name, entry in processes_raw.items():
+        if isinstance(name, str) and isinstance(entry, dict):
+            processes[name] = dict(entry)
+    return state_path, state, processes
+
+
+def procfs_process_details(pid: int) -> tuple[str | None, str | None, str | None]:
+    proc_dir = Path("/proc") / str(pid)
+    if not proc_dir.exists():
+        return None, None, "procfs entry not found"
+    actual_cwd: str | None = None
+    actual_cmd: str | None = None
+    errors: list[str] = []
+    try:
+        actual_cwd = str(Path(os.readlink(proc_dir / "cwd")).resolve())
+    except OSError as exc:
+        errors.append(f"cwd unavailable: {exc}")
+    try:
+        raw = (proc_dir / "cmdline").read_bytes()
+        parts = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
+        actual_cmd = " ".join(parts)
+    except OSError as exc:
+        errors.append(f"cmdline unavailable: {exc}")
+    return actual_cwd, actual_cmd, "; ".join(errors) if errors else None
+
+
+def stop_target_from_entry(project_root: Path, name: str, entry: dict[str, Any]) -> StopTarget:
+    pid_value = entry.get("pid")
+    try:
+        pid = int(pid_value)
+    except (TypeError, ValueError):
+        pid = None
+    target = StopTarget(
+        name=name,
+        pid=pid,
+        cwd=entry.get("cwd") if isinstance(entry.get("cwd"), str) else None,
+        command=entry.get("command") if isinstance(entry.get("command"), str) else None,
+        log_path=entry.get("logPath") if isinstance(entry.get("logPath"), str) else None,
+        run_id=entry.get("runId") if isinstance(entry.get("runId"), str) else None,
+        alive_before=pid_alive(pid or -1),
+    )
+    verify_stop_target(project_root, target)
+    return target
+
+
+def expected_process_cwd(project_root: Path, name: str) -> Path | None:
+    if name == "backend":
+        return (project_root / "backend").resolve()
+    if name == "frontend":
+        return (project_root / "frontend").resolve()
+    return None
+
+
+def verify_stop_target(project_root: Path, target: StopTarget) -> None:
+    if target.name not in {"backend", "frontend"}:
+        target.verification_status = "unsupported_process"
+        target.verification_evidence = "devbootstrap only stops tracked backend/frontend processes"
+        return
+    if target.pid is None or target.pid <= 0:
+        target.verification_status = "invalid_pid"
+        target.verification_evidence = f"stored pid is invalid: {target.pid!r}"
+        return
+    if not target.alive_before:
+        target.verification_status = "stale_pid"
+        target.verification_evidence = "stored pid is not alive"
+        return
+    expected_cwd = expected_process_cwd(project_root, target.name)
+    stored_cwd = ((project_root / target.cwd).resolve() if target.cwd else None)
+    expected_word = "cargo" if target.name == "backend" else "npm"
+    stored_command_ok = bool(target.command and expected_word in target.command.lower())
+    stored_cwd_ok = bool(stored_cwd and expected_cwd and stored_cwd == expected_cwd)
+    if os.name != "nt" and (Path("/proc") / str(target.pid)).exists():
+        actual_cwd, actual_cmd, detail_error = procfs_process_details(target.pid)
+        actual_cwd_ok = bool(actual_cwd and expected_cwd and Path(actual_cwd).resolve() == expected_cwd)
+        actual_cmd_text = (actual_cmd or "").lower()
+        command_hint_ok = expected_word in actual_cmd_text or stored_command_ok
+        evidence_parts = [f"expected_cwd={expected_cwd}"]
+        if actual_cwd:
+            evidence_parts.append(f"actual_cwd={actual_cwd}")
+        if actual_cmd:
+            evidence_parts.append(f"actual_cmd={actual_cmd[:240]}")
+        if detail_error:
+            evidence_parts.append(detail_error)
+        target.verification_evidence = "; ".join(evidence_parts)
+        if actual_cwd_ok and command_hint_ok:
+            target.verification_status = "owned"
+        elif actual_cwd is None and command_hint_ok and stored_cwd_ok:
+            target.verification_status = "owned_limited"
+            target.verification_evidence += "; procfs cwd unavailable, fell back to state cwd plus process command hint"
+        else:
+            target.verification_status = "mismatch"
+        return
+    if stored_cwd_ok and stored_command_ok:
+        target.verification_status = "owned_limited"
+        target.verification_evidence = "procfs command/cwd verification is unavailable; using state cwd+command guard"
+    else:
+        target.verification_status = "mismatch"
+        target.verification_evidence = f"stored cwd/command do not match expected {target.name} process"
+
+
+def send_signal_to_owned_process(pid: int, sig: int) -> None:
+    if os.name != "nt":
+        try:
+            os.killpg(pid, sig)
+            return
+        except ProcessLookupError:
+            return
+        except OSError:
+            # Older devbootstrap runs did not necessarily create a process group.
+            pass
+    os.kill(pid, sig)
+
+
+def wait_until_dead(pid: int, timeout_seconds: int) -> bool:
+    deadline = time.monotonic() + max(0, timeout_seconds)
+    while time.monotonic() <= deadline:
+        if not pid_alive(pid):
+            return True
+        time.sleep(0.25)
+    return not pid_alive(pid)
+
+
+def stop_owned_target(target: StopTarget, *, timeout_seconds: int, dry_run: bool, force: bool) -> None:
+    if target.verification_status == "stale_pid":
+        target.action = "stale_removed"
+        target.alive_after = False
+        return
+    if target.verification_status not in {"owned", "owned_limited"}:
+        target.action = "skipped"
+        target.alive_after = target.alive_before
+        target.error = "process did not pass ownership verification"
+        return
+    if target.pid is None:
+        target.action = "skipped"
+        target.error = "invalid pid"
+        return
+    if dry_run:
+        target.action = "planned_stop"
+        target.alive_after = target.alive_before
+        return
+    try:
+        send_signal_to_owned_process(target.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        target.action = "stale_removed"
+        target.alive_after = False
+        return
+    except OSError as exc:
+        target.action = "failed"
+        target.error = f"SIGTERM failed: {exc}"
+        target.alive_after = pid_alive(target.pid)
+        return
+    if wait_until_dead(target.pid, timeout_seconds):
+        target.action = "stopped"
+        target.alive_after = False
+        return
+    if not force:
+        target.action = "timeout"
+        target.alive_after = pid_alive(target.pid)
+        target.error = "process did not exit before timeout; force kill disabled"
+        return
+    kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
+    try:
+        send_signal_to_owned_process(target.pid, kill_signal)
+    except ProcessLookupError:
+        target.action = "stale_removed"
+        target.alive_after = False
+        return
+    except OSError as exc:
+        target.action = "failed"
+        target.error = f"force kill failed: {exc}"
+        target.alive_after = pid_alive(target.pid)
+        return
+    if wait_until_dead(target.pid, min(5, max(1, timeout_seconds))):
+        target.action = "force_stopped"
+        target.alive_after = False
+    else:
+        target.action = "failed"
+        target.alive_after = pid_alive(target.pid)
+        target.error = "process still alive after force kill"
+
+
+def stop_compose_postgres(project_root: Path, *, include_db: bool, dry_run: bool, timeout_seconds: int) -> StopDbAction:
+    if not include_db:
+        return StopDbAction(status="skipped", message="PostgreSQL compose service is left running by default; pass --include-db to stop it.")
+    compose_command, detection = detect_compose_command(project_root)
+    if not process_probe_ok(detection):
+        return StopDbAction(status="unavailable", message="Docker Compose is not available, so devbootstrap cannot stop postgres service.", evidence=first_output_line(detection))
+    command = compose_base_command(compose_command, project_root) + ["stop", POSTGRES_SERVICE_NAME]
+    if dry_run:
+        return StopDbAction(status="planned", command=command_as_text(command), message="Would stop docker compose postgres service without removing volumes.")
+    probe = run_process_probe("compose_stop_postgres", command, cwd=project_root, timeout=max(10, timeout_seconds))
+    status = "stopped" if process_probe_ok(probe) else "failed"
+    evidence = first_output_line(probe)
+    message = "Stopped docker compose postgres service without removing volumes." if status == "stopped" else "Docker compose postgres stop failed."
+    return StopDbAction(status=status, command=command_as_text(command), message=message, evidence=evidence)
+
+
+def build_stop_result(project_root: Path | None, invoked_from: Path, args: argparse.Namespace) -> StopResult:
+    run_id_value = run_id("stop")
+    result = StopResult(
+        generated_at=iso_now(),
+        tool_version=TOOL_VERSION,
+        project_root=str(project_root) if project_root else None,
+        invoked_from=str(invoked_from),
+        dry_run=args.dry_run,
+        include_db=args.include_db,
+        force=not args.no_force,
+        timeout_seconds=args.timeout_seconds,
+        run_id=run_id_value,
+    )
+    if project_root is None:
+        result.classification = "invalid_project_root"
+        result.failures.append({"code": "invalid_project_root", "message": "Could not find project root."})
+        return result
+    state_path, state, processes = process_table_state(project_root)
+    if "_error" in state:
+        result.classification = "state_invalid"
+        result.failures.append({"code": "state_invalid", "message": f"Could not read state file {rel(state_path, project_root)}: {state.get('_error')}"})
+        return result
+    if not processes:
+        result.warnings.append({"code": "no_tracked_processes", "message": "state.json does not contain tracked backend/frontend processes."})
+    for name, entry in processes.items():
+        target = stop_target_from_entry(project_root, name, entry)
+        stop_owned_target(target, timeout_seconds=args.timeout_seconds, dry_run=args.dry_run, force=not args.no_force)
+        result.targets.append(target)
+        if target.action in {"skipped", "timeout", "failed"}:
+            result.warnings.append({"code": f"{name}_{target.action}", "message": target.error or f"{name} was not stopped."})
+    result.db_action = stop_compose_postgres(project_root, include_db=args.include_db, dry_run=args.dry_run, timeout_seconds=args.timeout_seconds)
+    if result.db_action.status == "failed":
+        result.warnings.append({"code": "postgres_stop_failed", "message": result.db_action.evidence or result.db_action.message})
+    # Probe common runtime surfaces after requested stop attempt.
+    backend_host, backend_port, _ = parse_backend_host_port(project_root)
+    frontend_host, frontend_port, _ = parse_frontend_host_port(project_root)
+    db_url = effective_env_values_for(project_root, "backend").get("DATABASE__URL") or effective_env_values_for(project_root, "backend").get("DATABASE_URL")
+    db_probe = parse_database_url_probe(db_url)
+    if db_probe.host and db_probe.port:
+        result.ports_after.append(probe_port("postgres", db_probe.port, host=db_probe.host))
+    result.ports_after.append(probe_port("backend", backend_port, host=http_probe_host(backend_host)))
+    result.ports_after.append(probe_port("frontend", frontend_port, host=http_probe_host(frontend_host)))
+    result.http_after.extend(probe_backend_health(backend_host, backend_port, timeout=0.6))
+    result.http_after.append(probe_http("frontend_root", frontend_root_url(frontend_host, frontend_port), timeout=0.6))
+    if any(t.action in {"failed", "timeout", "skipped"} for t in result.targets):
+        result.classification = "partial"
+    elif args.dry_run:
+        result.classification = "planned"
+    else:
+        result.classification = "stopped"
+    if any(t.action == "skipped" and t.verification_status == "mismatch" for t in result.targets):
+        result.next_actions.append("Inspect skipped tracked PIDs manually; devbootstrap refused to stop them because ownership verification failed.")
+    if any(p.open for p in result.ports_after if p.name in {"backend", "frontend"}):
+        result.next_actions.append("A backend/frontend port is still open after stop. If it is not a tracked process, inspect it manually before retrying up.")
+    if result.db_action and result.db_action.status == "skipped":
+        result.next_actions.append("Run `python tools/devbootstrap.py stop --include-db` only when you intentionally want to stop the compose postgres service.")
+    if not result.next_actions:
+        result.next_actions.append("Run `python tools/devbootstrap.py status` to confirm the environment is clean.")
+    return result
+
+
+def render_stop_report(result: StopResult) -> str:
+    lines: list[str] = []
+    lines.append("# devbootstrap stop report")
+    lines.append("")
+    lines.append(f"- Generated at: `{result.generated_at}`")
+    lines.append(f"- Tool version: `{result.tool_version}`")
+    lines.append(f"- Project root: `{result.project_root or 'not found'}`")
+    lines.append(f"- Invoked from: `{result.invoked_from}`")
+    lines.append(f"- Run ID: `{result.run_id}`")
+    lines.append(f"- Dry run: `{result.dry_run}`")
+    lines.append(f"- Include DB: `{result.include_db}`")
+    lines.append(f"- Classification: `{result.classification}`")
+    lines.append("")
+    lines.append("## Tracked process actions")
+    lines.append("")
+    lines.append("| Name | PID | Alive before | Verification | Action | Alive after | Evidence |")
+    lines.append("|---|---:|---|---|---|---|---|")
+    if result.targets:
+        for target in result.targets:
+            lines.append(
+                f"| `{target.name}` | {target.pid if target.pid is not None else ''} | {target.alive_before} | "
+                f"{target.verification_status} | {target.action} | {target.alive_after} | `{target.verification_evidence or target.error or ''}` |"
+            )
+    else:
+        lines.append("| | | | | no tracked processes | | |")
+    lines.append("")
+    lines.append("## PostgreSQL compose action")
+    lines.append("")
+    if result.db_action:
+        lines.append(f"- Status: `{result.db_action.status}`")
+        if result.db_action.command:
+            lines.append(f"- Command: `{result.db_action.command}`")
+        lines.append(f"- Message: {result.db_action.message}")
+        if result.db_action.evidence:
+            lines.append(f"- Evidence: `{result.db_action.evidence}`")
+    else:
+        lines.append("- Not evaluated.")
+    lines.append("")
+    lines.append("## Ports after stop")
+    lines.append("")
+    lines.append("| Name | Address | Status | Evidence |")
+    lines.append("|---|---|---|---|")
+    for port in result.ports_after:
+        status = "open" if port.open else "closed/unreachable"
+        lines.append(f"| {port.name} | `{port.host}:{port.port}` | {status} | `{port.error or ''}` |")
+    lines.append("")
+    lines.append("## HTTP after stop")
+    lines.append("")
+    lines.append("| Name | URL | Status | Evidence |")
+    lines.append("|---|---|---|---|")
+    for probe in result.http_after:
+        status = f"HTTP {probe.status}" if probe.reachable and probe.status is not None else "unreachable"
+        lines.append(f"| {probe.name} | `{probe.url}` | {status} | `{probe.error or f'{probe.duration_ms} ms'}` |")
+    lines.append("")
+    lines.append("## Findings")
+    lines.append("")
+    if not result.failures and not result.warnings:
+        lines.append("- No blocking findings from stop.")
+    for failure in result.failures:
+        lines.append(f"- **FAIL** `{failure['code']}` — {failure['message']}")
+    for warning in result.warnings:
+        lines.append(f"- **WARN** `{warning['code']}` — {warning['message']}")
+    lines.append("")
+    lines.append("## Next safe actions")
+    lines.append("")
+    for action in result.next_actions:
+        lines.append(f"- {action}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_stop_reports(project_root: Path, result: StopResult, report_dir: Path) -> None:
+    result.report_dir = rel(report_dir, project_root)
+    write_json(report_dir / "stop.json", as_jsonable(result))
+    (report_dir / "report.md").write_text(render_stop_report(result), encoding="utf-8")
+
+
+def update_state_after_stop(project_root: Path, result: StopResult, report_dir: Path) -> None:
+    if result.dry_run:
+        append_report_to_state(project_root, report_dir, result.run_id)
+        return
+    state_path, state, processes = process_table_state(project_root)
+    if "_error" in state:
+        return
+    removable = {target.name for target in result.targets if target.action in {"stopped", "force_stopped", "stale_removed"}}
+    for name in removable:
+        processes.pop(name, None)
+    state["version"] = STATE_VERSION
+    state["processes"] = processes
+    if not processes and state.get("activeRunId"):
+        state["activeRunId"] = None
+    last_reports = state.get("lastReports") if isinstance(state.get("lastReports"), list) else []
+    last_reports.append(rel(report_dir, project_root))
+    state["lastReports"] = last_reports[-20:]
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(state_path, state)
+
+
+def print_stop_summary(result: StopResult) -> None:
+    print_header("devbootstrap stop")
+    print(f"Tool version: {result.tool_version}")
+    print(f"Project root: {result.project_root or 'not found'}")
+    print(f"Classification: {result.classification}")
+    print(f"Dry run: {result.dry_run}")
+    print(f"Include DB: {result.include_db}")
+    if result.targets:
+        print("\nTracked processes:")
+        for target in result.targets:
+            print(
+                f"  - {target.name}: pid={target.pid} alive_before={target.alive_before} "
+                f"verify={target.verification_status} action={target.action} alive_after={target.alive_after}"
+            )
+            if target.error:
+                print(f"    error: {target.error}")
+    else:
+        print("\nTracked processes: none")
+    if result.db_action:
+        command = f" command={result.db_action.command}" if result.db_action.command else ""
+        print(f"\nPostgres: {result.db_action.status} — {result.db_action.message}{command}")
+    if result.ports_after:
+        print("\nPorts after stop:")
+        for port in result.ports_after:
+            status = "open" if port.open else "closed"
+            print(f"  - {port.name} {port.host}:{port.port}: {status}")
+    if result.failures or result.warnings:
+        print("\nFindings:")
+        for failure in result.failures:
+            print(f"  - FAIL {failure['code']}: {failure['message']}")
+        for warning in result.warnings:
+            print(f"  - WARN {warning['code']}: {warning['message']}")
+    else:
+        print("\nFindings: no blocking findings from stop")
+    if result.next_actions:
+        print("\nNext safe actions:")
+        for action in result.next_actions:
+            print(f"  - {action}")
+    if result.report_dir:
+        print(f"\nReport: {result.report_dir}/report.md")
+
+
+def command_stop(args: argparse.Namespace) -> int:
+    invoked_from = Path.cwd()
+    project_root = find_project_root(invoked_from)
+    result = build_stop_result(project_root, invoked_from, args)
+    report_dir: Path | None = None
+    if project_root is not None and not args.no_write_report:
+        report_dir = create_report_dir(project_root, "stop")
+        write_stop_reports(project_root, result, report_dir)
+        update_state_after_stop(project_root, result, report_dir)
+    print_stop_summary(result)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
+    return 1 if result.failures or any(t.action in {"failed", "timeout"} for t in result.targets) else 0
+
+
+def build_status_snapshot(project_root: Path) -> dict[str, Any]:
+    state = summarize_state(project_root)
+    backend_host, backend_port, backend_warning = parse_backend_host_port(project_root)
+    frontend_host, frontend_port, frontend_warning = parse_frontend_host_port(project_root)
+    backend_probe_host = http_probe_host(backend_host)
+    frontend_probe_host = http_probe_host(frontend_host)
+    db_env = effective_env_values_for(project_root, "backend")
+    db_url = db_env.get("DATABASE__URL") or db_env.get("DATABASE_URL")
+    db_probe = parse_database_url_probe(db_url)
+    ports: list[PortProbe] = []
+    if db_probe.host and db_probe.port:
+        ports.append(probe_port("postgres", db_probe.port, host=db_probe.host))
+    ports.append(probe_port("backend", backend_port, host=backend_probe_host))
+    ports.append(probe_port("frontend", frontend_port, host=frontend_probe_host))
+    http = probe_backend_health(backend_host, backend_port, timeout=0.8)
+    http.append(probe_http("frontend_root", frontend_root_url(frontend_host, frontend_port), timeout=0.8))
+    compose_command, compose_detection = detect_compose_command(project_root)
+    compose_status = probe_compose_status(project_root, compose_command) if process_probe_ok(compose_detection) else compose_detection
+    warnings = [warning for warning in [backend_warning, frontend_warning] if warning]
+    return {
+        "projectRoot": str(project_root),
+        "state": state,
+        "ports": as_jsonable(ports),
+        "http": as_jsonable(http),
+        "composeStatus": as_jsonable(compose_status),
+        "warnings": warnings,
+    }
+
+
+def print_status_snapshot(snapshot: dict[str, Any]) -> None:
+    print(f"Project root: {snapshot.get('projectRoot')}")
+    state = snapshot.get("state", {})
+    print(f"State file: {state.get('statePath')}")
+    print(f"State exists: {state.get('exists')}")
+    print(f"State valid: {state.get('valid')}")
+    if state.get("error"):
+        print(f"State error: {state.get('error')}")
+    print(f"Active run: {state.get('activeRunId')}")
+    processes = state.get("processes", {})
+    if processes:
+        print("\nRegistered processes:")
+        for name, process in processes.items():
+            print(
+                f"  - {name}: pid={process.get('pid')} alive={process.get('alive')} "
+                f"command={process.get('command')} cwd={process.get('cwd')}"
+            )
+    else:
+        print("Registered processes: none")
+    print("\nPorts:")
+    for port in snapshot.get("ports", []):
+        status = "open" if port.get("open") else "closed"
+        print(f"  - {port.get('name')} {port.get('host')}:{port.get('port')}: {status}")
+    print("\nHTTP:")
+    for probe in snapshot.get("http", []):
+        if probe.get("reachable"):
+            print(f"  - {probe.get('name')}: HTTP {probe.get('status')} ({probe.get('duration_ms')} ms)")
+        else:
+            print(f"  - {probe.get('name')}: unreachable")
+    compose = snapshot.get("composeStatus") or {}
+    if compose:
+        compose_state = "ok" if compose.get("returncode") == 0 else "unavailable" if not compose.get("available") else f"exit {compose.get('returncode')}"
+        print(f"\nCompose postgres: {compose_state} — {first_output_line(ProcessProbe(**compose)) if isinstance(compose, dict) and {'name','command','available'}.issubset(compose.keys()) else compose.get('error', '')}")
+    reports = state.get("lastReports") or []
+    if reports:
+        print("\nLast reports:")
+        for report in reports[-5:]:
+            print(f"  - {report}")
+    warnings = snapshot.get("warnings") or []
+    if warnings:
+        print("\nWarnings:")
+        for warning in warnings:
+            print(f"  - {warning}")
+
 def print_diagnose_summary(result: DiagnoseResult) -> None:
     print_header("devbootstrap diagnose")
     print(f"Tool version: {result.tool_version}")
@@ -4256,29 +4814,11 @@ def command_status(args: argparse.Namespace) -> int:
         print("Project root: not found")
         print("State: unavailable")
         return 1
-    state = summarize_state(project_root)
-    print(f"Project root: {project_root}")
-    print(f"State file: {state.get('statePath')}")
-    print(f"State exists: {state.get('exists')}")
-    print(f"State valid: {state.get('valid')}")
-    if state.get("error"):
-        print(f"State error: {state.get('error')}")
-    print(f"Active run: {state.get('activeRunId')}")
-    processes = state.get("processes", {})
-    if processes:
-        print("\nRegistered processes:")
-        for name, process in processes.items():
-            print(
-                f"  - {name}: pid={process.get('pid')} alive={process.get('alive')} "
-                f"command={process.get('command')} cwd={process.get('cwd')}"
-            )
-    else:
-        print("Registered processes: none")
-    reports = state.get("lastReports") or []
-    if reports:
-        print("\nLast reports:")
-        for report in reports[-5:]:
-            print(f"  - {report}")
+    snapshot = build_status_snapshot(project_root)
+    print_status_snapshot(snapshot)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(snapshot, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -4372,8 +4912,18 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     smoke.set_defaults(func=command_smoke)
 
-    status = subparsers.add_parser("status", help="Show devbootstrap runtime state if it exists.")
+    status = subparsers.add_parser("status", help="Show devbootstrap runtime state, process liveness, ports and health probes.")
+    status.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     status.set_defaults(func=command_status)
+
+    stop = subparsers.add_parser("stop", help="Stop only devbootstrap-tracked backend/frontend processes, and optionally compose postgres.")
+    stop.add_argument("--include-db", action="store_true", help="Also stop docker compose postgres service without removing volumes.")
+    stop.add_argument("--dry-run", action="store_true", help="Show what would be stopped without terminating processes or compose services.")
+    stop.add_argument("--timeout-seconds", type=int, default=10, help="Graceful stop timeout before force kill for owned processes.")
+    stop.add_argument("--no-force", action="store_true", help="Do not force kill owned processes after the graceful timeout.")
+    stop.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap stop report files.")
+    stop.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
+    stop.set_defaults(func=command_stop)
 
     return parser
 

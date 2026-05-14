@@ -937,6 +937,8 @@ Acceptance criteria:
 
 ## Phase 8 — stop, cleanup hints and stale state handling
 
+Статус: implemented in `tools/devbootstrap.py` as enhanced `status` plus safe `stop` over tracked backend/frontend processes and optional compose postgres stop.
+
 Цель:
 
 - закрыть жизненный цикл dev-сессии.
@@ -964,6 +966,21 @@ Acceptance criteria:
 - после `stop` освобождаются backend/frontend процессы, поднятые инструментом;
 - чужие процессы не трогаются;
 - пользователь видит, что осталось живым.
+
+Реализованные детали Phase 8:
+
+- `status` теперь показывает не только `.dev-bootstrap/state.json`, но и runtime-поверхность: tracked PID liveness, backend/frontend/PostgreSQL ports, backend health, frontend root и Docker Compose status;
+- `status --json` выводит тот же snapshot в machine-readable виде;
+- `stop` читает только `.dev-bootstrap/state.json` и работает только с tracked `backend` / `frontend`;
+- перед остановкой выполняется ownership guard: PID должен быть живым, имя процесса должно быть поддерживаемым, cwd/command сверяются с ожидаемыми `backend/` + `cargo` или `frontend/` + `npm`;
+- на POSIX при наличии `/proc` используется фактический process cwd/cmdline; на платформах без такой проверки включается ограниченный guard по сохраненным state cwd/command;
+- процессы, запущенные новыми `start-backend` / `start-frontend`, стартуют в отдельной process group/session, чтобы `stop` мог завершать дерево безопаснее;
+- stale PID entries удаляются из state без попытки kill;
+- graceful SIGTERM идет первым, затем после timeout force kill для own process, если не передан `--no-force`;
+- `stop --dry-run` показывает план без остановки процессов и без изменения state;
+- `stop --include-db` выполняет только `docker compose ... stop postgres`, без `down`, удаления volume или destructive reset;
+- по умолчанию PostgreSQL не останавливается, чтобы не ломать долгоживущую dev-БД;
+- итоговый `stop` report содержит actions, verification evidence, ports/http probes after stop и next safe actions.
 
 ---
 
