@@ -14,6 +14,7 @@ Commands:
     python tools/devbootstrap.py prepare-frontend
     python tools/devbootstrap.py start-frontend
     python tools/devbootstrap.py up
+    python tools/devbootstrap.py smoke
     python tools/devbootstrap.py status
 
 The tool intentionally uses only Python standard library modules.
@@ -30,6 +31,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -39,7 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TOOL_VERSION = "0.6.0-phase6"
+TOOL_VERSION = "0.7.0-phase7"
 STATE_VERSION = 1
 BOOTSTRAP_DIR_NAME = ".dev-bootstrap"
 DEFAULT_PORTS = {
@@ -3274,6 +3276,516 @@ def command_start_frontend(args: argparse.Namespace) -> int:
     return 1 if result.failures and not args.dry_run else 0
 
 
+
+@dataclass
+class SmokeStep:
+    name: str
+    status: str
+    message: str
+    classification: str = "unknown"
+    command: list[str] = field(default_factory=list)
+    returncode: int | None = None
+    log_path: str | None = None
+    duration_ms: int | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SmokeResult:
+    generated_at: str
+    tool_version: str
+    project_root: str | None
+    invoked_from: str
+    level: str
+    allow_dev_db_write: bool
+    report_dir: str | None = None
+    backend_urls: dict[str, str] = field(default_factory=dict)
+    frontend_url: str | None = None
+    api_base_url: str | None = None
+    database_url: DatabaseUrlProbe | None = None
+    test_database_url_present: bool = False
+    steps: list[SmokeStep] = field(default_factory=list)
+    failures: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    classification: str = "unknown"
+
+
+def smoke_command_display(command: list[str]) -> str:
+    return " ".join(command)
+
+
+def smoke_log_path(report_dir: Path, step_name: str, suffix: str = "log") -> Path:
+    index = len(list(report_dir.glob("*.log"))) + len(list(report_dir.glob("*.json"))) + 1
+    return report_dir / f"{index:02d}_{step_name}.{suffix}"
+
+
+def write_smoke_probe_log(project_root: Path, report_dir: Path, step_name: str, payload: dict[str, Any]) -> str:
+    path = smoke_log_path(report_dir, step_name, "json")
+    write_json(path, payload)
+    return rel(path, project_root)
+
+
+def run_smoke_process_step(
+    *,
+    project_root: Path,
+    report_dir: Path,
+    name: str,
+    command: list[str],
+    cwd: Path,
+    timeout_seconds: int,
+    env_extra: dict[str, str] | None = None,
+) -> SmokeStep:
+    started = time.monotonic()
+    log_path = smoke_log_path(report_dir, name, "log")
+    probe = run_process_probe(name, command, cwd=cwd, timeout=timeout_seconds, env_extra=env_extra)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    stdout = probe.stdout or ""
+    stderr = probe.stderr or probe.error or ""
+    log_path.write_text(
+        "\n".join(
+            [
+                f"$ {smoke_command_display(command)}",
+                f"cwd: {rel(cwd, project_root)}",
+                f"exit: {probe.returncode if probe.returncode is not None else probe.error or '<none>'}",
+                f"duration_ms: {duration_ms}",
+                "",
+                "## stdout",
+                stdout or "<empty>",
+                "",
+                "## stderr",
+                stderr or "<empty>",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    if not probe.available:
+        return SmokeStep(
+            name=name,
+            status="failed",
+            message=f"required command is unavailable: {command[0]}",
+            classification="missing_prerequisite",
+            command=command,
+            returncode=probe.returncode,
+            log_path=rel(log_path, project_root),
+            duration_ms=duration_ms,
+        )
+    if probe.returncode == 0:
+        return SmokeStep(
+            name=name,
+            status="ok",
+            message="step completed",
+            classification="ok",
+            command=command,
+            returncode=probe.returncode,
+            log_path=rel(log_path, project_root),
+            duration_ms=duration_ms,
+        )
+    output = "\n".join(part for part in [stdout, stderr] if part)
+    if probe.error == "timeout":
+        classification = f"{name}_timeout"
+        message = f"step timed out after {timeout_seconds}s"
+    else:
+        classification = classify_smoke_process_failure(name, output)
+        message = "step failed; see log"
+    return SmokeStep(
+        name=name,
+        status="failed",
+        message=message,
+        classification=classification,
+        command=command,
+        returncode=probe.returncode,
+        log_path=rel(log_path, project_root),
+        duration_ms=duration_ms,
+    )
+
+
+def classify_smoke_process_failure(name: str, output: str) -> str:
+    lower = output.lower()
+    if "command not found" in lower or "not found on path" in lower:
+        return "missing_prerequisite"
+    if "connection refused" in lower or "failed to fetch" in lower or "networkerror" in lower:
+        return "runtime_unreachable"
+    if "unauthorized" in lower or "authentication is required" in lower:
+        return "auth_flow_failed"
+    if "playwright" in lower and ("browser" in lower or "install" in lower):
+        return "browser_smoke_prerequisite"
+    if "failed" in lower or "error" in lower:
+        return f"{name}_failed"
+    return f"{name}_failed"
+
+
+def add_smoke_step(result: SmokeResult, step: SmokeStep) -> bool:
+    result.steps.append(step)
+    if step.status == "failed":
+        result.failures.append({"code": step.classification, "message": f"{step.name}: {step.message}"})
+        if result.classification == "unknown":
+            result.classification = step.classification
+        if step.log_path:
+            result.next_actions.append(f"Inspect `{step.log_path}` before rerunning `python tools/devbootstrap.py smoke --level {result.level}`.")
+        return False
+    return True
+
+
+def smoke_expected_base_url(project_root: Path) -> str:
+    frontend_env = frontend_effective_env(project_root)
+    api_base = frontend_env.get("VITE_API_BASE_URL")
+    if api_base:
+        return api_base.rstrip("/")
+    host, port, _ = parse_backend_host_port(project_root)
+    return f"http://{http_probe_host(host)}:{port}/api/v1"
+
+
+def build_smoke_result(project_root: Path | None, invoked_from: Path, *, level: str, allow_dev_db_write: bool) -> SmokeResult:
+    result = SmokeResult(
+        generated_at=iso_now(),
+        tool_version=TOOL_VERSION,
+        project_root=str(project_root) if project_root else None,
+        invoked_from=str(invoked_from),
+        level=level,
+        allow_dev_db_write=allow_dev_db_write,
+    )
+    if project_root is None:
+        result.classification = "invalid_project_root"
+        result.failures.append({"code": "invalid_project_root", "message": "Could not find project root."})
+        result.next_actions.append("Run this command from the project root, tools/, backend/ or frontend/ directory.")
+        return result
+
+    host, port, _ = parse_backend_host_port(project_root)
+    result.backend_urls = backend_health_urls(host, port)
+    frontend_host, frontend_port, _ = parse_frontend_host_port(project_root)
+    result.frontend_url = frontend_root_url(frontend_host, frontend_port)
+    result.api_base_url = smoke_expected_base_url(project_root)
+    db_url = os.environ.get("TEST_DATABASE_URL") or backend_effective_env(project_root).get("TEST_DATABASE_URL") or backend_effective_env(project_root).get("DATABASE__URL")
+    result.database_url = parse_database_url_probe(db_url)
+    result.test_database_url_present = bool(os.environ.get("TEST_DATABASE_URL") or backend_effective_env(project_root).get("TEST_DATABASE_URL"))
+    return result
+
+
+def add_quick_smoke(project_root: Path, report_dir: Path, result: SmokeResult) -> bool:
+    host, port, _ = parse_backend_host_port(project_root)
+    backend_probes = probe_backend_health(host, port, timeout=2.0)
+    frontend_host, frontend_port, _ = parse_frontend_host_port(project_root)
+    frontend_url = frontend_root_url(frontend_host, frontend_port)
+    frontend_probe = probe_http("frontend_root", frontend_url, timeout=2.0)
+    result.backend_urls = backend_health_urls(host, port)
+    result.frontend_url = frontend_url
+    payload = {
+        "backend": as_jsonable(backend_probes),
+        "frontend": as_jsonable(frontend_probe),
+    }
+    log_rel = write_smoke_probe_log(project_root, report_dir, "quick_http", payload)
+    backend_ok = backend_health_ready(backend_probes)
+    frontend_ok = frontend_ready(frontend_probe)
+    if backend_ok and frontend_ok:
+        return add_smoke_step(
+            result,
+            SmokeStep(
+                name="quick_http",
+                status="ok",
+                message="backend health and frontend root are reachable",
+                classification="ok",
+                log_path=log_rel,
+                details={"backend_ok": backend_ok, "frontend_ok": frontend_ok},
+            ),
+        )
+    classification = "runtime_unreachable"
+    if not backend_ok and frontend_ok:
+        classification = "backend_unreachable"
+    elif backend_ok and not frontend_ok:
+        classification = "frontend_unreachable"
+    return add_smoke_step(
+        result,
+        SmokeStep(
+            name="quick_http",
+            status="failed",
+            message="backend/frontend HTTP probes are not all healthy",
+            classification=classification,
+            log_path=log_rel,
+            details={"backend_ok": backend_ok, "frontend_ok": frontend_ok},
+        ),
+    )
+
+
+def add_smoke_db_guard(project_root: Path, report_dir: Path, result: SmokeResult) -> bool:
+    db_probe = result.database_url
+    db_name = db_probe.database if db_probe else None
+    payload = {
+        "testDatabaseUrlPresent": result.test_database_url_present,
+        "allowDevDbWrite": result.allow_dev_db_write,
+        "database": as_jsonable(db_probe),
+        "reason": "backend smoke creates/updates data through the live backend API",
+    }
+    log_rel = write_smoke_probe_log(project_root, report_dir, "db_write_guard", payload)
+    if result.test_database_url_present:
+        result.warnings.append(
+            {
+                "code": "test_database_url_present",
+                "message": "TEST_DATABASE_URL is present. Verify the already running backend was started against the intended test database.",
+            }
+        )
+        return add_smoke_step(
+            result,
+            SmokeStep(
+                name="db_write_guard",
+                status="ok",
+                message="TEST_DATABASE_URL is present; write-capable smoke may proceed",
+                classification="ok",
+                log_path=log_rel,
+                details={"database": db_name},
+            ),
+        )
+    if result.allow_dev_db_write:
+        if db_name == "p2p_planner":
+            result.warnings.append(
+                {
+                    "code": "smoke_writes_dev_database",
+                    "message": "Smoke is allowed to write to the regular p2p_planner database by explicit --allow-dev-db-write.",
+                }
+            )
+        return add_smoke_step(
+            result,
+            SmokeStep(
+                name="db_write_guard",
+                status="ok",
+                message="--allow-dev-db-write was provided; write-capable smoke may proceed",
+                classification="ok",
+                log_path=log_rel,
+                details={"database": db_name},
+            ),
+        )
+    return add_smoke_step(
+        result,
+        SmokeStep(
+            name="db_write_guard",
+            status="failed",
+            message="standard/full smoke may write data; set TEST_DATABASE_URL or pass --allow-dev-db-write",
+            classification="smoke_db_write_guard",
+            log_path=log_rel,
+            details={"database": db_name},
+        ),
+    )
+
+
+def add_backend_python_smoke(project_root: Path, report_dir: Path, result: SmokeResult, *, timeout_seconds: int) -> bool:
+    smoke_path = project_root / "backend" / "tests" / "smoke_core_api.py"
+    if not smoke_path.is_file():
+        return add_smoke_step(
+            result,
+            SmokeStep(
+                name="backend_python_smoke",
+                status="failed",
+                message="backend/tests/smoke_core_api.py is missing",
+                classification="backend_smoke_missing",
+            ),
+        )
+    env_extra = {"BASE_URL": (result.api_base_url or smoke_expected_base_url(project_root)).rstrip("/")}
+    if os.environ.get("TEST_DATABASE_URL"):
+        env_extra["TEST_DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+    step = run_smoke_process_step(
+        project_root=project_root,
+        report_dir=report_dir,
+        name="backend_python_smoke",
+        command=[sys.executable, "tests/smoke_core_api.py"],
+        cwd=project_root / "backend",
+        timeout_seconds=timeout_seconds,
+        env_extra=env_extra,
+    )
+    if step.status == "failed" and step.classification == "backend_python_smoke_failed":
+        step.classification = "backend_smoke_failed"
+    return add_smoke_step(result, step)
+
+
+def add_frontend_unit_smoke(project_root: Path, report_dir: Path, result: SmokeResult, *, timeout_seconds: int) -> bool:
+    package_data, package_error = read_frontend_package(project_root)
+    if package_error:
+        return add_smoke_step(
+            result,
+            SmokeStep("frontend_test_run", "failed", package_error, classification="frontend_package_invalid"),
+        )
+    scripts = frontend_scripts_from_package(package_data)
+    if "test:run" not in scripts:
+        return add_smoke_step(
+            result,
+            SmokeStep("frontend_test_run", "failed", "package.json does not define scripts.test:run", classification="frontend_test_script_missing"),
+        )
+    step = run_smoke_process_step(
+        project_root=project_root,
+        report_dir=report_dir,
+        name="frontend_test_run",
+        command=["npm", "run", "test:run"],
+        cwd=project_root / "frontend",
+        timeout_seconds=timeout_seconds,
+    )
+    if step.status == "failed" and step.classification == "frontend_test_run_failed":
+        step.classification = "frontend_tests_failed"
+    return add_smoke_step(result, step)
+
+
+def add_browser_smoke(project_root: Path, report_dir: Path, result: SmokeResult, *, timeout_seconds: int) -> bool:
+    package_data, package_error = read_frontend_package(project_root)
+    if package_error:
+        return add_smoke_step(
+            result,
+            SmokeStep("browser_smoke", "failed", package_error, classification="frontend_package_invalid"),
+        )
+    scripts = frontend_scripts_from_package(package_data)
+    if "test:browser" not in scripts:
+        return add_smoke_step(
+            result,
+            SmokeStep("browser_smoke", "failed", "package.json does not define scripts.test:browser", classification="browser_smoke_script_missing"),
+        )
+    step = run_smoke_process_step(
+        project_root=project_root,
+        report_dir=report_dir,
+        name="browser_smoke",
+        command=["npm", "run", "test:browser"],
+        cwd=project_root / "frontend",
+        timeout_seconds=timeout_seconds,
+    )
+    if step.status == "failed" and step.classification == "browser_smoke_failed":
+        output_tail = read_log_tail(project_root / step.log_path if step.log_path else None)
+        if "playwright" in output_tail.lower() and "install" in output_tail.lower():
+            step.classification = "browser_smoke_prerequisite"
+    return add_smoke_step(result, step)
+
+
+def render_smoke_report(result: SmokeResult) -> str:
+    lines: list[str] = []
+    lines.append("# devbootstrap smoke report")
+    lines.append("")
+    lines.append(f"- Generated at: `{result.generated_at}`")
+    lines.append(f"- Tool version: `{result.tool_version}`")
+    lines.append(f"- Project root: `{result.project_root or 'not found'}`")
+    lines.append(f"- Invoked from: `{result.invoked_from}`")
+    lines.append(f"- Level: `{result.level}`")
+    lines.append(f"- Allow dev DB write: `{result.allow_dev_db_write}`")
+    lines.append(f"- Classification: `{result.classification}`")
+    lines.append("")
+    lines.append("## Runtime targets")
+    lines.append("")
+    for name, url in result.backend_urls.items():
+        lines.append(f"- `{name}`: `{url}`")
+    if result.frontend_url:
+        lines.append(f"- `frontend`: `{result.frontend_url}`")
+    if result.api_base_url:
+        lines.append(f"- `api base`: `{result.api_base_url}`")
+    if result.database_url:
+        lines.append(f"- `database`: `{result.database_url.masked_url or '<missing>'}`")
+        lines.append(f"- `database name`: `{result.database_url.database or '<unknown>'}`")
+    lines.append(f"- `TEST_DATABASE_URL present`: `{result.test_database_url_present}`")
+    lines.append("")
+    lines.append("## Steps")
+    lines.append("")
+    lines.append("| Step | Status | Classification | Return | Duration | Log | Message |")
+    lines.append("|---|---|---|---:|---:|---|---|")
+    for step in result.steps:
+        ret = "" if step.returncode is None else str(step.returncode)
+        duration = "" if step.duration_ms is None else str(step.duration_ms)
+        log = f"`{step.log_path}`" if step.log_path else ""
+        lines.append(f"| `{step.name}` | {step.status} | `{step.classification}` | {ret} | {duration} ms | {log} | {step.message} |")
+    lines.append("")
+    lines.append("## Findings")
+    lines.append("")
+    if not result.failures and not result.warnings:
+        lines.append("- No blocking findings from smoke gates.")
+    for failure in result.failures:
+        lines.append(f"- **FAIL** `{failure['code']}` — {failure['message']}")
+    for warning in result.warnings:
+        lines.append(f"- **WARN** `{warning['code']}` — {warning['message']}")
+    lines.append("")
+    lines.append("## Next safe actions")
+    lines.append("")
+    if result.next_actions:
+        for action in result.next_actions:
+            lines.append(f"- {action}")
+    elif result.classification == "ok":
+        lines.append("- Smoke gates passed for the selected level.")
+    else:
+        lines.append("- Inspect the step logs above and rerun smoke after fixing the classified issue.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_smoke_reports(project_root: Path, result: SmokeResult, report_dir: Path, run_id_value: str) -> None:
+    result.report_dir = rel(report_dir, project_root)
+    write_json(report_dir / "smoke.json", as_jsonable(result))
+    (report_dir / "report.md").write_text(render_smoke_report(result), encoding="utf-8")
+    append_report_to_state(project_root, report_dir, run_id_value)
+
+
+def print_smoke_summary(result: SmokeResult) -> None:
+    print_header("devbootstrap smoke")
+    print(f"Tool version: {result.tool_version}")
+    print(f"Project root: {result.project_root or 'not found'}")
+    print(f"Level: {result.level}")
+    print(f"Classification: {result.classification}")
+    if result.backend_urls or result.frontend_url:
+        print("\nRuntime targets:")
+        for name, url in result.backend_urls.items():
+            print(f"  - {name}: {url}")
+        if result.frontend_url:
+            print(f"  - frontend: {result.frontend_url}")
+    print("\nSteps:")
+    for step in result.steps:
+        suffix = f" — {step.log_path}" if step.log_path else ""
+        print(f"  - {step.status.upper()} {step.name}: {step.message}{suffix}")
+    if result.failures or result.warnings:
+        print("\nFindings:")
+        for failure in result.failures:
+            print(f"  - FAIL {failure['code']}: {failure['message']}")
+        for warning in result.warnings:
+            print(f"  - WARN {warning['code']}: {warning['message']}")
+    else:
+        print("\nFindings: no blocking findings from smoke gates")
+    if result.next_actions:
+        print("\nNext safe actions:")
+        for action in result.next_actions:
+            print(f"  - {action}")
+    if result.report_dir:
+        print(f"\nReport: {result.report_dir}/report.md")
+
+
+def command_smoke(args: argparse.Namespace) -> int:
+    invoked_from = Path.cwd()
+    project_root = find_project_root(invoked_from)
+    result = build_smoke_result(project_root, invoked_from, level=args.level, allow_dev_db_write=args.allow_dev_db_write)
+    report_dir: Path | None = None
+    if project_root is not None:
+        if args.no_write_report:
+            report_dir = Path(tempfile.mkdtemp(prefix="devbootstrap-smoke-"))
+        else:
+            smoke_run_id = run_id("smoke")
+            report_dir = project_root / BOOTSTRAP_DIR_NAME / "runs" / smoke_run_id
+            report_dir.mkdir(parents=True, exist_ok=False)
+            result.report_dir = rel(report_dir, project_root)
+
+    keep_going = not result.failures and project_root is not None and report_dir is not None
+    if keep_going:
+        keep_going = add_quick_smoke(project_root, report_dir, result)
+    if keep_going and args.level in {"standard", "full"}:
+        keep_going = add_smoke_db_guard(project_root, report_dir, result)
+    if keep_going and args.level in {"standard", "full"}:
+        keep_going = add_backend_python_smoke(project_root, report_dir, result, timeout_seconds=args.timeout_seconds)
+    if keep_going and args.level in {"standard", "full"}:
+        keep_going = add_frontend_unit_smoke(project_root, report_dir, result, timeout_seconds=args.timeout_seconds)
+    if keep_going and args.level == "full":
+        keep_going = add_browser_smoke(project_root, report_dir, result, timeout_seconds=args.timeout_seconds)
+
+    if result.classification == "unknown":
+        result.classification = "ok" if keep_going else "failed"
+    if result.classification == "ok":
+        result.next_actions.append("Selected smoke gates passed. Continue manual validation or run a higher --level if needed.")
+    if project_root is not None and report_dir is not None and not args.no_write_report:
+        write_smoke_reports(project_root, result, report_dir, smoke_run_id)
+    print_smoke_summary(result)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
+    return 1 if result.failures else 0
+
+
 @dataclass
 class UpStep:
     name: str
@@ -3441,46 +3953,22 @@ def add_up_skipped_step(result: UpResult, name: str, message: str) -> None:
     result.steps.append(UpStep(name=name, status="skipped", message=message, blocking=False))
 
 
-def run_up_quick_smoke(project_root: Path, report_dir: Path, result: UpResult, *, dry_run: bool) -> bool:
+def run_up_smoke(project_root: Path, report_dir: Path, result: UpResult, *, dry_run: bool, allow_dev_db_write: bool, timeout_seconds: int) -> bool:
     if result.smoke_level == "none":
-        add_up_skipped_step(result, "smoke_quick", "smoke-level=none; quick HTTP smoke skipped")
+        add_up_skipped_step(result, "smoke", "smoke-level=none; smoke gates skipped")
         return True
-    if result.smoke_level in {"standard", "full"}:
-        result.warnings.append(
-            {
-                "code": "smoke_level_deferred",
-                "message": f"smoke --level {result.smoke_level} is planned for Phase 7; Phase 6 runs quick HTTP smoke only.",
-            }
-        )
     if dry_run:
-        result.steps.append(UpStep("smoke_quick", "planned", "would probe backend health and frontend root", blocking=True))
+        result.steps.append(UpStep("smoke", "planned", f"would run smoke --level {result.smoke_level}", blocking=True))
         return True
-
-    host, port, _ = parse_backend_host_port(project_root)
-    backend_probes = probe_backend_health(host, port, timeout=2.0)
-    frontend_env = frontend_effective_env(project_root)
-    frontend_host, frontend_port, _ = parse_frontend_host_port(project_root)
-    frontend_url = frontend_root_url(frontend_host, frontend_port)
-    frontend_probe = probe_http("frontend_root", frontend_url, timeout=2.0)
-    result.backend_urls = backend_health_urls(host, port)
-    result.frontend_url = frontend_url
-
-    smoke_payload = {
-        "backend": as_jsonable(backend_probes),
-        "frontend": as_jsonable(frontend_probe),
-    }
-    smoke_json = report_dir / "quick-smoke.json"
-    write_json(smoke_json, smoke_payload)
-    backend_ok = backend_health_ready(backend_probes)
-    frontend_ok = frontend_ready(frontend_probe)
-    status = "ok" if backend_ok and frontend_ok else "failed"
-    message = "quick smoke passed" if status == "ok" else "quick smoke failed; backend/frontend HTTP probes are not all healthy"
-    step = UpStep(
-        name="smoke_quick",
-        status=status,
-        message=message,
-        log_path=rel(smoke_json, project_root),
-        details={"backend_ok": backend_ok, "frontend_ok": frontend_ok},
+    command = ["smoke", "--level", result.smoke_level, "--no-write-report", "--json", "--timeout-seconds", str(timeout_seconds)]
+    if allow_dev_db_write:
+        command.append("--allow-dev-db-write")
+    step = run_up_subcommand(
+        project_root=project_root,
+        report_dir=report_dir,
+        step_name="smoke",
+        command=command,
+        timeout_seconds=timeout_seconds + 30,
     )
     return add_up_step(result, step)
 
@@ -3672,9 +4160,16 @@ def command_up(args: argparse.Namespace) -> int:
         keep_going = add_up_step(result, step)
 
     if keep_going:
-        keep_going = run_up_quick_smoke(project_root, report_dir, result, dry_run=args.dry_run)
+        keep_going = run_up_smoke(
+            project_root,
+            report_dir,
+            result,
+            dry_run=args.dry_run,
+            allow_dev_db_write=args.allow_dev_db_write,
+            timeout_seconds=args.smoke_timeout_seconds,
+        )
     else:
-        add_up_skipped_step(result, "smoke_quick", "skipped because an earlier blocking step failed")
+        add_up_skipped_step(result, "smoke", "skipped because an earlier blocking step failed")
 
     if result.classification == "unknown":
         result.classification = "dry_run" if args.dry_run else "ok"
@@ -3683,7 +4178,7 @@ def command_up(args: argparse.Namespace) -> int:
         result.backend_urls = backend_health_urls(host, port)
         frontend_host, frontend_port, _ = parse_frontend_host_port(project_root)
         result.frontend_url = frontend_root_url(frontend_host, frontend_port)
-        result.next_actions.append("Backend and frontend look alive. Continue with manual checks or future Phase 7 smoke gates.")
+        result.next_actions.append("Backend and frontend look alive. Continue manual checks or run `python tools/devbootstrap.py smoke --level standard`.")
     write_up_reports(project_root, result, report_dir)
     print_up_summary(result)
     if args.json:
@@ -3855,7 +4350,7 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--skip-install", action="store_true", help="Skip frontend dependency installation/preparation.")
     up.add_argument("--skip-cargo-check", action="store_true", help="Skip cargo metadata/check before backend start.")
     up.add_argument("--skip-db-start", action="store_true", help="Skip compose-assisted PostgreSQL start.")
-    up.add_argument("--smoke-level", choices=["quick", "standard", "full", "none"], default="quick", help="Smoke level after startup; Phase 6 implements quick HTTP smoke and defers standard/full to Phase 7.")
+    up.add_argument("--smoke-level", choices=["quick", "standard", "full", "none"], default="quick", help="Smoke level after startup. Phase 7 implements quick, standard and full smoke gates.")
     up.add_argument("--yes", action="store_true", help="Allow non-destructive automatic steps; this never permits DB reset or killing foreign processes.")
     up.add_argument("--step-timeout-seconds", type=int, default=120, help="Timeout for short diagnose/plan/prepare-env steps.")
     up.add_argument("--db-timeout-seconds", type=int, default=60, help="Timeout for start-db readiness.")
@@ -3863,8 +4358,19 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--backend-timeout-seconds", type=int, default=180, help="Timeout for backend health after cargo run.")
     up.add_argument("--npm-timeout-seconds", type=int, default=300, help="Timeout for npm ci/install.")
     up.add_argument("--frontend-timeout-seconds", type=int, default=120, help="Timeout for frontend readiness after npm run dev.")
+    up.add_argument("--smoke-timeout-seconds", type=int, default=600, help="Timeout for smoke substeps launched by up.")
+    up.add_argument("--allow-dev-db-write", action="store_true", help="Allow standard/full smoke to write through the live backend API to the configured dev database.")
     up.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     up.set_defaults(func=command_up)
+
+
+    smoke = subparsers.add_parser("smoke", help="Run post-start smoke gates with clear failure classification.")
+    smoke.add_argument("--level", choices=["quick", "standard", "full"], default="quick", help="quick probes HTTP; standard adds backend Python smoke and frontend tests; full adds browser smoke.")
+    smoke.add_argument("--allow-dev-db-write", action="store_true", help="Allow backend smoke to write to the configured dev database when TEST_DATABASE_URL is not present.")
+    smoke.add_argument("--timeout-seconds", type=int, default=600, help="Timeout for each command-based smoke substep.")
+    smoke.add_argument("--no-write-report", action="store_true", help="Do not create a standalone smoke report; step logs may still be temporary for command execution.")
+    smoke.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
+    smoke.set_defaults(func=command_smoke)
 
     status = subparsers.add_parser("status", help="Show devbootstrap runtime state if it exists.")
     status.set_defaults(func=command_status)

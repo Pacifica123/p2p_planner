@@ -878,34 +878,60 @@ Acceptance criteria:
 
 ## Phase 7 — smoke gates
 
+Статус: implemented in `tools/devbootstrap.py` as post-start smoke gates and as the final `up --smoke-level ...` step.
+
 Цель:
 
-- сделать полезные проверки после запуска.
+- сделать полезные проверки после запуска;
+- отделить “runtime не поднят” от “тест/код сломан”;
+- сохранить логи каждого smoke-шага в одном отчете.
 
 Команда:
 
 ```bash
-python tools/devbootstrap.py smoke --level quick|standard|full
+python tools/devbootstrap.py smoke --level quick
+python tools/devbootstrap.py smoke --level standard
+python tools/devbootstrap.py smoke --level full
 ```
 
-Что реализовать:
+Реализованные уровни:
 
-- quick HTTP probes;
-- standard backend Python smoke;
-- frontend unit/integration tests;
-- optional browser smoke;
-- сохранение логов;
-- failure classification.
+- `quick`:
+  - `GET /health`;
+  - `GET /api/v1/health`;
+  - frontend root probe по эффективному Vite URL.
+- `standard`:
+  - весь `quick`;
+  - DB write guard;
+  - `python backend/tests/smoke_core_api.py` с `BASE_URL` из эффективного frontend/backend env;
+  - `npm run test:run` во `frontend/`.
+- `full`:
+  - весь `standard`;
+  - `npm run test:browser` во `frontend/`.
+
+Реализованные детали Phase 7:
+
+- `smoke` пишет `.dev-bootstrap/runs/<timestamp>_smoke/report.md` и `smoke.json`;
+- command-based шаги пишут отдельные stdout/stderr logs;
+- quick HTTP probes пишутся отдельным JSON-log;
+- failure classification различает `backend_unreachable`, `frontend_unreachable`, `runtime_unreachable`, `smoke_db_write_guard`, `backend_smoke_failed`, `frontend_tests_failed`, `browser_smoke_failed`, `browser_smoke_prerequisite`, `missing_prerequisite`;
+- `up --smoke-level quick|standard|full|none` теперь вызывает тот же smoke runner вместо Phase 6 quick-only заглушки;
+- `up --dry-run` не запускает smoke, а показывает planned step.
 
 Особое правило для БД:
 
-- destructive/idempotent smoke с очисткой должен требовать `TEST_DATABASE_URL` или явного `--allow-dev-db-write`;
-- инструмент должен предупреждать, если smoke пойдет в обычную `p2p_planner`, где уже могут быть dev-данные.
+- `standard/full` smoke проходит через backend API и может создавать/изменять данные;
+- поэтому write-capable smoke требует `TEST_DATABASE_URL` или явного `--allow-dev-db-write`;
+- если используется явный `--allow-dev-db-write` и effective DB выглядит как обычная `p2p_planner`, инструмент добавляет предупреждение;
+- наличие `TEST_DATABASE_URL` тоже фиксируется в отчете, но инструмент честно предупреждает, что уже запущенный backend должен быть поднят именно против нужной тестовой БД.
 
 Acceptance criteria:
 
 - пользователь понимает, какая проверка упала;
-- можно отличить “код сломан” от “окружение не готово”.
+- можно отличить “код сломан” от “окружение не готово”;
+- `python tools/devbootstrap.py smoke --level quick` дает быстрый runtime verdict;
+- `python tools/devbootstrap.py smoke --level standard` не пишет в обычную dev-БД без явного разрешения;
+- `python tools/devbootstrap.py up --smoke-level standard --allow-dev-db-write` использует тот же smoke gate и сохраняет итог в общем `up` report.
 
 ---
 
