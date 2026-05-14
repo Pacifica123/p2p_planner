@@ -17,6 +17,7 @@ Commands:
     python tools/devbootstrap.py smoke
     python tools/devbootstrap.py status
     python tools/devbootstrap.py stop
+    python tools/devbootstrap.py self-check
 
 The tool intentionally uses only Python standard library modules.
 """
@@ -43,8 +44,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TOOL_VERSION = "0.8.0-phase8"
+TOOL_VERSION = "1.0.0"
 STATE_VERSION = 1
+REPORT_SCHEMA_VERSION = 1
+TIMEOUT_POLICY = {
+    "probe_command": 5,
+    "port_probe": 0.4,
+    "http_probe": 1.5,
+    "postgres_ready": 60,
+    "cargo_metadata": 60,
+    "cargo_check": 240,
+    "backend_ready": 180,
+    "npm_install": 300,
+    "frontend_ready": 120,
+    "smoke_step": 600,
+    "up_step": 120,
+    "stop_grace": 10,
+}
 BOOTSTRAP_DIR_NAME = ".dev-bootstrap"
 DEFAULT_PORTS = {
     "postgres": 5432,
@@ -370,7 +386,7 @@ def command_display(command: list[str]) -> str:
     return " ".join(command)
 
 
-def run_probe_command(command: list[str], *, timeout: int = 5) -> tuple[bool, str | None]:
+def run_probe_command(command: list[str], *, timeout: int = TIMEOUT_POLICY["probe_command"]) -> tuple[bool, str | None]:
     try:
         completed = subprocess.run(
             command,
@@ -403,7 +419,7 @@ def probe_tool(name: str, command: list[str]) -> CommandProbe:
     return CommandProbe(name=name, command=command, available=False, path=path, error=text)
 
 
-def probe_port(name: str, port: int, host: str = "127.0.0.1", timeout: float = 0.4) -> PortProbe:
+def probe_port(name: str, port: int, host: str = "127.0.0.1", timeout: float = TIMEOUT_POLICY["port_probe"]) -> PortProbe:
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return PortProbe(name=name, host=host, port=port, open=True)
@@ -411,7 +427,7 @@ def probe_port(name: str, port: int, host: str = "127.0.0.1", timeout: float = 0
         return PortProbe(name=name, host=host, port=port, open=False, error=str(exc))
 
 
-def probe_http(name: str, url: str, timeout: float = 1.5) -> HttpProbe:
+def probe_http(name: str, url: str, timeout: float = TIMEOUT_POLICY["http_probe"]) -> HttpProbe:
     started = time.monotonic()
     try:
         request = urllib.request.Request(url, method="GET")
@@ -563,6 +579,33 @@ def as_jsonable(value: Any) -> Any:
     return value
 
 
+def result_status_from_payload(payload: dict[str, Any]) -> str:
+    failures = payload.get("failures")
+    warnings = payload.get("warnings")
+    classification = str(payload.get("classification") or "")
+    if isinstance(failures, list) and failures:
+        return "failed"
+    if classification in {"failed", "partial", "invalid_project_root", "state_invalid"}:
+        return "failed"
+    if isinstance(warnings, list) and warnings:
+        return "warning"
+    if classification in {"planned", "dry_run"}:
+        return classification
+    return "ok"
+
+
+def write_report_json(path: Path, result: Any, *, command: str) -> None:
+    payload = as_jsonable(result)
+    if not isinstance(payload, dict):
+        payload = {"value": payload}
+    payload.setdefault("schemaVersion", REPORT_SCHEMA_VERSION)
+    payload.setdefault("toolVersion", payload.get("tool_version", TOOL_VERSION))
+    payload.setdefault("generatedAt", payload.get("generated_at"))
+    payload.setdefault("command", command)
+    payload.setdefault("status", result_status_from_payload(payload))
+    write_json(path, payload)
+
+
 def create_report_dir(project_root: Path, command: str) -> Path:
     report_dir = project_root / BOOTSTRAP_DIR_NAME / "runs" / run_id(command)
     report_dir.mkdir(parents=True, exist_ok=False)
@@ -679,7 +722,7 @@ def render_report(result: DiagnoseResult) -> str:
 def write_reports(project_root: Path, result: DiagnoseResult, command: str) -> Path:
     report_dir = create_report_dir(project_root, command)
     result.report_dir = rel(report_dir, project_root)
-    write_json(report_dir / "diagnose.json", as_jsonable(result))
+    write_report_json(report_dir / "diagnose.json", result, command="diagnose")
     (report_dir / "report.md").write_text(render_report(result), encoding="utf-8")
     return report_dir
 
@@ -1271,7 +1314,7 @@ def render_env_report(result: EnvPlanResult) -> str:
 def write_env_reports(project_root: Path, result: EnvPlanResult, command: str) -> Path:
     report_dir = create_report_dir(project_root, command)
     result.report_dir = rel(report_dir, project_root)
-    write_json(report_dir / f"{command}.json", as_jsonable(result))
+    write_report_json(report_dir / f"{command}.json", result, command=command)
     (report_dir / "report.md").write_text(render_env_report(result), encoding="utf-8")
     return report_dir
 
@@ -1892,7 +1935,7 @@ def render_postgres_report(result: PostgresResult) -> str:
 def write_postgres_reports(project_root: Path, result: PostgresResult, command: str) -> Path:
     report_dir = create_report_dir(project_root, command)
     result.report_dir = rel(report_dir, project_root)
-    write_json(report_dir / f"{command}.json", as_jsonable(result))
+    write_report_json(report_dir / f"{command}.json", result, command=command)
     (report_dir / "report.md").write_text(render_postgres_report(result), encoding="utf-8")
     return report_dir
 
@@ -2361,7 +2404,7 @@ def write_backend_reports(project_root: Path, result: BackendResult, command: st
     if report_dir is None:
         report_dir = create_report_dir(project_root, command)
     result.report_dir = rel(report_dir, project_root)
-    write_json(report_dir / f"{command}.json", as_jsonable(result))
+    write_report_json(report_dir / f"{command}.json", result, command=command)
     (report_dir / "report.md").write_text(render_backend_report(result), encoding="utf-8")
     return report_dir
 
@@ -2989,7 +3032,7 @@ def write_frontend_reports(project_root: Path, result: FrontendResult, command: 
     if report_dir is None:
         report_dir = create_report_dir(project_root, command)
     result.report_dir = rel(report_dir, project_root)
-    write_json(report_dir / f"{command}.json", as_jsonable(result))
+    write_report_json(report_dir / f"{command}.json", result, command=command)
     (report_dir / "report.md").write_text(render_frontend_report(result), encoding="utf-8")
     return report_dir
 
@@ -3727,7 +3770,7 @@ def render_smoke_report(result: SmokeResult) -> str:
 
 def write_smoke_reports(project_root: Path, result: SmokeResult, report_dir: Path, run_id_value: str) -> None:
     result.report_dir = rel(report_dir, project_root)
-    write_json(report_dir / "smoke.json", as_jsonable(result))
+    write_report_json(report_dir / "smoke.json", result, command="smoke")
     (report_dir / "report.md").write_text(render_smoke_report(result), encoding="utf-8")
     append_report_to_state(project_root, report_dir, run_id_value)
 
@@ -4046,7 +4089,7 @@ def render_up_report(result: UpResult) -> str:
 
 def write_up_reports(project_root: Path, result: UpResult, report_dir: Path) -> None:
     result.report_dir = rel(report_dir, project_root)
-    write_json(report_dir / "up.json", as_jsonable(result))
+    write_report_json(report_dir / "up.json", result, command="up")
     (report_dir / "report.md").write_text(render_up_report(result), encoding="utf-8")
     append_report_to_state(project_root, report_dir, result.run_id)
 
@@ -4588,7 +4631,7 @@ def render_stop_report(result: StopResult) -> str:
 
 def write_stop_reports(project_root: Path, result: StopResult, report_dir: Path) -> None:
     result.report_dir = rel(report_dir, project_root)
-    write_json(report_dir / "stop.json", as_jsonable(result))
+    write_report_json(report_dir / "stop.json", result, command="stop")
     (report_dir / "report.md").write_text(render_stop_report(result), encoding="utf-8")
 
 
@@ -4822,6 +4865,283 @@ def command_status(args: argparse.Namespace) -> int:
     return 0
 
 
+
+@dataclass
+class SelfCheckCase:
+    name: str
+    status: str
+    message: str
+    evidence: str | None = None
+
+
+@dataclass
+class SelfCheckResult:
+    generated_at: str
+    tool_version: str
+    project_root: str | None
+    invoked_from: str
+    cases: list[SelfCheckCase] = field(default_factory=list)
+    failures: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    classification: str = "unknown"
+    report_dir: str | None = None
+
+
+def self_check_case(result: SelfCheckResult, name: str, func: Any) -> None:
+    try:
+        evidence = func()
+    except AssertionError as exc:
+        message = str(exc) or "assertion failed"
+        result.cases.append(SelfCheckCase(name=name, status="fail", message=message))
+        result.failures.append({"code": name, "message": message})
+    except Exception as exc:
+        message = f"unexpected error: {exc}"
+        result.cases.append(SelfCheckCase(name=name, status="fail", message=message, evidence=exc.__class__.__name__))
+        result.failures.append({"code": name, "message": message})
+    else:
+        result.cases.append(SelfCheckCase(name=name, status="ok", message="passed", evidence=evidence))
+
+
+def case_self_check_version_and_timeout_policy() -> str:
+    assert TOOL_VERSION == "1.0.0", f"expected TOOL_VERSION 1.0.0, got {TOOL_VERSION}"
+    required = {
+        "probe_command",
+        "port_probe",
+        "http_probe",
+        "postgres_ready",
+        "cargo_metadata",
+        "cargo_check",
+        "backend_ready",
+        "npm_install",
+        "frontend_ready",
+        "smoke_step",
+        "up_step",
+        "stop_grace",
+    }
+    missing = sorted(required.difference(TIMEOUT_POLICY))
+    assert not missing, "missing timeout policy keys: " + ", ".join(missing)
+    for key, value in TIMEOUT_POLICY.items():
+        assert isinstance(value, (int, float)) and value > 0, f"timeout {key} must be positive"
+    return f"{len(TIMEOUT_POLICY)} timeout defaults checked"
+
+
+def case_self_check_env_parser_and_masking() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-env-") as tmp:
+        env_file = Path(tmp) / ".env"
+        env_file.write_text(
+            "\n".join(
+                [
+                    "# comment",
+                    "APP_NAME=p2p",
+                    "export QUOTED='hello world'",
+                    "SECRET_TOKEN=super-secret",
+                    "DATABASE__URL=postgres://planner:pw@localhost:5432/p2p_planner",
+                    "BROKEN_LINE",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        values, warnings = parse_env_file(env_file)
+    assert values["APP_NAME"] == "p2p"
+    assert values["QUOTED"] == "hello world"
+    assert values["SECRET_TOKEN"] == "super-secret"
+    assert warnings and "ignored non KEY=VALUE line" in warnings[0]
+    assert mask_value("SECRET_TOKEN", values["SECRET_TOKEN"]) == "***"
+    masked_db = mask_value("DATABASE__URL", values["DATABASE__URL"])
+    assert "pw" not in masked_db and ":***@" in masked_db, masked_db
+    return "env parser warnings and secret masking checked"
+
+
+def case_self_check_database_url_parse() -> str:
+    probe = parse_database_url_probe("postgres://planner:secret@127.0.0.1:15432/p2p_planner_dev?sslmode=disable")
+    assert probe.raw_present is True
+    assert probe.scheme == "postgres"
+    assert probe.host == "127.0.0.1"
+    assert probe.port == 15432
+    assert probe.database == "p2p_planner_dev"
+    assert probe.username == "planner"
+    assert probe.has_password is True
+    assert probe.masked_url and "secret" not in probe.masked_url
+    return f"{probe.host}:{probe.port}/{probe.database}"
+
+
+def case_self_check_failure_classifiers() -> str:
+    assert classify_backend_failure("error: address already in use", "x") == "port_conflict"
+    assert classify_backend_failure("migration 6 was previously applied but is missing in the resolved migrations", "x") == "migration_drift"
+    assert classify_backend_failure("database foo does not exist", "x") == "database_missing"
+    assert classify_frontend_failure("Error: Cannot find module '@vitejs/plugin-react'", "x") == "frontend_dependency_missing"
+    assert classify_smoke_process_failure("quick", "NetworkError when attempting to fetch resource") == "runtime_unreachable"
+    psql = ProcessProbe(name="psql", command=["psql"], available=True, returncode=2, stderr="password authentication failed for user planner")
+    assert classify_psql_failure(psql, None) == "auth_failed"
+    return "backend/frontend/postgres/smoke classifiers checked"
+
+
+def case_self_check_project_discovery() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-root-") as tmp:
+        root = Path(tmp) / "project"
+        for relative in ["backend", "frontend", "docs", "tools"]:
+            (root / relative).mkdir(parents=True, exist_ok=True)
+        (root / "docker-compose.dev.yml").write_text("services: {}\n", encoding="utf-8")
+        found_from_tools = find_project_root(root / "tools")
+        found_from_nested = find_project_root(Path(tmp))
+    assert found_from_tools == root.resolve()
+    assert found_from_nested == root.resolve()
+    return "root discovery from tools/ and parent workspace checked"
+
+
+def case_self_check_env_diff() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-plan-") as tmp:
+        root = Path(tmp)
+        (root / "backend").mkdir()
+        (root / "frontend").mkdir()
+        (root / "docs").mkdir()
+        (root / "docker-compose.dev.yml").write_text("services: {}\n", encoding="utf-8")
+        (root / "backend" / ".env.example").write_text("DATABASE__URL=postgres://u:p@localhost:5432/a\nHTTP__HOST=127.0.0.1\n", encoding="utf-8")
+        (root / "backend" / ".env").write_text("DATABASE__URL=postgres://u:p@localhost:5432/b\nEXTRA_KEY=yes\n", encoding="utf-8")
+        (root / "frontend" / ".env.example").write_text("VITE_API_BASE_URL=http://127.0.0.1:18080/api/v1\n", encoding="utf-8")
+        result = build_env_plan(root, root, mode="plan")
+    backend = next(item for item in result.files if item.name == "backend")
+    frontend = next(item for item in result.files if item.name == "frontend")
+    assert "HTTP__HOST" in backend.missing_keys
+    assert "EXTRA_KEY" in backend.extra_keys
+    assert frontend.target_exists is False
+    assert any(action.code == "create_env_file" and action.path == "frontend/.env.local" for action in result.actions)
+    return "env diff detects missing, extra and absent target files"
+
+
+def case_self_check_report_json_contract() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-report-") as tmp:
+        path = Path(tmp) / "fixture.json"
+        write_report_json(
+            path,
+            {
+                "generated_at": iso_now(),
+                "tool_version": TOOL_VERSION,
+                "failures": [],
+                "warnings": [],
+            },
+            command="self-check-fixture",
+        )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["schemaVersion"] == REPORT_SCHEMA_VERSION
+    assert payload["command"] == "self-check-fixture"
+    assert payload["toolVersion"] == TOOL_VERSION
+    assert payload["status"] == "ok"
+    assert payload.get("generatedAt")
+    return "schemaVersion/command/toolVersion/status/generatedAt envelope checked"
+
+
+def case_self_check_report_markdown_contract() -> str:
+    result = DiagnoseResult(
+        generated_at=iso_now(),
+        tool_version=TOOL_VERSION,
+        project_root=None,
+        invoked_from="self-check",
+        platform={"system": platform.system(), "python": sys.version.split()[0]},
+    )
+    rendered = render_report(result)
+    required_sections = ["# devbootstrap diagnose report", "## Findings", "## Next safe actions"]
+    for section in required_sections:
+        assert section in rendered, f"missing report section {section}"
+    return "minimal report.md sections checked"
+
+
+def build_self_check_result(project_root: Path | None, invoked_from: Path) -> SelfCheckResult:
+    result = SelfCheckResult(
+        generated_at=iso_now(),
+        tool_version=TOOL_VERSION,
+        project_root=str(project_root) if project_root else None,
+        invoked_from=str(invoked_from),
+    )
+    self_check_case(result, "version_and_timeout_policy", case_self_check_version_and_timeout_policy)
+    self_check_case(result, "env_parser_and_masking", case_self_check_env_parser_and_masking)
+    self_check_case(result, "database_url_parse", case_self_check_database_url_parse)
+    self_check_case(result, "failure_classifiers", case_self_check_failure_classifiers)
+    self_check_case(result, "project_discovery", case_self_check_project_discovery)
+    self_check_case(result, "env_diff", case_self_check_env_diff)
+    self_check_case(result, "report_json_contract", case_self_check_report_json_contract)
+    self_check_case(result, "report_markdown_contract", case_self_check_report_markdown_contract)
+    if result.failures:
+        result.classification = "failed"
+        result.next_actions.append("Fix failing self-check cases before using devbootstrap as the v1 routine entrypoint.")
+    else:
+        result.classification = "ok"
+        result.next_actions.append("devbootstrap internal fixtures passed; run `python tools/devbootstrap.py diagnose` or `up --dry-run` next.")
+    return result
+
+
+def render_self_check_report(result: SelfCheckResult) -> str:
+    lines: list[str] = []
+    lines.append("# devbootstrap self-check report")
+    lines.append("")
+    lines.append(f"- Generated at: `{result.generated_at}`")
+    lines.append(f"- Tool version: `{result.tool_version}`")
+    lines.append(f"- Project root: `{result.project_root or 'not found'}`")
+    lines.append(f"- Invoked from: `{result.invoked_from}`")
+    lines.append(f"- Classification: `{result.classification}`")
+    lines.append("")
+    lines.append("## Cases")
+    lines.append("")
+    lines.append("| Case | Status | Message | Evidence |")
+    lines.append("|---|---|---|---|")
+    for case in result.cases:
+        lines.append(f"| `{case.name}` | {case.status} | {case.message} | `{case.evidence or ''}` |")
+    lines.append("")
+    lines.append("## Findings")
+    lines.append("")
+    if not result.failures and not result.warnings:
+        lines.append("- No blocking findings from self-check.")
+    for failure in result.failures:
+        lines.append(f"- **FAIL** `{failure['code']}` — {failure['message']}")
+    for warning in result.warnings:
+        lines.append(f"- **WARN** `{warning['code']}` — {warning['message']}")
+    lines.append("")
+    lines.append("## Next safe actions")
+    lines.append("")
+    for action in result.next_actions:
+        lines.append(f"- {action}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_self_check_reports(project_root: Path, result: SelfCheckResult) -> Path:
+    report_dir = create_report_dir(project_root, "self-check")
+    result.report_dir = rel(report_dir, project_root)
+    write_report_json(report_dir / "self-check.json", result, command="self-check")
+    (report_dir / "report.md").write_text(render_self_check_report(result), encoding="utf-8")
+    append_report_to_state(project_root, report_dir, report_dir.name)
+    return report_dir
+
+
+def print_self_check_summary(result: SelfCheckResult) -> None:
+    print_header("devbootstrap self-check")
+    print(f"Tool version: {result.tool_version}")
+    print(f"Project root: {result.project_root or 'not found'}")
+    print(f"Classification: {result.classification}")
+    print("\nCases:")
+    for case in result.cases:
+        evidence = f" ({case.evidence})" if case.evidence else ""
+        print(f"  - {case.status.upper()} {case.name}: {case.message}{evidence}")
+    if result.next_actions:
+        print("\nNext actions:")
+        for action in result.next_actions:
+            print(f"  - {action}")
+
+
+def command_self_check(args: argparse.Namespace) -> int:
+    invoked_from = Path.cwd()
+    project_root = find_project_root(invoked_from)
+    result = build_self_check_result(project_root, invoked_from)
+    if project_root is not None and not args.no_write_report:
+        write_self_check_reports(project_root, result)
+    print_self_check_summary(result)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
+    return 1 if result.failures else 0
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="devbootstrap",
@@ -4838,22 +5158,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     start_db = subparsers.add_parser("start-db", help="Diagnose PostgreSQL and start docker compose postgres when the configured port is closed.")
     start_db.add_argument("--dry-run", action="store_true", help="Show the planned compose action without starting containers.")
-    start_db.add_argument("--timeout-seconds", type=int, default=60, help="How long to wait for PostgreSQL readiness after compose start.")
+    start_db.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["postgres_ready"], help="How long to wait for PostgreSQL readiness after compose start.")
     start_db.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap report files.")
     start_db.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     start_db.set_defaults(func=command_start_db)
 
     check_backend = subparsers.add_parser("check-backend", help="Run backend Rust preflight checks: cargo metadata and cargo check.")
     check_backend.add_argument("--dry-run", action="store_true", help="Show what would be checked without running cargo metadata/check.")
-    check_backend.add_argument("--metadata-timeout-seconds", type=int, default=60, help="Timeout for cargo metadata.")
-    check_backend.add_argument("--timeout-seconds", type=int, default=240, help="Timeout for cargo check.")
+    check_backend.add_argument("--metadata-timeout-seconds", type=int, default=TIMEOUT_POLICY["cargo_metadata"], help="Timeout for cargo metadata.")
+    check_backend.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["cargo_check"], help="Timeout for cargo check.")
     check_backend.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap report files.")
     check_backend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     check_backend.set_defaults(func=command_check_backend)
 
     start_backend = subparsers.add_parser("start-backend", help="Start backend with cargo run, capture logs and wait for health.")
     start_backend.add_argument("--dry-run", action="store_true", help="Show what would be started without running cargo run.")
-    start_backend.add_argument("--timeout-seconds", type=int, default=180, help="How long to wait for backend health after cargo run.")
+    start_backend.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["backend_ready"], help="How long to wait for backend health after cargo run.")
     start_backend.add_argument("--no-write-report", action="store_true", help="Skip report files when used with --dry-run; real start still writes logs/state.")
     start_backend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     start_backend.set_defaults(func=command_start_backend)
@@ -4862,14 +5182,14 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_frontend = subparsers.add_parser("prepare-frontend", help="Install or verify frontend npm dependencies with a devbootstrap marker.")
     prepare_frontend.add_argument("--dry-run", action="store_true", help="Show whether npm ci/install would run without changing node_modules.")
     prepare_frontend.add_argument("--force-install", action="store_true", help="Run npm ci/install even when the install marker looks current.")
-    prepare_frontend.add_argument("--timeout-seconds", type=int, default=300, help="Timeout for npm ci/install.")
+    prepare_frontend.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["npm_install"], help="Timeout for npm ci/install.")
     prepare_frontend.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap report files.")
     prepare_frontend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     prepare_frontend.set_defaults(func=command_prepare_frontend)
 
     start_frontend = subparsers.add_parser("start-frontend", help="Start frontend with npm run dev, capture logs and wait for Vite root.")
     start_frontend.add_argument("--dry-run", action="store_true", help="Show what would be started without running npm run dev.")
-    start_frontend.add_argument("--timeout-seconds", type=int, default=120, help="How long to wait for frontend root after npm run dev.")
+    start_frontend.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["frontend_ready"], help="How long to wait for frontend root after npm run dev.")
     start_frontend.add_argument("--no-write-report", action="store_true", help="Skip report files when used with --dry-run; real start still writes logs/state.")
     start_frontend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     start_frontend.set_defaults(func=command_start_frontend)
@@ -4892,13 +5212,13 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--skip-db-start", action="store_true", help="Skip compose-assisted PostgreSQL start.")
     up.add_argument("--smoke-level", choices=["quick", "standard", "full", "none"], default="quick", help="Smoke level after startup. Phase 7 implements quick, standard and full smoke gates.")
     up.add_argument("--yes", action="store_true", help="Allow non-destructive automatic steps; this never permits DB reset or killing foreign processes.")
-    up.add_argument("--step-timeout-seconds", type=int, default=120, help="Timeout for short diagnose/plan/prepare-env steps.")
-    up.add_argument("--db-timeout-seconds", type=int, default=60, help="Timeout for start-db readiness.")
-    up.add_argument("--cargo-check-timeout-seconds", type=int, default=240, help="Timeout for cargo check.")
-    up.add_argument("--backend-timeout-seconds", type=int, default=180, help="Timeout for backend health after cargo run.")
-    up.add_argument("--npm-timeout-seconds", type=int, default=300, help="Timeout for npm ci/install.")
-    up.add_argument("--frontend-timeout-seconds", type=int, default=120, help="Timeout for frontend readiness after npm run dev.")
-    up.add_argument("--smoke-timeout-seconds", type=int, default=600, help="Timeout for smoke substeps launched by up.")
+    up.add_argument("--step-timeout-seconds", type=int, default=TIMEOUT_POLICY["up_step"], help="Timeout for short diagnose/plan/prepare-env steps.")
+    up.add_argument("--db-timeout-seconds", type=int, default=TIMEOUT_POLICY["postgres_ready"], help="Timeout for start-db readiness.")
+    up.add_argument("--cargo-check-timeout-seconds", type=int, default=TIMEOUT_POLICY["cargo_check"], help="Timeout for cargo check.")
+    up.add_argument("--backend-timeout-seconds", type=int, default=TIMEOUT_POLICY["backend_ready"], help="Timeout for backend health after cargo run.")
+    up.add_argument("--npm-timeout-seconds", type=int, default=TIMEOUT_POLICY["npm_install"], help="Timeout for npm ci/install.")
+    up.add_argument("--frontend-timeout-seconds", type=int, default=TIMEOUT_POLICY["frontend_ready"], help="Timeout for frontend readiness after npm run dev.")
+    up.add_argument("--smoke-timeout-seconds", type=int, default=TIMEOUT_POLICY["smoke_step"], help="Timeout for smoke substeps launched by up.")
     up.add_argument("--allow-dev-db-write", action="store_true", help="Allow standard/full smoke to write through the live backend API to the configured dev database.")
     up.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     up.set_defaults(func=command_up)
@@ -4907,7 +5227,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke = subparsers.add_parser("smoke", help="Run post-start smoke gates with clear failure classification.")
     smoke.add_argument("--level", choices=["quick", "standard", "full"], default="quick", help="quick probes HTTP; standard adds backend Python smoke and frontend tests; full adds browser smoke.")
     smoke.add_argument("--allow-dev-db-write", action="store_true", help="Allow backend smoke to write to the configured dev database when TEST_DATABASE_URL is not present.")
-    smoke.add_argument("--timeout-seconds", type=int, default=600, help="Timeout for each command-based smoke substep.")
+    smoke.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["smoke_step"], help="Timeout for each command-based smoke substep.")
     smoke.add_argument("--no-write-report", action="store_true", help="Do not create a standalone smoke report; step logs may still be temporary for command execution.")
     smoke.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     smoke.set_defaults(func=command_smoke)
@@ -4919,11 +5239,16 @@ def build_parser() -> argparse.ArgumentParser:
     stop = subparsers.add_parser("stop", help="Stop only devbootstrap-tracked backend/frontend processes, and optionally compose postgres.")
     stop.add_argument("--include-db", action="store_true", help="Also stop docker compose postgres service without removing volumes.")
     stop.add_argument("--dry-run", action="store_true", help="Show what would be stopped without terminating processes or compose services.")
-    stop.add_argument("--timeout-seconds", type=int, default=10, help="Graceful stop timeout before force kill for owned processes.")
+    stop.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["stop_grace"], help="Graceful stop timeout before force kill for owned processes.")
     stop.add_argument("--no-force", action="store_true", help="Do not force kill owned processes after the graceful timeout.")
     stop.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap stop report files.")
     stop.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     stop.set_defaults(func=command_stop)
+
+    self_check = subparsers.add_parser("self-check", help="Run devbootstrap internal v1 hardening fixtures without external packages.")
+    self_check.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap self-check report files.")
+    self_check.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
+    self_check.set_defaults(func=command_self_check)
 
     return parser
 

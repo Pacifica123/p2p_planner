@@ -986,27 +986,30 @@ Acceptance criteria:
 
 ## Phase 9 — hardening до v1
 
+Статус: **реализовано**.
+
 Цель:
 
 - превратить набор команд в надежный v1 tool.
 
-Что сделать:
+Что сделано:
 
-- единый формат `report.md`;
-- единый формат `diagnose.json`;
-- timeout policy для всех subprocess;
-- Windows/Linux smoke самого инструмента;
-- тестовые fixtures для env diff, URL parse, failure classifier;
-- документация в `docs/dev-bootstrap/`;
-- README section с quick commands;
-- devctl manifest check, чтобы tool syntax проверялся при будущих патчах.
+- поднята версия `tools/devbootstrap.py` до `1.0.0`;
+- добавлен `self-check` как внутренний sanity suite без внешних Python packages;
+- `self-check` проверяет env parser/masking, env diff, database URL parse, root discovery, failure classifiers, `report.md` baseline и JSON report envelope;
+- добавлен общий JSON-envelope для report payloads: `schemaVersion`, `command`, `toolVersion`, `generatedAt`, `status`;
+- основные timeout defaults собраны в `TIMEOUT_POLICY`;
+- добавлена эксплуатационная памятка `docs/dev-bootstrap/devbootstrap-v1-operations.md`;
+- README и docs index обновлены quick commands и v1-status;
+- devctl manifest будущих патчей должен запускать `ast.parse` и `python tools/devbootstrap.py self-check --no-write-report`.
 
 Acceptance criteria:
 
 - инструмент можно добавить в routine после применения патча;
 - он не требует сторонних Python packages;
 - основные ошибки окружения классифицируются;
-- есть понятное “что делать дальше”.
+- есть понятное “что делать дальше”;
+- есть проверяемая команда `self-check`, которую можно запускать в devctl checks.
 
 ---
 
@@ -1270,13 +1273,19 @@ python tools/devbootstrap.py smoke --level quick
 
 Файлы:
 
-- docs;
-- report format examples;
-- more internal checks.
+- `tools/devbootstrap.py`;
+- `docs/dev-bootstrap/devbootstrap-v1-operations.md`;
+- README/docs index updates;
+- devctl patch manifest checks.
 
 Проверки:
 
-- Windows/Linux manual matrix;
+- `ast.parse` for `tools/devbootstrap.py` and `tools/devctl.py`;
+- `python tools/devbootstrap.py self-check --no-write-report`;
+- `python tools/devbootstrap.py diagnose --no-write-report`;
+- `python tools/devbootstrap.py up --dry-run --smoke-level quick`;
+- `python tools/devbootstrap.py stop --dry-run --no-write-report`;
+- Windows/Linux manual matrix later on real machines;
 - clean archive quickstart;
 - dirty machine scenario.
 
@@ -1300,7 +1309,9 @@ python tools/devbootstrap.py smoke --level quick
 - [ ] выполнить quick smoke;
 - [ ] сохранить report/logs;
 - [ ] остановить backend/frontend процессы, которые сам поднял;
-- [ ] оставить понятное объяснение при каждом частом сбое.
+- [x] оставить понятное объяснение при каждом частом сбое.
+- [x] иметь внутренний `self-check` для env diff / URL parse / classifier / report-contract fixtures.
+- [x] иметь общий JSON-envelope для отчетов и документированную timeout policy.
 
 ---
 

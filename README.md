@@ -45,6 +45,7 @@ docs/      ADR, архитектурные решения, OpenAPI, MVP scope
 Текущие слои будущего авторазвертывателя доступны как безопасные команды диагностики/env-подготовки и guarded-команда запуска PostgreSQL:
 
 ```bash
+python tools/devbootstrap.py self-check --no-write-report
 python tools/devbootstrap.py diagnose --no-write-report
 python tools/devbootstrap.py plan --no-write-report
 python tools/devbootstrap.py prepare-env
@@ -62,7 +63,9 @@ python tools/devbootstrap.py stop --dry-run
 python tools/devbootstrap.py stop
 ```
 
-Обычные `diagnose`, `plan`, `prepare-env`, `diagnose --section postgres`, `start-db`, `check-backend`, `start-backend`, `prepare-frontend`, `start-frontend` и `up` дополнительно сохраняют отчеты в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. Phase 1 проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL. Phase 2 читает env-контракт, показывает diff ключей, маскирует секреты и безопасно создает отсутствующие `backend/.env` / `frontend/.env.local` из example-файлов без перезаписи существующих env. Phase 3 проверяет PostgreSQL target из `DATABASE__URL`, умеет классифицировать частые проблемы БД и может поднять compose-сервис `postgres`, если configured port закрыт. Phase 4 добавляет backend-проверку через `cargo metadata` / `cargo check` и guarded `cargo run` с PID/state/log capture и ожиданием `/health` + `/api/v1/health`. Phase 5 добавляет frontend-подготовку через `npm ci` / `npm install`, install-marker для `node_modules`, guarded `npm run dev`, `frontend.log`, PID/state и проверку `VITE_API_BASE_URL` против backend health. Phase 6 добавляет `up`: единый безопасный pipeline `diagnose → plan → prepare-env → start-db → check-backend → start-backend → prepare-frontend → start-frontend → smoke → report` с `--dry-run`, skip-флагами и остановкой на первом блокирующем сбое. Phase 7 добавляет отдельные smoke gates: `quick` проверяет backend/frontend HTTP-доступность, `standard` добавляет backend Python smoke и frontend `npm run test:run`, `full` добавляет browser smoke через `npm run test:browser`. Для write-capable backend smoke нужен `TEST_DATABASE_URL` или явный `--allow-dev-db-write`, чтобы случайно не писать в обычную dev-БД. Phase 8 закрывает lifecycle: `status` показывает tracked PID/ports/health/compose snapshot, а `stop` завершает только backend/frontend процессы из `.dev-bootstrap/state.json`; PostgreSQL compose service останавливается только при явном `stop --include-db`.
+Финальный v1-hardening слой добавляет `self-check`: встроенные fixtures для env parser/diff, URL parse, failure classifiers, root discovery и report JSON contract. Его стоит запускать после каждого патча к `tools/devbootstrap.py` вместе с `ast.parse`.
+
+Обычные `diagnose`, `plan`, `prepare-env`, `diagnose --section postgres`, `start-db`, `check-backend`, `start-backend`, `prepare-frontend`, `start-frontend` и `up` дополнительно сохраняют отчеты в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. Phase 1 проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL. Phase 2 читает env-контракт, показывает diff ключей, маскирует секреты и безопасно создает отсутствующие `backend/.env` / `frontend/.env.local` из example-файлов без перезаписи существующих env. Phase 3 проверяет PostgreSQL target из `DATABASE__URL`, умеет классифицировать частые проблемы БД и может поднять compose-сервис `postgres`, если configured port закрыт. Phase 4 добавляет backend-проверку через `cargo metadata` / `cargo check` и guarded `cargo run` с PID/state/log capture и ожиданием `/health` + `/api/v1/health`. Phase 5 добавляет frontend-подготовку через `npm ci` / `npm install`, install-marker для `node_modules`, guarded `npm run dev`, `frontend.log`, PID/state и проверку `VITE_API_BASE_URL` против backend health. Phase 6 добавляет `up`: единый безопасный pipeline `diagnose → plan → prepare-env → start-db → check-backend → start-backend → prepare-frontend → start-frontend → smoke → report` с `--dry-run`, skip-флагами и остановкой на первом блокирующем сбое. Phase 7 добавляет отдельные smoke gates: `quick` проверяет backend/frontend HTTP-доступность, `standard` добавляет backend Python smoke и frontend `npm run test:run`, `full` добавляет browser smoke через `npm run test:browser`. Для write-capable backend smoke нужен `TEST_DATABASE_URL` или явный `--allow-dev-db-write`, чтобы случайно не писать в обычную dev-БД. Phase 8 закрывает lifecycle: `status` показывает tracked PID/ports/health/compose snapshot, а `stop` завершает только backend/frontend процессы из `.dev-bootstrap/state.json`; PostgreSQL compose service останавливается только при явном `stop --include-db`. Phase 9 поднимает инструмент до `1.0.0`, фиксирует общий JSON-envelope отчетов, централизует timeout policy и добавляет `self-check` как внутренний v1 sanity suite.
 
 Если env-файл уже существует, `prepare-env` не меняет его по умолчанию. Для аккуратного добавления недостающих ключей из example-файлов есть явный режим:
 
@@ -114,7 +117,8 @@ VITE_ENABLE_PROJECT_ROADMAP_SEED=true
 - `docs/product/mvp-scope-v1.md` — границы MVP;
 - `docs/architecture/backend-modules.md` — карта backend-модулей;
 - `docs/architecture/frontend_architecture_v_1.md` — структура frontend;
-- `docs/api/openapi.yaml` — текущий HTTP-контракт.
+- `docs/api/openapi.yaml` — текущий HTTP-контракт;
+- `docs/dev-bootstrap/devbootstrap-v1-operations.md` — quick commands, report contract, timeout policy and cleanup rules for devbootstrap v1.
 
 ## Что можно тестить руками сейчас
 
