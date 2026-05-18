@@ -34,8 +34,18 @@ export function getLocalFirstBoardSnapshotKey(boardId: string) {
   return `${BOARD_SNAPSHOT_PREFIX}${boardId}.v1`;
 }
 
+export function getLocalFirstStorage(): Storage | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    return window.localStorage || null;
+  } catch {
+    return null;
+  }
+}
+
 export function isLocalFirstStorageAvailable() {
-  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+  return getLocalFirstStorage() !== null;
 }
 
 export function notifyLocalFirstStore() {
@@ -75,10 +85,11 @@ function createId(prefix: string) {
 }
 
 function safeReadJson<T>(key: string, fallback: T): T {
-  if (!isLocalFirstStorageAvailable()) return fallback;
+  const storage = getLocalFirstStorage();
+  if (!storage) return fallback;
 
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = storage.getItem(key);
     if (!raw) return fallback;
     return JSON.parse(raw) as T;
   } catch {
@@ -87,8 +98,9 @@ function safeReadJson<T>(key: string, fallback: T): T {
 }
 
 function safeWriteJson<T>(key: string, value: T) {
-  if (!isLocalFirstStorageAvailable()) return;
-  window.localStorage.setItem(key, JSON.stringify(value));
+  const storage = getLocalFirstStorage();
+  if (!storage) return;
+  storage.setItem(key, JSON.stringify(value));
 }
 
 export function loadLocalBoardSnapshot(boardId?: string | null): LocalBoardSnapshot | null {
