@@ -266,6 +266,13 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    NotImplemented:
+      description: Route is mounted but deferred/not implemented in the current beta
+        slice
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   schemas:
     PageInfo:
       type: object
@@ -304,34 +311,35 @@ components:
           required:
           - code
           - message
-          - requestId
+          - details
           properties:
             code:
               type: string
               examples:
-              - validation_error
+              - bad_request
               - unauthorized
               - forbidden
               - not_found
               - conflict
+              - not_implemented
+              - internal_error
             message:
-              type: string
-            requestId:
               type: string
             details:
               type:
+              - object
               - array
+              - string
+              - number
+              - boolean
               - 'null'
-              items:
-                $ref: '#/components/schemas/ErrorDetail'
+              additionalProperties: true
     User:
       type: object
       required:
       - id
       - email
       - displayName
-      - createdAt
-      - updatedAt
       properties:
         id:
           type: string
@@ -339,71 +347,22 @@ components:
         email:
           type: string
           format: email
-        username:
-          type:
-          - string
-          - 'null'
         displayName:
           type: string
-        avatarUrl:
-          type:
-          - string
-          - 'null'
-          format: uri
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
     Device:
       type: object
       required:
       - id
+      - displayName
       - platform
-      - status
-      - createdAt
-      - updatedAt
       properties:
         id:
           type: string
           format: uuid
+        displayName:
+          type: string
         platform:
           type: string
-          enum:
-          - web
-          - desktop
-          - android
-          - ios
-          - server
-        clientDeviceId:
-          type:
-          - string
-          - 'null'
-        label:
-          type:
-          - string
-          - 'null'
-        appVersion:
-          type:
-          - string
-          - 'null'
-        lastSeenAt:
-          type:
-          - string
-          - 'null'
-          format: date-time
-        status:
-          type: string
-          enum:
-          - active
-          - revoked
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
     Session:
       type: object
       required:
@@ -1326,9 +1285,7 @@ components:
       - id
       - boardId
       - name
-      - colorToken
-      - createdAt
-      - updatedAt
+      - color
       properties:
         id:
           type: string
@@ -1338,23 +1295,8 @@ components:
           format: uuid
         name:
           type: string
-        colorToken:
+        color:
           type: string
-        description:
-          type:
-          - string
-          - 'null'
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-        deletedAt:
-          type:
-          - string
-          - 'null'
-          format: date-time
     BoardLabelListResponse:
       type: object
       required:
@@ -1368,16 +1310,12 @@ components:
       type: object
       required:
       - name
-      - colorToken
+      - color
       properties:
         name:
           type: string
-        colorToken:
+        color:
           type: string
-        description:
-          type:
-          - string
-          - 'null'
     UpdateBoardLabelRequest:
       type: object
       additionalProperties: false
@@ -1386,11 +1324,7 @@ components:
           type:
           - string
           - 'null'
-        colorToken:
-          type:
-          - string
-          - 'null'
-        description:
+        color:
           type:
           - string
           - 'null'
@@ -2214,7 +2148,6 @@ components:
           type:
           - string
           - 'null'
-
     IntegrationProviderSummary:
       type: object
       required:
@@ -2858,221 +2791,82 @@ components:
           type: array
           items:
             type: string
-
+    AuthSuccessResponse:
+      type: object
+      required:
+      - authenticated
+      - mode
+      - accessToken
+      - accessTokenExpiresAt
+      - sessionId
+      - deviceId
+      - user
+      properties:
+        authenticated:
+          type: boolean
+        mode:
+          type: string
+        accessToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/User'
+    SessionResponse:
+      type: object
+      required:
+      - authenticated
+      - mode
+      - sessionId
+      - deviceId
+      - user
+      properties:
+        authenticated:
+          type: boolean
+        mode:
+          type: string
+        sessionId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        deviceId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        user:
+          oneOf:
+          - $ref: '#/components/schemas/User'
+          - type: 'null'
+    SignOutResponse:
+      type: object
+      required:
+      - signedOut
+      - mode
+      properties:
+        signedOut:
+          type: boolean
+        mode:
+          type: string
+    ReplaceCardLabelsRequest:
+      type: object
+      required:
+      - labelIds
+      properties:
+        labelIds:
+          type: array
+          items:
+            type: string
+            format: uuid
 paths:
-
-  /integrations/providers:
-    get:
-      tags:
-      - integrations
-      summary: List built-in integration providers
-      security:
-      - bearerAuth: []
-      responses:
-        '200':
-          description: Provider catalog
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationProviderCatalogResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /integrations/providers/{providerKey}:
-    get:
-      tags:
-      - integrations
-      summary: Get provider manifest and reserved touchpoints
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/ProviderKey'
-      responses:
-        '200':
-          description: Provider detail
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationProviderDetailResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /integrations/import-jobs:
-    post:
-      tags:
-      - integrations
-      summary: Create reserved import orchestration job
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateImportJobRequest'
-      responses:
-        '202':
-          description: Stub import orchestration response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationOperationStubResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /integrations/export-jobs:
-    post:
-      tags:
-      - integrations
-      summary: Create reserved export orchestration job
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateExportJobRequest'
-      responses:
-        '202':
-          description: Stub export orchestration response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationOperationStubResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /integrations/import-export/capabilities:
-    get:
-      tags:
-      - integrations
-      summary: Get portable bundle and restore capability surface
-      security:
-      - bearerAuth: []
-      responses:
-        '200':
-          description: Import / export / backup capabilities
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ImportExportCapabilitiesResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /integrations/import-export/exports:
-    post:
-      tags:
-      - integrations
-      summary: Create portable export or coordinated backup manifest stub
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreatePortableExportRequest'
-      responses:
-        '202':
-          description: Export manifest stub
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PortableExportResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /integrations/import-export/imports/preview:
-    post:
-      tags:
-      - integrations
-      summary: Preview import or restore plan before apply
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateImportPreviewRequest'
-      responses:
-        '200':
-          description: Import preview surface
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ImportPreviewResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /integrations/import-export/imports:
-    post:
-      tags:
-      - integrations
-      summary: Create import or restore execution stub
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateImportExecutionRequest'
-      responses:
-        '202':
-          description: Import execution stub response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ImportExecutionResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /integrations/webhooks/{providerKey}:
-    post:
-      tags:
-      - integrations
-      summary: Reserved inbound webhook boundary for a provider
-      parameters:
-      - $ref: '#/components/parameters/ProviderKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '202':
-          description: Stub webhook receipt response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WebhookReceiptResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
   /auth/sign-up:
     post:
       tags:
@@ -3094,7 +2888,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SignInResponse'
+                $ref: '#/components/schemas/AuthSuccessResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
@@ -3103,14 +2897,129 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /auth/sign-in:
+    post:
+      tags:
+      - auth
+      summary: Sign in with email/password and start or continue a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /auth/refresh:
+    post:
+      tags:
+      - auth
+      summary: Rotate refresh token and issue a new access token
+      security:
+      - refreshTokenCookie: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshSessionRequest'
+      responses:
+        '200':
+          description: Refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /auth/sign-out:
+    post:
+      tags:
+      - auth
+      summary: Revoke current session
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignOutResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /auth/sign-out-all:
+    post:
+      tags:
+      - auth
+      summary: Revoke all sessions of current user
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignOutResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /auth/session:
+    get:
+      tags:
+      - auth
+      summary: Get current authenticated session including device and replica context
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Current session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /auth/dev-bootstrap:
     post:
       tags:
       - auth
       summary: Bootstrap or revive a dev-only user for X-User-Id flows
-      description: 'Available only outside production. Intended for local smoke tests and temporary pre-auth development flow.
-
-        '
+      description: Dev-only helper for local header-auth bootstrap. Not a production
+        v1 route.
       requestBody:
         required: true
         content:
@@ -3132,102 +3041,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
-  /auth/sign-in:
-    post:
-      tags:
-      - auth
-      summary: Sign in with email/password and start or continue a session
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SignInRequest'
-      responses:
-        '200':
-          description: Signed in
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SignInResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
-  /auth/refresh:
-    post:
-      tags:
-      - auth
-      summary: Rotate refresh token and issue a new access token
-      security:
-      - refreshTokenCookie: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RefreshSessionRequest'
-      responses:
-        '200':
-          description: Refreshed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RefreshSessionResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-  /auth/sign-out:
-    post:
-      tags:
-      - auth
-      summary: Revoke current session
-      security:
-      - bearerAuth: []
-      responses:
-        '204':
-          description: Signed out
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-  /auth/sign-out-all:
-    post:
-      tags:
-      - auth
-      summary: Revoke all sessions of current user
-      security:
-      - bearerAuth: []
-      responses:
-        '204':
-          description: All sessions revoked
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-  /auth/session:
-    get:
-      tags:
-      - auth
-      summary: Get current authenticated session including device and replica context
-      security:
-      - bearerAuth: []
-      responses:
-        '200':
-          description: Current session
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CurrentSessionResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
+      x-v1Status: internal_dev
   /me:
     get:
       tags:
@@ -3244,33 +3058,7 @@ paths:
                 $ref: '#/components/schemas/User'
         '401':
           $ref: '#/components/responses/Unauthorized'
-    patch:
-      tags:
-      - users
-      summary: Update current user profile
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateMeRequest'
-      responses:
-        '200':
-          description: Updated user
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/UnprocessableEntity'
+      x-v1Status: real_v1
   /me/devices:
     get:
       tags:
@@ -3287,31 +3075,38 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required:
-                - items
-                - pageInfo
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Device'
-                  pageInfo:
-                    $ref: '#/components/schemas/PageInfo'
+                type: array
+                items:
+                  $ref: '#/components/schemas/Device'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /me/devices/{deviceId}/revoke:
-    post:
+      x-v1Status: real_v1
+  /me/devices/{deviceId}:
+    delete:
       tags:
       - users
-      summary: Revoke current user's device and all sessions bound to it
+      summary: Revoke current user's device
+      x-v1Status: real_v1
       security:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/DeviceId'
       responses:
-        '204':
+        '200':
           description: Device revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - revoked
+                - deviceId
+                properties:
+                  revoked:
+                    type: boolean
+                  deviceId:
+                    type: string
+                    format: uuid
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3339,6 +3134,8 @@ paths:
                 $ref: '#/components/schemas/WorkspaceListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     post:
       tags:
       - workspaces
@@ -3364,6 +3161,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /workspaces/{workspaceId}:
     get:
       tags:
@@ -3386,6 +3185,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
     patch:
       tags:
       - workspaces
@@ -3409,6 +3209,32 @@ paths:
                 $ref: '#/components/schemas/Workspace'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+    delete:
+      tags:
+      - workspaces
+      summary: Soft-delete workspace
+      x-v1Status: real_v1
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3441,6 +3267,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /workspaces/{workspaceId}/members:
     get:
       tags:
@@ -3465,6 +3293,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
     post:
       tags:
       - workspaces
@@ -3496,6 +3325,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
   /workspaces/{workspaceId}/members/{memberId}:
     patch:
       tags:
@@ -3529,6 +3359,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
     delete:
       tags:
       - workspaces
@@ -3549,6 +3380,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
   /workspaces/{workspaceId}/boards:
     get:
       tags:
@@ -3575,6 +3407,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     post:
       tags:
       - boards
@@ -3604,6 +3438,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /workspaces/{workspaceId}/audit-log:
     get:
       tags:
@@ -3632,6 +3468,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
   /boards/{boardId}:
     get:
       tags:
@@ -3654,6 +3491,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     patch:
       tags:
       - boards
@@ -3677,6 +3516,32 @@ paths:
                 $ref: '#/components/schemas/Board'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+    delete:
+      tags:
+      - boards
+      summary: Soft-delete board
+      x-v1Status: real_v1
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/BoardId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Board'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3709,6 +3574,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /boards/{boardId}/columns:
     get:
       tags:
@@ -3735,6 +3602,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     post:
       tags:
       - boards
@@ -3764,6 +3633,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /boards/{boardId}/columns/{columnId}:
     patch:
       tags:
@@ -3797,6 +3668,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     delete:
       tags:
       - boards
@@ -3821,28 +3694,31 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /boards/{boardId}/columns/reorder:
-    post:
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /columns/{columnId}:
+    patch:
       tags:
       - boards
-      summary: Reorder columns
+      summary: Update column by id
+      x-v1Status: internal_compat
       security:
       - bearerAuth: []
       parameters:
-      - $ref: '#/components/parameters/BoardId'
+      - $ref: '#/components/parameters/ColumnId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ReorderColumnsRequest'
+              $ref: '#/components/schemas/UpdateColumnRequest'
       responses:
         '200':
-          description: Reordered columns
+          description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ColumnListResponse'
+                $ref: '#/components/schemas/BoardColumn'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -3851,8 +3727,28 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
+    delete:
+      tags:
+      - boards
+      summary: Soft-delete column by id
+      x-v1Status: internal_compat
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ColumnId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardColumn'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /boards/{boardId}/cards:
     get:
       tags:
@@ -3921,6 +3817,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     post:
       tags:
       - cards
@@ -3952,6 +3850,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /cards/{cardId}:
     get:
       tags:
@@ -3974,6 +3874,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     patch:
       tags:
       - cards
@@ -4007,6 +3909,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     delete:
       tags:
       - cards
@@ -4030,32 +3934,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /cards/{cardId}/activity:
-    get:
-      tags:
-      - activity
-      summary: List card history timeline
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/CardId'
-      - $ref: '#/components/parameters/Limit'
-      - $ref: '#/components/parameters/Cursor'
-      - $ref: '#/components/parameters/ActivityKinds'
-      - $ref: '#/components/parameters/ActorUserId'
-      responses:
-        '200':
-          description: Card activity timeline
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ActivityListResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /cards/{cardId}/move:
     post:
       tags:
@@ -4088,6 +3968,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /columns/{columnId}/cards/reorder:
     post:
       tags:
@@ -4120,6 +4002,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /cards/{cardId}/archive:
     post:
       tags:
@@ -4144,6 +4028,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /cards/{cardId}/unarchive:
     post:
       tags:
@@ -4168,612 +4054,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /boards/{boardId}/labels:
-    get:
-      tags:
-      - labels
-      summary: List board labels
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/BoardId'
-      responses:
-        '200':
-          description: Label list
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BoardLabelListResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    post:
-      tags:
-      - labels
-      summary: Create board label
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/BoardId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateBoardLabelRequest'
-      responses:
-        '201':
-          description: Created label
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BoardLabel'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-  /boards/{boardId}/labels/{labelId}:
-    patch:
-      tags:
-      - labels
-      summary: Update board label
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/BoardId'
-      - $ref: '#/components/parameters/LabelId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateBoardLabelRequest'
-      responses:
-        '200':
-          description: Updated label
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BoardLabel'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-    delete:
-      tags:
-      - labels
-      summary: Delete board label
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/BoardId'
-      - $ref: '#/components/parameters/LabelId'
-      responses:
-        '204':
-          description: Label deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-  /cards/{cardId}/labels:
-    post:
-      tags:
-      - labels
-      summary: Attach label to card
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/CardId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AttachLabelToCardRequest'
-      responses:
-        '204':
-          description: Label attached to card
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-  /cards/{cardId}/labels/{labelId}:
-    delete:
-      tags:
-      - labels
-      summary: Detach label from card
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/CardId'
-      - $ref: '#/components/parameters/LabelId'
-      responses:
-        '204':
-          description: Label detached from card
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /cards/{cardId}/checklists:
-    get:
-      tags:
-      - checklists
-      summary: List card checklists with items
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/CardId'
-      responses:
-        '200':
-          description: Checklist list
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChecklistListResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    post:
-      tags:
-      - checklists
-      summary: Create checklist on card
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/CardId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateChecklistRequest'
-      responses:
-        '201':
-          description: Created checklist
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChecklistWithItems'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /checklists/{checklistId}:
-    patch:
-      tags:
-      - checklists
-      summary: Update checklist
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/ChecklistId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateChecklistRequest'
-      responses:
-        '200':
-          description: Updated checklist
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Checklist'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    delete:
-      tags:
-      - checklists
-      summary: Delete checklist
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/ChecklistId'
-      responses:
-        '204':
-          description: Checklist deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /checklists/{checklistId}/items:
-    post:
-      tags:
-      - checklists
-      summary: Create checklist item
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/ChecklistId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateChecklistItemRequest'
-      responses:
-        '201':
-          description: Created checklist item
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChecklistItem'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /checklists/items/{itemId}:
-    patch:
-      tags:
-      - checklists
-      summary: Update checklist item
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/ChecklistItemId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateChecklistItemRequest'
-      responses:
-        '200':
-          description: Updated checklist item
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChecklistItem'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    delete:
-      tags:
-      - checklists
-      summary: Delete checklist item
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/ChecklistItemId'
-      responses:
-        '204':
-          description: Checklist item deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /checklists/{checklistId}/items/reorder:
-    post:
-      tags:
-      - checklists
-      summary: Reorder checklist items
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/ChecklistId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReorderChecklistItemsRequest'
-      responses:
-        '200':
-          description: Updated checklist with reordered items
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChecklistWithItems'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /cards/{cardId}/comments:
-    get:
-      tags:
-      - comments
-      summary: List comments on card
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/CardId'
-      - $ref: '#/components/parameters/Limit'
-      - $ref: '#/components/parameters/Cursor'
-      responses:
-        '200':
-          description: Comment list
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CommentListResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    post:
-      tags:
-      - comments
-      summary: Create comment on card
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/CardId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateCommentRequest'
-      responses:
-        '201':
-          description: Created comment
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Comment'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /comments/{commentId}:
-    patch:
-      tags:
-      - comments
-      summary: Update comment body
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/CommentId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateCommentRequest'
-      responses:
-        '200':
-          description: Updated comment
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Comment'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    delete:
-      tags:
-      - comments
-      summary: Delete comment
-      security:
-      - bearerAuth: []
-      parameters:
-      - $ref: '#/components/parameters/CommentId'
-      responses:
-        '204':
-          description: Comment deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /sync/replicas:
-    post:
-      tags:
-      - sync
-      summary: Register or update current replica
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpsertReplicaRequest'
-      responses:
-        '200':
-          description: Replica registered or updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UpsertReplicaResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
-  /sync/push:
-    post:
-      tags:
-      - sync
-      summary: Push local replica events to backend
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PushEventsRequest'
-      responses:
-        '200':
-          description: Push processed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PushEventsResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/UnprocessableEntity'
-  /sync/pull:
-    post:
-      tags:
-      - sync
-      summary: Pull server-side events after known cursor
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PullEventsRequest'
-      responses:
-        '200':
-          description: Event batch
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PullEventsResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
-  /sync/status:
-    get:
-      tags:
-      - sync
-      summary: Get sync health and current replica status
-      security:
-      - bearerAuth: []
-      parameters:
-      - name: replicaId
-        in: query
-        required: false
-        schema:
-          type:
-          - string
-          - 'null'
-          format: uuid
-      responses:
-        '200':
-          description: Sync status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SyncStatusResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /me/appearance:
-    get:
-      tags:
-      - appearance
-      summary: Get current user appearance preferences
-      security:
-      - bearerAuth: []
-      responses:
-        '200':
-          description: Effective current user appearance preferences
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserAppearancePreferences'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-    put:
-      tags:
-      - appearance
-      summary: Create or update current user appearance preferences
-      security:
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateUserAppearancePreferencesRequest'
-      responses:
-        '200':
-          description: Updated current user appearance preferences
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserAppearancePreferences'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /boards/{boardId}/activity:
     get:
       tags:
@@ -4800,6 +4082,79 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /cards/{cardId}/activity:
+    get:
+      tags:
+      - activity
+      summary: List card history timeline
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/ActivityKinds'
+      - $ref: '#/components/parameters/ActorUserId'
+      responses:
+        '200':
+          description: Card activity timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /me/appearance:
+    get:
+      tags:
+      - appearance
+      summary: Get current user appearance preferences
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Effective current user appearance preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAppearancePreferences'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+    put:
+      tags:
+      - appearance
+      summary: Create or update current user appearance preferences
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserAppearancePreferencesRequest'
+      responses:
+        '200':
+          description: Updated current user appearance preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAppearancePreferences'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /boards/{boardId}/appearance:
     get:
       tags:
@@ -4822,6 +4177,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     put:
       tags:
       - appearance
@@ -4851,3 +4208,575 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /boards/{boardId}/labels:
+    get:
+      tags:
+      - labels
+      summary: List board labels
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/BoardId'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+    post:
+      tags:
+      - labels
+      summary: Create board label
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/BoardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBoardLabelRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+  /labels/{labelId}:
+    patch:
+      tags:
+      - labels
+      summary: Update board label by id
+      x-v1Status: deferred_stub
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/LabelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBoardLabelRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+    delete:
+      tags:
+      - labels
+      summary: Delete board label by id
+      x-v1Status: deferred_stub
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/LabelId'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /cards/{cardId}/labels:
+    put:
+      tags:
+      - labels
+      summary: Replace card labels
+      x-v1Status: deferred_stub
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceCardLabelsRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /cards/{cardId}/checklists:
+    get:
+      tags:
+      - checklists
+      summary: List card checklists with items
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CardId'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+    post:
+      tags:
+      - checklists
+      summary: Create checklist on card
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChecklistRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+  /checklists/{checklistId}:
+    patch:
+      tags:
+      - checklists
+      summary: Update checklist
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ChecklistId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChecklistRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+    delete:
+      tags:
+      - checklists
+      summary: Delete checklist
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ChecklistId'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+  /checklists/{checklistId}/items:
+    post:
+      tags:
+      - checklists
+      summary: Create checklist item
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ChecklistId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChecklistItemRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+  /checklist-items/{itemId}:
+    patch:
+      tags:
+      - checklists
+      summary: Update checklist item
+      x-v1Status: deferred_stub
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ChecklistItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChecklistItemRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+    delete:
+      tags:
+      - checklists
+      summary: Delete checklist item
+      x-v1Status: deferred_stub
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ChecklistItemId'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /cards/{cardId}/comments:
+    get:
+      tags:
+      - comments
+      summary: List comments on card
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CardId'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+    post:
+      tags:
+      - comments
+      summary: Create comment on card
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+  /comments/{commentId}:
+    patch:
+      tags:
+      - comments
+      summary: Update comment body
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CommentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCommentRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+    delete:
+      tags:
+      - comments
+      summary: Delete comment
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CommentId'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+  /sync/status:
+    get:
+      tags:
+      - sync
+      summary: Get sync health and current replica status
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: replicaId
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+  /sync/replicas:
+    post:
+      tags:
+      - sync
+      summary: Register or update current replica
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertReplicaRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+    get:
+      tags:
+      - sync
+      summary: List sync replicas
+      x-v1Status: deferred_stub
+      security:
+      - bearerAuth: []
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /sync/push:
+    post:
+      tags:
+      - sync
+      summary: Push local replica events to backend
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushEventsRequest'
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: deferred_stub
+  /sync/pull:
+    get:
+      tags:
+      - sync
+      summary: Pull sync changes
+      x-v1Status: deferred_stub
+      security:
+      - bearerAuth: []
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /integrations/providers:
+    get:
+      tags:
+      - integrations
+      summary: List built-in integration providers
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Provider catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationProviderCatalogResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      x-v1Status: contract_stub
+      x-frontendUsed: true
+  /integrations/providers/{providerKey}:
+    get:
+      tags:
+      - integrations
+      summary: Get provider manifest and reserved touchpoints
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ProviderKey'
+      responses:
+        '200':
+          description: Provider detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationProviderDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: contract_stub
+      x-frontendUsed: true
+  /integrations/import-jobs:
+    post:
+      tags:
+      - integrations
+      summary: Create reserved import orchestration job
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateImportJobRequest'
+      responses:
+        '202':
+          description: Stub import orchestration response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationOperationStubResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: contract_stub
+      x-frontendUsed: true
+  /integrations/export-jobs:
+    post:
+      tags:
+      - integrations
+      summary: Create reserved export orchestration job
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExportJobRequest'
+      responses:
+        '202':
+          description: Stub export orchestration response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationOperationStubResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: contract_stub
+      x-frontendUsed: true
+  /integrations/import-export/capabilities:
+    get:
+      tags:
+      - integrations
+      summary: Get portable bundle and restore capability surface
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Import / export / backup capabilities
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportExportCapabilitiesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      x-v1Status: contract_stub
+      x-frontendUsed: true
+  /integrations/import-export/exports:
+    post:
+      tags:
+      - integrations
+      summary: Create portable export or coordinated backup manifest stub
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePortableExportRequest'
+      responses:
+        '202':
+          description: Export manifest stub
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortableExportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: contract_stub
+      x-frontendUsed: true
+  /integrations/import-export/imports/preview:
+    post:
+      tags:
+      - integrations
+      summary: Preview import or restore plan before apply
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateImportPreviewRequest'
+      responses:
+        '200':
+          description: Import preview surface
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportPreviewResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: contract_stub
+      x-frontendUsed: true
+  /integrations/import-export/imports:
+    post:
+      tags:
+      - integrations
+      summary: Create import or restore execution stub
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateImportExecutionRequest'
+      responses:
+        '202':
+          description: Import execution stub response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportExecutionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: contract_stub
+      x-frontendUsed: true
+  /integrations/webhooks/{providerKey}:
+    post:
+      tags:
+      - integrations
+      summary: Reserved inbound webhook boundary for a provider
+      parameters:
+      - $ref: '#/components/parameters/ProviderKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '202':
+          description: Stub webhook receipt response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookReceiptResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: contract_stub
+      x-frontendUsed: true
+x-contractParitySweep:
+  status: complete
+  scope: backend routes + frontend api calls + OpenAPI paths
+  notes:
+  - OpenAPI path set now mirrors mounted backend Axum routes except /health.
+  - x-v1Status marks real_v1, internal_dev, internal_compat, contract_stub and deferred_stub
+    routes.
+  - Success schemas describe the data payload consumed by frontend apiRequest after
+    ApiEnvelope unwrapping.

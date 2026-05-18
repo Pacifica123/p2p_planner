@@ -40,3 +40,17 @@
 ## Appearance / customization follow-up
 
 После отдельного customization-этапа в v1 добавлены endpoints `GET/PUT /me/appearance` и `GET/PUT /boards/{boardId}/appearance`, а также соответствующие схемы для user preferences и board appearance settings. Image-wallpapers и theme registry по-прежнему остаются за пределами текущего API slice.
+
+## Contract parity sweep follow-up
+
+После sweep `openapi.yaml` выровнен по фактически смонтированным backend routes и текущим frontend API calls. Детальная матрица и статусы routes вынесены в `docs/api/contract-parity-sweep-v1.md`.
+
+Ключевые решения:
+- `labels/checklists/comments` не выдаются за готовый product surface: routes оставлены в OpenAPI как `deferred_stub` и должны возвращать `501 not_implemented` до minimal card enrichment slice;
+- `sync` также остается `deferred_stub`; фактический backend route для pull сейчас `GET /sync/pull`;
+- `integrations/import-export/webhooks` помечены как `contract_stub`: они дают стабильные capabilities/stub responses, но не являются настоящим execution layer;
+- user/device naming приведен к backend: `DELETE /me/devices/{deviceId}` вместо несуществующего `POST /me/devices/{deviceId}/revoke`;
+- убраны несуществующие OpenAPI paths вроде `PATCH /me`, `POST /boards/{boardId}/columns/reorder`, label attach/detach routes и checklist item reorder route;
+- добавлен повторяемый guard: `python tools/contract_parity_sweep.py --check`.
+
+Важная оговорка: backend wire-format для success responses остается `{ "data": ... }`, а frontend `apiRequest<T>` разворачивает этот envelope. Текущий OpenAPI по-прежнему описывает payload-level schema для `data`; перед генерацией клиента нужно либо явно формализовать envelope wrapper, либо генерировать envelope-aware client.

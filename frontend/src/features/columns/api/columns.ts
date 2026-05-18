@@ -20,7 +20,7 @@ export function updateColumn(boardId: string, columnId: string, input: Partial<P
 }
 
 export function deleteColumn(boardId: string, columnId: string) {
-  return apiRequest<void>(`/boards/${boardId}/columns/${columnId}`, {
+  return apiRequest<BoardColumn>(`/boards/${boardId}/columns/${columnId}`, {
     method: 'DELETE',
   });
 }

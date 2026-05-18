@@ -68,7 +68,7 @@ export function unarchiveCard(cardId: string) {
 }
 
 export function deleteCard(cardId: string) {
-  return apiRequest<void>(`/cards/${cardId}`, {
+  return apiRequest<Card>(`/cards/${cardId}`, {
     method: 'DELETE',
   });
 }

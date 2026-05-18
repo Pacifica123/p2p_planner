@@ -4,17 +4,19 @@
 
 ## 1. Contract parity sweep
 
-- [ ] Сверить оставшиеся backend routes, frontend API calls и OpenAPI paths после archive/reorder/card lifecycle baseline.
-- [ ] Найти frontend-кнопки, которые ведут в отсутствующие или stub routes.
-- [ ] Обновить OpenAPI под оставшийся фактический beta-surface.
-- [ ] Зафиксировать, какие routes являются real v1, а какие deferred/internal.
+Статус: закрыто патчем `contract parity sweep`. Детали зафиксированы в `docs/api/contract-parity-sweep-v1.md`, а повторяемая проверка добавлена как `python tools/contract_parity_sweep.py --check`.
 
-Особо подозрительные зоны, которые все еще не закрыты этим патчем:
+- [x] Сверить оставшиеся backend routes, frontend API calls и OpenAPI paths после archive/reorder/card lifecycle baseline.
+- [x] Найти frontend-кнопки, которые ведут в отсутствующие или stub routes.
+- [x] Обновить OpenAPI под оставшийся фактический beta-surface.
+- [x] Зафиксировать, какие routes являются real v1, а какие deferred/internal.
 
-- labels/checklists/comments;
-- sync;
-- import/export/integrations/webhooks;
-- user/device route naming outside the main board flow.
+Итог sweep по подозрительным зонам:
+
+- labels/checklists/comments оставлены как `deferred_stub` до minimal card enrichment slice;
+- sync оставлен как `deferred_stub` до sync baseline;
+- import/export/integrations/webhooks помечены как `contract_stub`, потому что surface есть, но настоящего исполнения bundle/import/webhook еще нет;
+- user/device naming выровнен: `DELETE /me/devices/{deviceId}` вместо несуществующего revoke-route.
 
 ## 2. Минимально полезная карточка
 
