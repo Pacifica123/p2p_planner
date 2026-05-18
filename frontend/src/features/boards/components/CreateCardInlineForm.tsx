@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { useCreateCardMutation } from '@/features/cards/hooks/useCards';
+import { useOptionalLocalFirstBoard } from '@/features/localFirst/context/LocalFirstBoardContext';
 import { Button } from '@/shared/ui/Button';
 
 interface CreateCardInlineFormProps {
@@ -9,11 +10,18 @@ interface CreateCardInlineFormProps {
 
 export function CreateCardInlineForm({ boardId, columnId }: CreateCardInlineFormProps) {
   const createCardMutation = useCreateCardMutation(boardId);
+  const localFirst = useOptionalLocalFirstBoard();
   const [title, setTitle] = useState('');
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!title.trim()) return;
+
+    if (localFirst?.boardId === boardId) {
+      localFirst.enqueueCreateCard({ title: title.trim(), columnId });
+      setTitle('');
+      return;
+    }
 
     createCardMutation.mutate(
       { title: title.trim(), columnId },
@@ -33,7 +41,7 @@ export function CreateCardInlineForm({ boardId, columnId }: CreateCardInlineForm
           placeholder="Новая карточка"
         />
         <Button type="submit" iconOnly disabled={createCardMutation.isPending} title="Добавить карточку" aria-label="Добавить карточку">
-          {createCardMutation.isPending ? '…' : '＋'}
+          {createCardMutation.isPending || localFirst?.isFlushing ? '…' : '＋'}
         </Button>
       </div>
     </form>

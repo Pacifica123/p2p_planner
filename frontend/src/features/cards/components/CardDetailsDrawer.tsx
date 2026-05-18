@@ -26,6 +26,8 @@ import {
   useUpdateCommentMutation,
 } from '@/features/comments/hooks/useComments';
 import { useColumnsQuery } from '@/features/columns/hooks/useColumns';
+import { useOptionalLocalFirstBoard } from '@/features/localFirst/context/LocalFirstBoardContext';
+import { isLocalCardId, resolveLocalFirstCardId } from '@/features/localFirst/lib/localBoardStore';
 import {
   useBoardLabelsQuery,
   useCreateBoardLabelMutation,
@@ -33,6 +35,7 @@ import {
   useReplaceCardLabelsMutation,
   useUpdateBoardLabelMutation,
 } from '@/features/labels/hooks/useLabels';
+import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { ErrorState } from '@/shared/ui/ErrorState';
@@ -62,31 +65,42 @@ export function CardDetailsDrawer() {
   const { boardId, workspaceId } = useParams();
   const [searchParams] = useSearchParams();
   const cardId = searchParams.get('card');
+  const localFirst = useOptionalLocalFirstBoard();
+  const effectiveCardId = cardId ? resolveLocalFirstCardId(cardId) : null;
+  const cardQueryId = effectiveCardId && !isLocalCardId(effectiveCardId) ? effectiveCardId : undefined;
 
-  const cardQuery = useCardQuery(cardId || undefined);
+  const cardQuery = useCardQuery(cardQueryId || undefined);
   const columnsQuery = useColumnsQuery(boardId);
   const labelsQuery = useBoardLabelsQuery(boardId);
-  const checklistsQuery = useCardChecklistsQuery(cardId || undefined);
-  const commentsQuery = useCardCommentsQuery(cardId || undefined);
-  const activityQuery = useCardActivityQuery(cardId || undefined);
-  const updateCardMutation = useUpdateCardMutation(boardId, cardId || undefined);
-  const moveCardMutation = useMoveCardMutation(boardId, cardId || undefined);
-  const archiveCardMutation = useArchiveCardMutation(boardId, cardId || undefined);
-  const unarchiveCardMutation = useUnarchiveCardMutation(boardId, cardId || undefined);
-  const deleteCardMutation = useDeleteCardMutation(boardId, cardId || undefined);
+  const checklistsQuery = useCardChecklistsQuery(cardQueryId || undefined);
+  const commentsQuery = useCardCommentsQuery(cardQueryId || undefined);
+  const activityQuery = useCardActivityQuery(cardQueryId || undefined);
+  const updateCardMutation = useUpdateCardMutation(boardId, cardQueryId || undefined);
+  const moveCardMutation = useMoveCardMutation(boardId, cardQueryId || undefined);
+  const archiveCardMutation = useArchiveCardMutation(boardId, cardQueryId || undefined);
+  const unarchiveCardMutation = useUnarchiveCardMutation(boardId, cardQueryId || undefined);
+  const deleteCardMutation = useDeleteCardMutation(boardId, cardQueryId || undefined);
   const createLabelMutation = useCreateBoardLabelMutation(boardId);
   const updateLabelMutation = useUpdateBoardLabelMutation(boardId);
   const deleteLabelMutation = useDeleteBoardLabelMutation(boardId);
-  const replaceCardLabelsMutation = useReplaceCardLabelsMutation(boardId, cardId || undefined);
-  const createChecklistMutation = useCreateChecklistMutation(boardId, cardId || undefined);
-  const updateChecklistMutation = useUpdateChecklistMutation(boardId, cardId || undefined);
-  const deleteChecklistMutation = useDeleteChecklistMutation(boardId, cardId || undefined);
-  const createChecklistItemMutation = useCreateChecklistItemMutation(boardId, cardId || undefined);
-  const updateChecklistItemMutation = useUpdateChecklistItemMutation(boardId, cardId || undefined);
-  const deleteChecklistItemMutation = useDeleteChecklistItemMutation(boardId, cardId || undefined);
-  const createCommentMutation = useCreateCommentMutation(boardId, cardId || undefined);
-  const updateCommentMutation = useUpdateCommentMutation(boardId, cardId || undefined);
-  const deleteCommentMutation = useDeleteCommentMutation(boardId, cardId || undefined);
+  const replaceCardLabelsMutation = useReplaceCardLabelsMutation(boardId, cardQueryId || undefined);
+  const createChecklistMutation = useCreateChecklistMutation(boardId, cardQueryId || undefined);
+  const updateChecklistMutation = useUpdateChecklistMutation(boardId, cardQueryId || undefined);
+  const deleteChecklistMutation = useDeleteChecklistMutation(boardId, cardQueryId || undefined);
+  const createChecklistItemMutation = useCreateChecklistItemMutation(boardId, cardQueryId || undefined);
+  const updateChecklistItemMutation = useUpdateChecklistItemMutation(boardId, cardQueryId || undefined);
+  const deleteChecklistItemMutation = useDeleteChecklistItemMutation(boardId, cardQueryId || undefined);
+  const createCommentMutation = useCreateCommentMutation(boardId, cardQueryId || undefined);
+  const updateCommentMutation = useUpdateCommentMutation(boardId, cardQueryId || undefined);
+  const deleteCommentMutation = useDeleteCommentMutation(boardId, cardQueryId || undefined);
+
+  const localCard = useMemo(() => {
+    if (!effectiveCardId || !localFirst || localFirst.boardId !== boardId) return undefined;
+    return localFirst.cards.find((item) => item.id === effectiveCardId);
+  }, [boardId, effectiveCardId, localFirst]);
+  const card = localCard || cardQuery.data;
+  const cardSyncStatus = card ? localFirst?.getEntityStatus('card', card.id)?.status ?? 'synced' : 'synced';
+  const isLocalPendingCard = Boolean(card && isLocalCardId(card.id));
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -100,40 +114,61 @@ export function CardDetailsDrawer() {
   const [newCommentBody, setNewCommentBody] = useState('');
 
   useEffect(() => {
-    const card = cardQuery.data;
     if (!card) return;
     setTitle(card.title);
     setDescription(card.description || '');
     setStatus(card.status || null);
     setPriority(card.priority || null);
     setColumnId(card.columnId);
-  }, [cardQuery.data]);
+  }, [card]);
 
-  const columnOptions = useMemo(() => columnsQuery.data?.items ?? [], [columnsQuery.data?.items]);
-  const selectedLabelIds = useMemo(() => cardQuery.data?.labelIds ?? [], [cardQuery.data?.labelIds]);
+  const columnOptions = useMemo(() => {
+    if (localFirst && localFirst.boardId === boardId && localFirst.columns.length) {
+      return localFirst.columns;
+    }
+    return columnsQuery.data?.items ?? [];
+  }, [boardId, columnsQuery.data?.items, localFirst]);
+  const selectedLabelIds = useMemo(() => card?.labelIds ?? [], [card?.labelIds]);
+
+  useEffect(() => {
+    if (!cardId || !effectiveCardId || cardId === effectiveCardId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('card', effectiveCardId);
+    navigate({ search: next.toString() }, { replace: true });
+  }, [cardId, effectiveCardId, navigate, searchParams]);
 
   function closeDrawer() {
     navigate(workspaceId && boardId ? `/workspaces/${workspaceId}/boards/${boardId}` : '/', { replace: true });
   }
 
   async function handleSave() {
-    if (!cardQuery.data) return;
+    if (!card) return;
 
-    await updateCardMutation.mutateAsync({
+    const nextCardInput = {
       title: title.trim(),
       description: description.trim() || null,
       status: status || null,
       priority: priority || null,
-    });
+    };
 
-    if (columnId && columnId !== cardQuery.data.columnId) {
+    if (localFirst && localFirst.boardId === boardId) {
+      localFirst.enqueueUpdateCard(card.id, nextCardInput);
+      if (columnId && columnId !== card.columnId) {
+        localFirst.enqueueMoveCard(card.id, { targetColumnId: columnId });
+      }
+      return;
+    }
+
+    await updateCardMutation.mutateAsync(nextCardInput);
+
+    if (columnId && columnId !== card.columnId) {
       await moveCardMutation.mutateAsync({ targetColumnId: columnId });
     }
   }
 
   async function handleArchiveToggle() {
-    if (!cardQuery.data) return;
-    if (cardQuery.data.isArchived) {
+    if (!card) return;
+    if (card.isArchived) {
       await unarchiveCardMutation.mutateAsync();
       return;
     }
@@ -141,8 +176,8 @@ export function CardDetailsDrawer() {
   }
 
   async function handleDelete() {
-    if (!cardQuery.data) return;
-    if (!window.confirm(`Удалить карточку «${cardQuery.data.title}»?`)) return;
+    if (!card) return;
+    if (!window.confirm(`Удалить карточку «${card.title}»?`)) return;
     await deleteCardMutation.mutateAsync();
     closeDrawer();
   }
@@ -249,10 +284,10 @@ export function CardDetailsDrawer() {
           </Button>
         </div>
 
-        {cardQuery.isLoading ? <LoadingState label="Загружаем card detail…" /> : null}
-        {cardQuery.isError ? <ErrorState title="Не удалось загрузить карточку" onRetry={() => void cardQuery.refetch()} /> : null}
+        {cardQuery.isLoading && !card ? <LoadingState label="Загружаем card detail…" /> : null}
+        {cardQuery.isError && !card ? <ErrorState title="Не удалось загрузить карточку" onRetry={() => void cardQuery.refetch()} /> : null}
 
-        {cardQuery.data ? (
+        {card ? (
           <>
             <div className="grid" style={{ gap: 14 }}>
               <TextField label="Title" value={title} onChange={(event) => setTitle(event.target.value)} />
@@ -281,27 +316,37 @@ export function CardDetailsDrawer() {
             </div>
 
             <div className="grid">
-              <div className="key-value"><span className="muted">Created</span><span>{formatDateTime(cardQuery.data.createdAt)}</span></div>
-              <div className="key-value"><span className="muted">Updated</span><span>{formatDateTime(cardQuery.data.updatedAt)}</span></div>
-              <div className="key-value"><span className="muted">Archived</span><span>{cardQuery.data.isArchived ? 'yes' : 'no'}</span></div>
+              <div className="key-value"><span className="muted">Created</span><span>{formatDateTime(card.createdAt)}</span></div>
+              <div className="key-value"><span className="muted">Updated</span><span>{formatDateTime(card.updatedAt)}</span></div>
+              <div className="key-value"><span className="muted">Archived</span><span>{card.isArchived ? 'yes' : 'no'}</span></div>
+              <div className="key-value"><span className="muted">Local sync</span><span><Badge tone={cardSyncStatus === 'failed' ? 'urgent' : cardSyncStatus === 'pending' ? 'warning' : 'done'}>{cardSyncStatus === 'pending' ? 'saved locally' : cardSyncStatus === 'failed' ? 'sync failed' : 'synced'}</Badge></span></div>
             </div>
 
             <div className="inline-actions">
               <Button variant="primary" iconOnly onClick={() => void handleSave()} disabled={updateCardMutation.isPending || moveCardMutation.isPending} title="Сохранить карточку" aria-label="Сохранить карточку">
                 {updateCardMutation.isPending || moveCardMutation.isPending ? '…' : '💾'}
               </Button>
-              <Button iconOnly onClick={() => void handleArchiveToggle()} disabled={archiveCardMutation.isPending || unarchiveCardMutation.isPending} title={cardQuery.data.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'} aria-label={cardQuery.data.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'}>
-                {archiveCardMutation.isPending || unarchiveCardMutation.isPending ? '…' : cardQuery.data.isArchived ? '📤' : '📦'}
+              <Button iconOnly onClick={() => void handleArchiveToggle()} disabled={archiveCardMutation.isPending || unarchiveCardMutation.isPending || isLocalPendingCard} title={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'} aria-label={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'}>
+                {archiveCardMutation.isPending || unarchiveCardMutation.isPending ? '…' : card.isArchived ? '📤' : '📦'}
               </Button>
-              <Button variant="danger" iconOnly onClick={() => void handleDelete()} disabled={deleteCardMutation.isPending} title="Удалить карточку" aria-label="Удалить карточку">
+              <Button variant="danger" iconOnly onClick={() => void handleDelete()} disabled={deleteCardMutation.isPending || isLocalPendingCard} title="Удалить карточку" aria-label="Удалить карточку">
                 {deleteCardMutation.isPending ? '…' : '🗑️'}
               </Button>
             </div>
 
-            <section className="panel">
-              <div className="entity-header">
-                <div>
-                  <h4>Labels</h4>
+            {isLocalPendingCard ? (
+              <div className="inline-banner">
+                <strong>Card saved locally.</strong>
+                <span>Labels, checklists, comments and server history will unlock after this new card syncs.</span>
+              </div>
+            ) : null}
+
+            {!isLocalPendingCard ? (
+              <>
+                <section className="panel">
+                  <div className="entity-header">
+                    <div>
+                      <h4>Labels</h4>
                   <p className="muted">Создать label на board и назначить/снять его с карточки.</p>
                 </div>
               </div>
@@ -450,6 +495,8 @@ export function CardDetailsDrawer() {
               {activityQuery.data ? <ActivityFeed items={activityQuery.data.items} emptyTitle="История карточки пока пустая" /> : null}
               {!activityQuery.isLoading && !activityQuery.isError && !activityQuery.data ? <EmptyState title="История карточки пока пустая" compact /> : null}
             </section>
+              </>
+            ) : null}
           </>
         ) : null}
       </aside>

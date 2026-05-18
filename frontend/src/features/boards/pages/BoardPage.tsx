@@ -18,7 +18,10 @@ import {
 } from '@/features/boards/lib/cardDnd';
 import { useColumnsQuery, useCreateColumnMutation, useDeleteColumnMutation, useUpdateColumnMutation } from '@/features/columns/hooks/useColumns';
 import { CardDetailsDrawer } from '@/features/cards/components/CardDetailsDrawer';
-import { useCardsQuery, useMoveCardMutation, useReorderColumnCardsMutation } from '@/features/cards/hooks/useCards';
+import { useCardsQuery } from '@/features/cards/hooks/useCards';
+import { LocalFirstStatusBanner } from '@/features/localFirst/components/LocalFirstStatusBanner';
+import { LocalFirstBoardProvider } from '@/features/localFirst/context/LocalFirstBoardContext';
+import { useLocalFirstBoardRuntime } from '@/features/localFirst/hooks/useLocalFirstBoard';
 import { getBoardSurfaceStyle } from '@/shared/appearance/theme';
 import { formatDateTime } from '@/shared/lib/date';
 import type { BoardColumn, Card } from '@/shared/types/api';
@@ -64,8 +67,16 @@ export function BoardPage() {
   const updateColumnMutation = useUpdateColumnMutation(boardId);
   const deleteColumnMutation = useDeleteColumnMutation(boardId);
   const updateBoardMutation = useUpdateBoardMutation(workspaceId, boardId);
-  const moveCardMutation = useMoveCardMutation(boardId);
-  const reorderColumnCardsMutation = useReorderColumnCardsMutation(boardId);
+  const localFirst = useLocalFirstBoardRuntime({
+    workspaceId,
+    boardId,
+    board: boardQuery.data,
+    columns: columnsQuery.data?.items,
+    cards: cardsQuery.data?.items,
+    onRemoteFlush: async () => {
+      await Promise.all([cardsQuery.refetch(), boardActivityQuery.refetch()]);
+    },
+  });
 
   const [newColumnName, setNewColumnName] = useState('');
   const [dragSession, setDragSession] = useState<DragSessionState | null>(null);
@@ -73,17 +84,17 @@ export function BoardPage() {
   const [moveError, setMoveError] = useState<string | null>(null);
   const dropHandledRef = useRef(false);
 
-  const hasPendingCardMove = moveCardMutation.isPending || reorderColumnCardsMutation.isPending;
+  const hasPendingCardMove = localFirst.isFlushing;
   const boardAppearance = boardAppearanceQuery.data;
 
   const orderedColumns = useMemo(
-    () => [...(columnsQuery.data?.items || [])].sort((left, right) => left.position - right.position),
-    [columnsQuery.data?.items],
+    () => [...localFirst.columns].sort((left, right) => left.position - right.position),
+    [localFirst.columns],
   );
 
   const currentCards = useMemo(
-    () => sortCardsByPosition(optimisticCards || cardsQuery.data?.items || []),
-    [cardsQuery.data?.items, optimisticCards],
+    () => sortCardsByPosition(optimisticCards || localFirst.cards),
+    [localFirst.cards, optimisticCards],
   );
 
   const groupedCards = useMemo(() => {
@@ -214,7 +225,7 @@ export function BoardPage() {
       return;
     }
 
-    const serverCards = sortCardsByPosition(cardsQuery.data?.items || []);
+    const serverCards = sortCardsByPosition(localFirst.cards);
     const optimistic = reorderBoardPreview(serverCards, session);
     setOptimisticCards(optimistic);
     setMoveError(null);
@@ -222,21 +233,18 @@ export function BoardPage() {
     try {
       if (session.sourceColumnId === session.targetColumnId) {
         const reorderedColumnCards = groupCardsByColumn(optimistic).get(session.targetColumnId) || [];
-        await reorderColumnCardsMutation.mutateAsync({
-          columnId: session.targetColumnId,
+        localFirst.enqueueReorderColumnCards(session.targetColumnId, {
           items: buildColumnReorderItems(reorderedColumnCards),
         });
       } else {
         const targetCardsWithoutDragged = (groupCardsByColumn(serverCards).get(session.targetColumnId) || [])
           .filter((card) => card.id !== session.cardId);
-        await moveCardMutation.mutateAsync({
-          cardId: session.cardId,
+        localFirst.enqueueMoveCard(session.cardId, {
           targetColumnId: session.targetColumnId,
           position: getDropPositionValue(targetCardsWithoutDragged, session.targetIndex),
         });
       }
 
-      await Promise.all([cardsQuery.refetch(), boardActivityQuery.refetch()]);
       setOptimisticCards(null);
     } catch (error) {
       setOptimisticCards(null);
@@ -288,6 +296,8 @@ export function BoardPage() {
             <div className="card-tile__footer">
               {card.status ? <Badge tone={statusTone[card.status] || 'default'}>{card.status}</Badge> : null}
               {card.priority ? <Badge tone={priorityTone[card.priority] || 'default'}>{card.priority}</Badge> : null}
+              {localFirst.getEntityStatus('card', card.id)?.status === 'pending' ? <Badge tone="warning">saved locally</Badge> : null}
+              {localFirst.getEntityStatus('card', card.id)?.status === 'failed' ? <Badge tone="urgent">sync failed</Badge> : null}
               {(boardAppearance?.showCardDates ?? true) && card.dueAt ? <Badge tone="default">due {formatDateTime(card.dueAt)}</Badge> : null}
               {(boardAppearance?.showCardDates ?? true) && !card.dueAt && card.startAt ? <Badge tone="default">start {formatDateTime(card.startAt)}</Badge> : null}
             </div>
@@ -311,25 +321,29 @@ export function BoardPage() {
     return <ErrorState title="Board не выбрана" description="Выбери board из workspace." />;
   }
 
-  const isLoading = boardQuery.isLoading || columnsQuery.isLoading || cardsQuery.isLoading;
-  const isError = boardQuery.isError || columnsQuery.isError || cardsQuery.isError;
+  const hasLocalSnapshot = Boolean(localFirst.snapshot);
+  const isLoading = !hasLocalSnapshot && (boardQuery.isLoading || columnsQuery.isLoading || cardsQuery.isLoading);
+  const isError = !hasLocalSnapshot && (boardQuery.isError || columnsQuery.isError || cardsQuery.isError);
 
   return (
-    <div className="page-shell">
-      <section className="page-header">
+    <LocalFirstBoardProvider value={localFirst}>
+      <div className="page-shell">
+        <section className="page-header">
         <div>
-          <h2>{boardQuery.data?.name || 'Board screen'}</h2>
+          <h2>{localFirst.board?.name || 'Board screen'}</h2>
           <p className="muted">Рабочая kanban-поверхность с колонками, карточками, drag-and-drop и activity feed.</p>
         </div>
         <div className="page-header__actions">
           <Button onClick={() => navigate(paths.workspaceBoards(workspaceId))}>К boards list</Button>
           <Button iconOnly onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))} title="Настроить board" aria-label="Настроить board">🎨</Button>
           <Button iconOnly onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data} title="Переименовать board" aria-label="Переименовать board">✏️</Button>
-          <Button iconOnly onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch()])} title="Обновить board" aria-label="Обновить board">↻</Button>
+          <Button iconOnly onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch(), localFirst.flushPendingOperations()])} title="Обновить board" aria-label="Обновить board">↻</Button>
         </div>
-      </section>
+        </section>
 
-      {moveError ? (
+        <LocalFirstStatusBanner runtime={localFirst} />
+
+        {moveError ? (
         <div className="inline-banner inline-banner--error">
           <strong>Перемещение карточки не сохранилось.</strong>
           <span>{moveError}</span>
@@ -337,16 +351,16 @@ export function BoardPage() {
         </div>
       ) : null}
 
-      {isLoading ? <LoadingState label="Загружаем board surface…" /> : null}
-      {isError ? <ErrorState title="Не удалось собрать board surface" description="Проверь backend и доступность выбранной board." /> : null}
+        {isLoading ? <LoadingState label="Загружаем board surface…" /> : null}
+        {isError ? <ErrorState title="Не удалось собрать board surface" description="Проверь backend и доступность выбранной board." /> : null}
 
-      {!isLoading && !isError ? (
+        {!isLoading && !isError ? (
         <div className="board-themed-surface" style={boardAppearance ? getBoardSurfaceStyle(boardAppearance, resolvedTheme) : undefined}>
           <div className="board-layout">
             <div className="board-main">
               <div className="board-top-grid">
                 <BoardOverviewPanel
-                  board={boardQuery.data}
+                  board={localFirst.board || undefined}
                   boardAppearance={boardAppearance}
                   columnCount={orderedColumns.length}
                   cardCount={currentCards.length}
@@ -414,7 +428,8 @@ export function BoardPage() {
         </div>
       ) : null}
 
-      <CardDetailsDrawer />
-    </div>
+        <CardDetailsDrawer />
+      </div>
+    </LocalFirstBoardProvider>
   );
 }

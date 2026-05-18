@@ -617,3 +617,39 @@ frontend/src/
 ## 23. Итог
 
 Для этого проекта local-first означает не "чуть более удобный query-cache", а **локальную БД предметных сущностей плюс очередь локальных намерений**, где UI живет от local store, а сеть отвечает за hydration, подтверждение и дальнейшую синхронизацию.
+
+---
+
+## 24. Runtime baseline implementation note — 2026-05-18
+
+Статус практического runtime baseline: **implemented for the main board/card path**.
+
+Что уже сделано в frontend runtime:
+
+- добавлен отдельный слой `frontend/src/features/localFirst/`;
+- board snapshot persistится в browser storage как schema-versioned local snapshot;
+- локальная схема runtime содержит workspace marker, board, columns, cards и sidecar `syncMetadata`;
+- HTTP snapshot из `board / columns / cards` сначала записывается в local-first snapshot, а board UI читает уже runtime projection;
+- добавлена pending operations queue для card create/update/move/reorder;
+- card create/edit/move/reorder сначала коммитятся локально, затем flush worker пытается подтвердить их через существующий HTTP API;
+- при offline или network failure операция остается в queue и получает `pending` или `failed` marker;
+- warm start показывает последнюю сохраненную board surface без обязательного network round-trip;
+- UI показывает `offline`, `saved locally`, `syncing`, `sync failed`, а также дает `Retry failed`.
+
+Текущая намеренная граница baseline:
+
+- это **не** финальный sync protocol и не replacement для будущего `push/pull by cursor`;
+- local-first пока покрывает основной card runtime path, а labels/checklists/comments остаются server-backed и становятся доступны для новой карточки после sync;
+- storage adapter сделан как простой browser persistent adapter для beta runtime baseline, чтобы не блокировать v1; его можно заменить на IndexedDB/Dexie без изменения screen-level контрактов;
+- client-generated temporary card ids remapятся после подтверждения сервером, потому что текущий backend create API сам выдает UUID.
+
+Минимальный v1-критерий теперь выполняется так:
+
+1. пользователь открывает board;
+2. board/columns/cards сохраняются в local snapshot;
+3. сеть пропадает;
+4. пользователь создает, редактирует или перемещает карточку;
+5. UI сразу показывает изменение как `saved locally`;
+6. сеть возвращается;
+7. pending queue flush-ится через существующие API routes;
+8. после server confirmation локальный marker снимается.

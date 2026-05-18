@@ -41,18 +41,26 @@
 
 ## 3. Local-first runtime baseline
 
-- [ ] Persistent local store на frontend.
-- [ ] Local schema для workspace/board/column/card.
-- [ ] Pending operations queue.
-- [ ] Sync metadata: `synced / pending / failed`.
-- [ ] Warm start: показать сохраненную доску до network refresh.
-- [ ] Offline read для уже загруженной доски.
-- [ ] Offline edit/create/reorder/move card.
-- [ ] Reconnect flush pending operations.
-- [ ] UI состояния: `offline`, `saved locally`, `syncing`, `sync failed`.
-- [ ] Retry failed operation.
+Статус: закрыто патчем `local-first runtime baseline`. Основной board/card runtime теперь читает persistent local snapshot, пишет card operations в pending queue и flush-ит их при reconnect через существующий HTTP API. Детали реализации зафиксированы в `docs/architecture/local-first-data-layer-v1.md`, раздел 24.
+
+- [x] Persistent local store на frontend.
+- [x] Local schema для workspace/board/column/card.
+- [x] Pending operations queue.
+- [x] Sync metadata: `synced / pending / failed`.
+- [x] Warm start: показать сохраненную доску до network refresh.
+- [x] Offline read для уже загруженной доски.
+- [x] Offline edit/create/reorder/move card.
+- [x] Reconnect flush pending operations.
+- [x] UI состояния: `offline`, `saved locally`, `syncing`, `sync failed`.
+- [x] Retry failed operation.
 
 Минимальный критерий: пользователь открыл доску, сеть пропала, он изменил карточку, сеть вернулась — изменение не потерялось.
+
+Ограничения baseline:
+
+- это runtime baseline, а не финальный sync protocol;
+- labels/checklists/comments для локально созданной новой карточки становятся доступны после sync карточки;
+- browser storage adapter намеренно сделан простым и изолированным, чтобы позже заменить его на IndexedDB без переписывания screen-level контрактов.
 
 ## 4. Sync baseline
 

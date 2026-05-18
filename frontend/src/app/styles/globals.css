@@ -810,3 +810,13 @@ body {
     overflow: visible;
   }
 }
+
+.local-first-banner {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.local-first-banner > div:first-child {
+  display: grid;
+  gap: 4px;
+}
