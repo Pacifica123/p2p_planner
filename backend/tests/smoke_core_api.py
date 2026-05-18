@@ -4,6 +4,8 @@ import sys
 import urllib.error
 import urllib.request
 import http.cookiejar
+import uuid
+from datetime import datetime, timezone
 
 BASE_URL = os.environ.get('BASE_URL', 'http://127.0.0.1:18080/api/v1').rstrip('/')
 TIMEOUT = float(os.environ.get('TIMEOUT', '10'))
@@ -288,6 +290,54 @@ def main():
         _, audit_payload = request('GET', f"/workspaces/{created['workspace_id']}/audit-log")
         audit_items = api_data(audit_payload)['items']
         assert_true(len(audit_items) >= 3, 'workspace audit has several entries')
+
+        _, replica_payload = request('POST', '/sync/replicas', {
+            'replicaKey': f"smoke-replica-{created['workspace_id']}",
+            'kind': 'browser_profile',
+            'displayName': 'Smoke browser replica',
+            'protocolVersion': 'sync-baseline-v1',
+        }, expected_status=201)
+        replica = api_data(replica_payload)['replica']
+        assert_equal(replica['status'], 'active', 'sync replica active')
+        _, replicas_payload = request('GET', '/sync/replicas')
+        replicas = api_data(replicas_payload)['items']
+        assert_true(any(item['id'] == replica['id'] for item in replicas), 'registered replica visible')
+        _, sync_status_payload = request('GET', f"/sync/status?replicaId={replica['id']}")
+        sync_status = api_data(sync_status_payload)
+        assert_true(sync_status['healthy'], 'sync status healthy')
+
+        sync_event = {
+            'eventId': str(uuid.uuid4()),
+            'replicaId': replica['id'],
+            'replicaSeq': 1,
+            'entityType': 'card',
+            'entityId': created['card_id'],
+            'operation': 'update',
+            'fieldMask': ['title'],
+            'logicalClock': 1,
+            'occurredAt': datetime.now(timezone.utc).isoformat(),
+            'payload': {'title': 'Renamed smoke card'},
+            'metadata': {'source': 'smoke_core_api'},
+        }
+        _, push_payload = request('POST', '/sync/push', {
+            'replicaId': replica['id'],
+            'workspaceId': created['workspace_id'],
+            'events': [sync_event],
+        })
+        push_result = api_data(push_payload)['results'][0]
+        assert_equal(push_result['status'], 'accepted', 'sync push first status')
+        assert_true(push_result['serverOrder'] >= 1, 'sync push server order assigned')
+        _, duplicate_push_payload = request('POST', '/sync/push', {
+            'replicaId': replica['id'],
+            'workspaceId': created['workspace_id'],
+            'events': [sync_event],
+        })
+        duplicate_result = api_data(duplicate_push_payload)['results'][0]
+        assert_equal(duplicate_result['status'], 'duplicate', 'sync duplicate push status')
+        assert_equal(duplicate_result['serverOrder'], push_result['serverOrder'], 'sync duplicate server order stable')
+        _, pull_payload = request('GET', f"/sync/pull?replicaId={replica['id']}&scope=workspace&workspaceId={created['workspace_id']}&lastServerOrder=0&limit=20")
+        pulled = api_data(pull_payload)
+        assert_true(any(item['eventId'] == sync_event['eventId'] for item in pulled['events']), 'sync pull includes pushed event')
 
         _, me_payload = request('GET', '/me')
         me = api_data(me_payload)

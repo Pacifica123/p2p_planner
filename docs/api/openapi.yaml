@@ -1553,7 +1553,6 @@ components:
       type: object
       required:
       - id
-      - replicaKey
       - kind
       - status
       - createdAt
@@ -1563,13 +1562,15 @@ components:
           type: string
           format: uuid
         replicaKey:
-          type: string
+          type:
+          - string
+          - 'null'
         kind:
           type: string
           enum:
-          - device
-          - browser_profile
-          - import_worker
+          - client
+          - server
+          - import
         status:
           type: string
           enum:
@@ -1585,6 +1586,22 @@ components:
           - string
           - 'null'
           format: uuid
+        displayName:
+          type:
+          - string
+          - 'null'
+        platform:
+          type:
+          - string
+          - 'null'
+        protocolVersion:
+          type:
+          - string
+          - 'null'
+        appVersion:
+          type:
+          - string
+          - 'null'
         lastSeenAt:
           type:
           - string
@@ -1600,21 +1617,33 @@ components:
       type: object
       required:
       - replicaKey
-      - kind
       properties:
         replicaKey:
           type: string
+          minLength: 1
+          maxLength: 160
         kind:
           type: string
           enum:
           - device
           - browser_profile
           - import_worker
-        deviceId:
+          - client
+          - import
+          - server
+          default: browser_profile
+        displayName:
           type:
           - string
           - 'null'
-          format: uuid
+        platform:
+          type:
+          - string
+          - 'null'
+        protocolVersion:
+          type:
+          - string
+          - 'null'
         appVersion:
           type:
           - string
@@ -1631,6 +1660,15 @@ components:
       properties:
         replica:
           $ref: '#/components/schemas/Replica'
+    ReplicaListResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Replica'
     SyncScope:
       type: object
       required:
@@ -1651,6 +1689,7 @@ components:
       required:
       - scope
       - replicaId
+      - lastServerOrder
       properties:
         scope:
           $ref: '#/components/schemas/SyncScope'
@@ -1658,26 +1697,19 @@ components:
           type: string
           format: uuid
         lastServerOrder:
-          type:
-          - integer
-          - 'null'
+          type: integer
           minimum: 0
-        lastEventId:
-          type:
-          - string
-          - 'null'
-          format: uuid
     ClientChangeEvent:
       type: object
       required:
       - eventId
       - replicaId
+      - replicaSeq
       - entityType
       - entityId
       - operation
       - logicalClock
       - payload
-      - occurredAt
       properties:
         eventId:
           type: string
@@ -1685,6 +1717,9 @@ components:
         replicaId:
           type: string
           format: uuid
+        replicaSeq:
+          type: integer
+          minimum: 1
         entityType:
           type: string
           enum:
@@ -1707,23 +1742,35 @@ components:
           - create
           - update
           - delete
-          - archive
           - restore
-          - move
-          - complete
+          - reorder
+          - add
+          - remove
+          - archive
+          - unarchive
+        fieldMask:
+          type: array
+          items:
+            type: string
         logicalClock:
           type: integer
           minimum: 1
+        baseServerOrder:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
         occurredAt:
-          type: string
+          type:
+          - string
+          - 'null'
           format: date-time
         payload:
           type: object
           additionalProperties: true
-        idempotencyKey:
-          type:
-          - string
-          - 'null'
+        metadata:
+          type: object
+          additionalProperties: true
     ServerChangeEvent:
       allOf:
       - $ref: '#/components/schemas/ClientChangeEvent'
@@ -1772,11 +1819,15 @@ components:
       type: object
       required:
       - eventId
+      - replicaSeq
       - status
       properties:
         eventId:
           type: string
           format: uuid
+        replicaSeq:
+          type: integer
+          minimum: 1
         status:
           type: string
           enum:
@@ -1789,9 +1840,9 @@ components:
           - integer
           - 'null'
         error:
-          oneOf:
-          - $ref: '#/components/schemas/ErrorResponse'
-          - type: 'null'
+          type:
+          - string
+          - 'null'
     PushEventsResponse:
       type: object
       required:
@@ -1801,22 +1852,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PushEventResult'
-    PullEventsRequest:
-      type: object
-      required:
-      - replicaId
-      - cursor
-      properties:
-        replicaId:
-          type: string
-          format: uuid
-        cursor:
-          $ref: '#/components/schemas/SyncCursor'
-        limit:
-          type: integer
-          minimum: 1
-          maximum: 1000
-          default: 200
     PullEventsResponse:
       type: object
       required:
@@ -1836,10 +1871,13 @@ components:
       type: object
       required:
       - healthy
+      - mode
       - serverTime
       properties:
         healthy:
           type: boolean
+        mode:
+          type: string
         serverTime:
           type: string
           format: date-time
@@ -4663,14 +4701,21 @@ paths:
         in: query
         required: false
         schema:
-          type:
-          - string
-          - 'null'
+          type: string
           format: uuid
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '200':
+          description: Sync health and optional replica status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /sync/replicas:
     post:
       tags:
@@ -4685,24 +4730,40 @@ paths:
             schema:
               $ref: '#/components/schemas/UpsertReplicaRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '201':
+          description: Registered replica
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpsertReplicaResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     get:
       tags:
       - sync
       summary: List sync replicas
-      x-v1Status: deferred_stub
       security:
       - bearerAuth: []
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Replica list for current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplicaListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /sync/push:
     post:
       tags:
       - sync
-      summary: Push local replica events to backend
+      summary: Push local replica events to backend event log
       security:
       - bearerAuth: []
       requestBody:
@@ -4712,20 +4773,79 @@ paths:
             schema:
               $ref: '#/components/schemas/PushEventsRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '200':
+          description: Per-event push acknowledgements
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushEventsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /sync/pull:
     get:
       tags:
       - sync
-      summary: Pull sync changes
-      x-v1Status: deferred_stub
+      summary: Pull sync changes by cursor
       security:
       - bearerAuth: []
+      parameters:
+      - name: replicaId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: scope
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - global
+          - workspace
+          default: global
+      - name: workspaceId
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: lastServerOrder
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Incremental event log batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullEventsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /integrations/providers:
     get:
       tags:

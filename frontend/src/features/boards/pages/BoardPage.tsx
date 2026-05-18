@@ -20,6 +20,8 @@ import { useColumnsQuery, useCreateColumnMutation, useDeleteColumnMutation, useU
 import { CardDetailsDrawer } from '@/features/cards/components/CardDetailsDrawer';
 import { useCardsQuery } from '@/features/cards/hooks/useCards';
 import { LocalFirstStatusBanner } from '@/features/localFirst/components/LocalFirstStatusBanner';
+import { SyncBaselineStatus } from '@/features/sync/components/SyncBaselineStatus';
+import { useSyncBaseline } from '@/features/sync/hooks/useSyncBaseline';
 import { LocalFirstBoardProvider } from '@/features/localFirst/context/LocalFirstBoardContext';
 import { useLocalFirstBoardRuntime } from '@/features/localFirst/hooks/useLocalFirstBoard';
 import { getBoardSurfaceStyle } from '@/shared/appearance/theme';
@@ -77,6 +79,7 @@ export function BoardPage() {
       await Promise.all([cardsQuery.refetch(), boardActivityQuery.refetch()]);
     },
   });
+  const syncBaseline = useSyncBaseline(workspaceId);
 
   const [newColumnName, setNewColumnName] = useState('');
   const [dragSession, setDragSession] = useState<DragSessionState | null>(null);
@@ -337,11 +340,12 @@ export function BoardPage() {
           <Button onClick={() => navigate(paths.workspaceBoards(workspaceId))}>К boards list</Button>
           <Button iconOnly onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))} title="Настроить board" aria-label="Настроить board">🎨</Button>
           <Button iconOnly onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data} title="Переименовать board" aria-label="Переименовать board">✏️</Button>
-          <Button iconOnly onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch(), localFirst.flushPendingOperations()])} title="Обновить board" aria-label="Обновить board">↻</Button>
+          <Button iconOnly onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch(), localFirst.flushPendingOperations(), syncBaseline.pullWorkspace(), syncBaseline.refreshStatus()])} title="Обновить board" aria-label="Обновить board">↻</Button>
         </div>
         </section>
 
         <LocalFirstStatusBanner runtime={localFirst} />
+        <SyncBaselineStatus runtime={syncBaseline} />
 
         {moveError ? (
         <div className="inline-banner inline-banner--error">

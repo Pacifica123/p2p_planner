@@ -1,31 +1,67 @@
-use axum::Json;
+use axum::{
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    Json,
+};
 
-use crate::error::AppResult;
+use crate::{
+    error::AppResult,
+    http::response::ok,
+    modules::common::auth_context,
+    state::AppState,
+};
 
-use super::service;
+use super::{
+    dto::{PullChangesQuery, PushChangesRequest, RegisterReplicaRequest, SyncStatusQuery},
+    service,
+};
 
-pub async fn get_status() -> AppResult<Json<serde_json::Value>> {
-    service::get_status().await?;
-    unreachable!()
+pub async fn get_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SyncStatusQuery>,
+) -> AppResult<impl IntoResponse> {
+    let auth = auth_context(&state, &headers).await?;
+    let status = service::get_status(&state, auth, query).await?;
+    Ok(ok(status))
 }
 
-pub async fn list_replicas() -> AppResult<Json<serde_json::Value>> {
-    service::list_replicas().await?;
-    unreachable!()
+pub async fn list_replicas(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
+    let auth = auth_context(&state, &headers).await?;
+    let replicas = service::list_replicas(&state, auth).await?;
+    Ok(ok(replicas))
 }
 
-pub async fn register_replica() -> AppResult<Json<serde_json::Value>> {
-    service::register_replica().await?;
-    unreachable!()
+pub async fn register_replica(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<RegisterReplicaRequest>,
+) -> AppResult<impl IntoResponse> {
+    let auth = auth_context(&state, &headers).await?;
+    let replica = service::register_replica(&state, auth, payload).await?;
+    Ok((StatusCode::CREATED, ok(replica)))
 }
 
-pub async fn push_changes() -> AppResult<Json<serde_json::Value>> {
-    service::push_changes().await?;
-    unreachable!()
+pub async fn push_changes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<PushChangesRequest>,
+) -> AppResult<impl IntoResponse> {
+    let auth = auth_context(&state, &headers).await?;
+    let result = service::push_changes(&state, auth, payload).await?;
+    Ok(ok(result))
 }
 
-pub async fn pull_changes() -> AppResult<Json<serde_json::Value>> {
-    service::pull_changes().await?;
-    unreachable!()
+pub async fn pull_changes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<PullChangesQuery>,
+) -> AppResult<impl IntoResponse> {
+    let auth = auth_context(&state, &headers).await?;
+    let result = service::pull_changes(&state, auth, query).await?;
+    Ok(ok(result))
 }
-

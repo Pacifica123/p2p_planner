@@ -51,15 +51,13 @@ python tools/contract_parity_sweep.py --check
 - cards CRUD/lifecycle/move/reorder;
 - appearance: `me/appearance`, `boards/{boardId}/appearance`;
 - activity/audit: board activity, card activity, workspace audit log.
+- minimal card enrichment: labels, checklists, checklist items, comments.
+- sync baseline: replica registration/status, idempotent push, cursor pull.
 
 ## Deferred/internal surface
 
 Следующие зоны остаются не готовыми как полноценные product routes:
 
-- `labels`: routes смонтированы, но реализация пока `501`; фактический backend route для карточки сейчас именно `PUT /cards/{cardId}/labels` как replace-модель, а не отдельные attach/detach routes.
-- `checklists`: routes смонтированы, но реализация пока `501`; фактический item route называется `/checklist-items/{itemId}`.
-- `comments`: routes смонтированы, но реализация пока `501`.
-- `sync`: routes смонтированы, но реализация пока `501`; фактический pull route сейчас `GET /sync/pull`, а не `POST /sync/pull`.
 - `integrations/import-export/webhooks`: это `contract_stub` surface. Он валидирует доступ/формат и возвращает стабильные stub/capability responses, но пока не делает настоящий export bundle, real import execution или webhook delivery.
 - `POST /auth/dev-bootstrap`: `internal_dev` только для local/dev bootstrap.
 
@@ -73,13 +71,13 @@ python tools/contract_parity_sweep.py --check
 - Labels выровнены под backend: `/labels/{labelId}` и `PUT /cards/{cardId}/labels`.
 - Checklist item paths выровнены под backend: `/checklist-items/{itemId}`.
 - Убран несуществующий checklist item reorder route.
-- Sync выровнен под backend: `GET /sync/replicas` и `GET /sync/pull`.
-- Добавлен `501 NotImplemented` response для deferred stubs.
+- Sync выровнен под backend и переведен в `real_v1`: `GET/POST /sync/replicas`, `GET /sync/status`, `POST /sync/push`, `GET /sync/pull`.
+- Добавлен `501 NotImplemented` response для оставшихся deferred/contract stubs.
 - Error envelope schema выровнен с текущим backend: `error.code`, `error.message`, `error.details` без обязательного `requestId`.
 
 ## Frontend parity notes
 
-Frontend API modules сейчас не вызывают `labels/checklists/comments/sync` routes. Это правильно для текущего состояния: эти зоны вынесены в следующий блок `minimal card enrichment slice` и не должны выглядеть как рабочий UI-surface до реализации backend.
+Frontend API modules сейчас вызывают `labels/checklists/comments` для минимально полезной карточки и `sync/status/replicas/pull` для sync baseline. `sync/push` пока покрыт backend smoke/API level и остается не подключенным к local-first CRUD flush напрямую.
 
 Две frontend API функции были уточнены по типам:
 

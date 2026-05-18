@@ -64,16 +64,24 @@
 
 ## 4. Sync baseline
 
-- [ ] Replica registration.
-- [ ] Client replica identity.
-- [ ] Monotonic `replicaSeq`.
-- [ ] Push changes.
-- [ ] Pull changes by cursor.
-- [ ] Idempotency по `eventId` или `replicaId + replicaSeq`.
-- [ ] Duplicate-safe apply.
-- [ ] Tombstone-aware delete/archive для core entities.
-- [ ] Visible sync status на frontend.
-- [ ] Smoke/integration test: повторный push не создает дубликаты.
+Статус: закрыто патчем `sync baseline`. Sync routes больше не являются `501`-заглушками: backend регистрирует replica, принимает idempotent push events в `change_events`, отдает pull batch по cursor и пишет tombstones для core delete/archive events. Frontend получил browser replica identity и видимый sync baseline banner на board screen.
+
+- [x] Replica registration.
+- [x] Client replica identity.
+- [x] Monotonic `replicaSeq`.
+- [x] Push changes.
+- [x] Pull changes by cursor.
+- [x] Idempotency по `eventId` или `replicaId + replicaSeq`.
+- [x] Duplicate-safe apply.
+- [x] Tombstone-aware delete/archive для core entities.
+- [x] Visible sync status на frontend.
+- [x] Smoke/integration test: повторный push не создает дубликаты.
+
+Ограничения baseline:
+
+- local-first card CRUD flush пока остается на domain HTTP API, чтобы не смешивать event-log baseline с domain replay за один патч;
+- pull сохраняет cursor metadata, но frontend пока не применяет входящий stream в entity projections автоматически;
+- conflict handling ограничен duplicate/out-of-order/rejected markers, без полноценного merge UI.
 
 ## 5. Export / backup safety net
 

@@ -653,3 +653,27 @@ frontend/src/
 6. сеть возвращается;
 7. pending queue flush-ится через существующие API routes;
 8. после server confirmation локальный marker снимается.
+## 25. Sync baseline implementation slice
+
+Патч `sync baseline` переводит sync routes из зарезервированных `501` в минимально рабочий event-log контракт поверх уже существующих таблиц `replicas`, `change_events`, `sync_cursors` и `tombstones`.
+
+Что входит в baseline:
+
+- регистрация browser/client replica через `POST /sync/replicas`;
+- стабильный client `replicaKey` в browser storage;
+- `GET /sync/status` с server time, max server order и optional replica context;
+- `POST /sync/push` с обязательными `replicaId`, `replicaSeq`, `logicalClock` и per-event ack;
+- идемпотентность по `eventId` и `(replicaId, replicaSeq)`;
+- `GET /sync/pull` по `lastServerOrder` для `global` и `workspace` scope;
+- tombstone запись для core `delete/archive` событий;
+- видимый frontend sync baseline banner на board screen.
+
+Что намеренно не входит:
+
+- полноценный domain replay входящих events в frontend local store;
+- автоматический перевод всех local-first CRUD pending ops на `/sync/push`;
+- conflict resolution beyond duplicate/out-of-order baseline;
+- snapshot recovery для cursor gap.
+
+Эта граница выбрана специально: текущий local-first runtime уже безопасно flush-ит реальные card mutations через domain HTTP API, а sync baseline теперь дает отдельный воспроизводимый event-log контур, который можно harden-ить без регрессии основного board UX.
+
