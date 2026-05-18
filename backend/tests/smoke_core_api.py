@@ -84,6 +84,12 @@ def assert_true(value, label: str):
     print(f"[ASSERT] {label} is True")
 
 
+def assert_in(member, container, label: str):
+    if member not in container:
+        raise RuntimeError(f"Assertion failed for {label}: expected {member!r} in {container!r}")
+    print(f"[ASSERT] {member!r} in {label}")
+
+
 def assert_error(payload, code: str, message_substring: str, label: str):
     error = payload.get('error') if isinstance(payload, dict) else None
     if not isinstance(error, dict):
@@ -139,6 +145,10 @@ def main():
         'column_id': None,
         'card_id': None,
         'second_card_id': None,
+        'label_id': None,
+        'checklist_id': None,
+        'checklist_item_id': None,
+        'comment_id': None,
     }
 
     try:
@@ -203,6 +213,63 @@ def main():
         request('POST', f"/cards/{created['card_id']}/archive")
         request('POST', f"/cards/{created['card_id']}/unarchive")
         request('GET', f"/boards/{created['board_id']}/cards")
+
+        _, label_payload = request('POST', f"/boards/{created['board_id']}/labels", {
+            'name': 'Smoke Label',
+            'color': '#60a5fa',
+        }, expected_status=201)
+        created['label_id'] = data_id(label_payload)
+        _, labels_payload = request('GET', f"/boards/{created['board_id']}/labels")
+        labels = api_data(labels_payload)['items']
+        assert_true(any(item['id'] == created['label_id'] for item in labels), 'created label visible in board labels')
+        _, labeled_card_payload = request('PUT', f"/cards/{created['card_id']}/labels", {
+            'labelIds': [created['label_id']],
+        })
+        assert_in(created['label_id'], api_data(labeled_card_payload)['labelIds'], 'card label ids after attach')
+        _, unlabeled_card_payload = request('PUT', f"/cards/{created['card_id']}/labels", {
+            'labelIds': [],
+        })
+        assert_equal(api_data(unlabeled_card_payload)['labelIds'], [], 'card label ids after detach')
+        _, renamed_label_payload = request('PATCH', f"/labels/{created['label_id']}", {
+            'name': 'Renamed Smoke Label',
+        })
+        assert_equal(api_data(renamed_label_payload)['name'], 'Renamed Smoke Label', 'label rename')
+        request('DELETE', f"/labels/{created['label_id']}")
+
+        _, checklist_payload = request('POST', f"/cards/{created['card_id']}/checklists", {
+            'title': 'Smoke Checklist',
+        }, expected_status=201)
+        created['checklist_id'] = data_id(checklist_payload)
+        _, checklists_payload = request('GET', f"/cards/{created['card_id']}/checklists")
+        checklists = api_data(checklists_payload)['items']
+        assert_true(any(item['id'] == created['checklist_id'] for item in checklists), 'created checklist visible on card')
+        _, item_payload = request('POST', f"/checklists/{created['checklist_id']}/items", {
+            'title': 'Smoke item',
+        }, expected_status=201)
+        created['checklist_item_id'] = data_id(item_payload)
+        _, done_item_payload = request('PATCH', f"/checklist-items/{created['checklist_item_id']}", {
+            'isDone': True,
+        })
+        assert_true(api_data(done_item_payload)['isDone'], 'checklist item done')
+        _, reopened_item_payload = request('PATCH', f"/checklist-items/{created['checklist_item_id']}", {
+            'isDone': False,
+        })
+        assert_equal(api_data(reopened_item_payload)['isDone'], False, 'checklist item reopened')
+        request('DELETE', f"/checklist-items/{created['checklist_item_id']}")
+        request('DELETE', f"/checklists/{created['checklist_id']}")
+
+        _, comment_payload = request('POST', f"/cards/{created['card_id']}/comments", {
+            'body': 'Smoke comment',
+        }, expected_status=201)
+        created['comment_id'] = data_id(comment_payload)
+        _, comments_payload = request('GET', f"/cards/{created['card_id']}/comments")
+        comments = api_data(comments_payload)['items']
+        assert_true(any(item['id'] == created['comment_id'] for item in comments), 'created comment visible on card')
+        _, updated_comment_payload = request('PATCH', f"/comments/{created['comment_id']}", {
+            'body': 'Updated smoke comment',
+        })
+        assert_equal(api_data(updated_comment_payload)['body'], 'Updated smoke comment', 'comment update')
+        request('DELETE', f"/comments/{created['comment_id']}")
 
         _, archived_board_payload = request('POST', f"/boards/{created['board_id']}/archive")
         assert_true(api_data(archived_board_payload)['isArchived'], 'board archived')

@@ -22,20 +22,22 @@
 
 Выбран вариант A: не скрывать labels/checklists/comments, а реализовать минимальный рабочий slice.
 
-- [ ] Labels: создать label на доске.
-- [ ] Labels: назначить label на карточку.
-- [ ] Labels: снять label с карточки.
-- [ ] Labels: переименовать/удалить label.
-- [ ] Checklists: создать checklist.
-- [ ] Checklists: добавить item.
-- [ ] Checklists: отметить item done/undone.
-- [ ] Checklists: удалить item.
-- [ ] Comments: добавить comment.
-- [ ] Comments: показать comments timeline в карточке.
-- [ ] Comments: редактировать/удалить свой comment, если берем это в v1.
-- [ ] Activity: писать события labels/checklists/comments.
-- [ ] Frontend: добавить UI в `CardDetailsDrawer`.
-- [ ] Smoke/browser test: покрыть минимальный card enrichment flow.
+Статус: закрыто патчем `minimal card enrichment slice`. Backend-заглушки labels/checklists/comments заменены рабочими CRUD/assignment flows, OpenAPI переведен в `real_v1`, а `CardDetailsDrawer` получил UI для labels, checklists и comments.
+
+- [x] Labels: создать label на доске.
+- [x] Labels: назначить label на карточку.
+- [x] Labels: снять label с карточки.
+- [x] Labels: переименовать/удалить label.
+- [x] Checklists: создать checklist.
+- [x] Checklists: добавить item.
+- [x] Checklists: отметить item done/undone.
+- [x] Checklists: удалить item.
+- [x] Comments: добавить comment.
+- [x] Comments: показать comments timeline в карточке.
+- [x] Comments: редактировать/удалить свой comment, если берем это в v1.
+- [x] Activity: писать события labels/checklists/comments.
+- [x] Frontend: добавить UI в `CardDetailsDrawer`.
+- [x] Smoke/browser test: покрыть минимальный card enrichment flow через backend smoke API; browser smoke остается mocked critical boot-flow.
 
 ## 3. Local-first runtime baseline
 

@@ -1286,6 +1286,8 @@ components:
       - boardId
       - name
       - color
+      - createdAt
+      - updatedAt
       properties:
         id:
           type: string
@@ -1297,6 +1299,16 @@ components:
           type: string
         color:
           type: string
+        description:
+          type:
+          - string
+          - 'null'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     BoardLabelListResponse:
       type: object
       required:
@@ -1316,6 +1328,10 @@ components:
           type: string
         color:
           type: string
+        description:
+          type:
+          - string
+          - 'null'
     UpdateBoardLabelRequest:
       type: object
       additionalProperties: false
@@ -1328,14 +1344,20 @@ components:
           type:
           - string
           - 'null'
-    AttachLabelToCardRequest:
+        description:
+          type:
+          - string
+          - 'null'
+    ReplaceCardLabelsRequest:
       type: object
       required:
-      - labelId
+      - labelIds
       properties:
-        labelId:
-          type: string
-          format: uuid
+        labelIds:
+          type: array
+          items:
+            type: string
+            format: uuid
     Checklist:
       type: object
       required:
@@ -1466,25 +1488,6 @@ components:
           type:
           - boolean
           - 'null'
-    ReorderChecklistItemsRequest:
-      type: object
-      required:
-      - items
-      properties:
-        items:
-          type: array
-          minItems: 1
-          items:
-            type: object
-            required:
-            - itemId
-            - position
-            properties:
-              itemId:
-                type: string
-                format: uuid
-              position:
-                type: number
     Comment:
       type: object
       required:
@@ -1514,11 +1517,6 @@ components:
           type: string
           format: date-time
         editedAt:
-          type:
-          - string
-          - 'null'
-          format: date-time
-        deletedAt:
           type:
           - string
           - 'null'
@@ -2856,16 +2854,6 @@ components:
           type: boolean
         mode:
           type: string
-    ReplaceCardLabelsRequest:
-      type: object
-      required:
-      - labelIds
-      properties:
-        labelIds:
-          type: array
-          items:
-            type: string
-            format: uuid
 paths:
   /auth/sign-up:
     post:
@@ -4220,9 +4208,20 @@ paths:
       parameters:
       - $ref: '#/components/parameters/BoardId'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '200':
+          description: Board labels
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardLabelListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     post:
       tags:
       - labels
@@ -4238,15 +4237,31 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateBoardLabelRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '201':
+          description: Created board label
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardLabel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /labels/{labelId}:
     patch:
       tags:
       - labels
       summary: Update board label by id
-      x-v1Status: deferred_stub
+      x-v1Status: real_v1
+      x-frontendUsed: true
       security:
       - bearerAuth: []
       parameters:
@@ -4258,26 +4273,50 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateBoardLabelRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Updated board label
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardLabel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
       tags:
       - labels
       summary: Delete board label by id
-      x-v1Status: deferred_stub
+      x-v1Status: real_v1
+      x-frontendUsed: true
       security:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/LabelId'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Deleted board label
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardLabel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /cards/{cardId}/labels:
     put:
       tags:
       - labels
       summary: Replace card labels
-      x-v1Status: deferred_stub
+      x-v1Status: real_v1
+      x-frontendUsed: true
       security:
       - bearerAuth: []
       parameters:
@@ -4289,8 +4328,20 @@ paths:
             schema:
               $ref: '#/components/schemas/ReplaceCardLabelsRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Card with updated labels
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /cards/{cardId}/checklists:
     get:
       tags:
@@ -4301,9 +4352,20 @@ paths:
       parameters:
       - $ref: '#/components/parameters/CardId'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '200':
+          description: Card checklists with items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     post:
       tags:
       - checklists
@@ -4319,9 +4381,22 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateChecklistRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '201':
+          description: Created checklist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistWithItems'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /checklists/{checklistId}:
     patch:
       tags:
@@ -4338,9 +4413,22 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateChecklistRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '200':
+          description: Updated checklist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistWithItems'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     delete:
       tags:
       - checklists
@@ -4350,9 +4438,20 @@ paths:
       parameters:
       - $ref: '#/components/parameters/ChecklistId'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '200':
+          description: Deleted checklist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistWithItems'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /checklists/{checklistId}/items:
     post:
       tags:
@@ -4369,15 +4468,29 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateChecklistItemRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '201':
+          description: Created checklist item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /checklist-items/{itemId}:
     patch:
       tags:
       - checklists
       summary: Update checklist item
-      x-v1Status: deferred_stub
+      x-v1Status: real_v1
+      x-frontendUsed: true
       security:
       - bearerAuth: []
       parameters:
@@ -4389,20 +4502,43 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateChecklistItemRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Updated checklist item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
       tags:
       - checklists
       summary: Delete checklist item
-      x-v1Status: deferred_stub
+      x-v1Status: real_v1
+      x-frontendUsed: true
       security:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/ChecklistItemId'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Deleted checklist item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChecklistItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /cards/{cardId}/comments:
     get:
       tags:
@@ -4415,9 +4551,20 @@ paths:
       - $ref: '#/components/parameters/Limit'
       - $ref: '#/components/parameters/Cursor'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '200':
+          description: Card comments
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     post:
       tags:
       - comments
@@ -4433,14 +4580,27 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateCommentRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '201':
+          description: Created comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /comments/{commentId}:
     patch:
       tags:
       - comments
-      summary: Update comment body
+      summary: Update own comment body
       security:
       - bearerAuth: []
       parameters:
@@ -4452,21 +4612,45 @@ paths:
             schema:
               $ref: '#/components/schemas/UpdateCommentRequest'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '200':
+          description: Updated comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
     delete:
       tags:
       - comments
-      summary: Delete comment
+      summary: Delete own comment
       security:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/CommentId'
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-      x-v1Status: deferred_stub
+        '200':
+          description: Deleted comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
   /sync/status:
     get:
       tags:

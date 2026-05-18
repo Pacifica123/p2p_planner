@@ -89,6 +89,61 @@ export interface CardListResponse {
   pageInfo: PageInfo;
 }
 
+
+export interface BoardLabel {
+  id: string;
+  boardId: string;
+  name: string;
+  color: string;
+  description?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BoardLabelListResponse {
+  items: BoardLabel[];
+}
+
+export interface ChecklistItem {
+  id: string;
+  checklistId: string;
+  title: string;
+  isDone: boolean;
+  position: number;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Checklist {
+  id: string;
+  cardId: string;
+  title: string;
+  position: number;
+  items: ChecklistItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChecklistListResponse {
+  items: Checklist[];
+}
+
+export interface Comment {
+  id: string;
+  cardId: string;
+  authorUserId?: string | null;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  editedAt?: string | null;
+}
+
+export interface CommentListResponse {
+  items: Comment[];
+  pageInfo: PageInfo;
+}
+
 export interface ActivityActor {
   userId: string | null;
   displayName: string | null;

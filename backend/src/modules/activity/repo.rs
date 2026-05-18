@@ -27,6 +27,21 @@ const BOARD_FEED_KINDS: &[&str] = &[
     "card.archived",
     "card.restored",
     "card.deleted",
+    "card.labels.updated",
+    "label.created",
+    "label.updated",
+    "label.deleted",
+    "checklist.created",
+    "checklist.updated",
+    "checklist.deleted",
+    "checklist_item.created",
+    "checklist_item.updated",
+    "checklist_item.completed",
+    "checklist_item.reopened",
+    "checklist_item.deleted",
+    "comment.created",
+    "comment.updated",
+    "comment.deleted",
 ];
 
 pub struct NewActivityEntry<'a> {

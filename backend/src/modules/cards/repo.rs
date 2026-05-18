@@ -55,7 +55,7 @@ fn map_card(row: &sqlx::postgres::PgRow) -> AppResult<CardResponse> {
     })
 }
 
-async fn fetch_card(pool: &PgPool, card_id: Uuid) -> AppResult<CardResponse> {
+pub async fn fetch_card(pool: &PgPool, card_id: Uuid) -> AppResult<CardResponse> {
     let row = sqlx::query(
         r#"
         select
