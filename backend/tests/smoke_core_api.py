@@ -291,6 +291,36 @@ def main():
         audit_items = api_data(audit_payload)['items']
         assert_true(len(audit_items) >= 3, 'workspace audit has several entries')
 
+        _, export_payload = request('POST', '/integrations/import-export/exports', {
+            'scopeKind': 'board',
+            'workspaceId': created['workspace_id'],
+            'boardId': created['board_id'],
+            'exportMode': 'backup_snapshot',
+            'includeArchived': True,
+            'includeActivityHistory': True,
+            'includeAppearance': True,
+        }, expected_status=202)
+        export_data = api_data(export_payload)
+        assert_equal(export_data['status'], 'ready', 'portable export status')
+        bundle = export_data['bundle']
+        manifest = bundle['manifest.json']
+        assert_equal(manifest['format'], 'p2p_planner_bundle', 'export manifest format')
+        assert_equal(manifest['formatVersion'], 1, 'export manifest format version')
+        assert_equal(manifest['summary']['entityCounts']['boards'], 1, 'export board count')
+        assert_true(manifest['summary']['entityCounts']['cards'] >= 2, 'export card count')
+        assert_true(len(bundle['payload']['cards']) >= 2, 'export payload includes cards')
+        assert_true('user_sessions' not in json.dumps(bundle), 'export bundle excludes raw session table')
+
+        _, preview_payload = request('POST', '/integrations/import-export/imports/preview', {
+            'importMode': 'restore_backup',
+            'restoreStrategy': 'create_copy',
+            'bundle': bundle,
+        })
+        preview_data = api_data(preview_payload)
+        assert_equal(preview_data['status'], 'preview_ready', 'import preview status')
+        assert_equal(preview_data['detectedFormat'], 'p2p_planner_bundle', 'import preview detected format')
+        assert_equal(preview_data['summary']['entityCounts']['boards'], 1, 'import preview board count')
+
         _, replica_payload = request('POST', '/sync/replicas', {
             'replicaKey': f"smoke-replica-{created['workspace_id']}",
             'kind': 'browser_profile',

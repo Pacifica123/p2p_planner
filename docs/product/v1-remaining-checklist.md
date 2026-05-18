@@ -85,13 +85,21 @@
 
 ## 5. Export / backup safety net
 
-- [ ] Export workspace или board в versioned JSON bundle.
-- [ ] `manifest.json` внутри export bundle.
-- [ ] Явно описать, что входит в export.
-- [ ] Import preview или import-as-copy.
-- [ ] Никакого destructive restore по умолчанию.
-- [ ] Smoke: export созданной board/card структуры.
-- [ ] README: как сделать backup/export.
+Статус: закрыто патчем `export backup safety net`. Dedicated import/export endpoints больше не возвращают фиктивные counts: backend формирует versioned workspace/board JSON bundle с `manifest.json`, payload sections и restore hints, frontend умеет скачать board-level backup с board screen, а import preview валидирует supplied bundle manifest без destructive restore.
+
+- [x] Export workspace или board в versioned JSON bundle.
+- [x] `manifest.json` внутри export bundle.
+- [x] Явно описать, что входит в export.
+- [x] Import preview или import-as-copy.
+- [x] Никакого destructive restore по умолчанию.
+- [x] Smoke: export созданной board/card структуры.
+- [x] README: как сделать backup/export.
+
+Ограничения baseline:
+
+- bundle является application-level JSON snapshot, а не raw DB dump и не sync-log replay;
+- attachment blobs зарезервированы, но не экспортируются;
+- import execution остается non-destructive boundary и возвращает `preview_required`; реальное apply/import-as-copy остается будущим hardening slice.
 
 ## 6. Auth/security hardening
 

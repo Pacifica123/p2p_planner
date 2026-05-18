@@ -100,7 +100,7 @@ pub struct WebhookReceiptResponse {
     pub accepted_event_types: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PortableEntityCounts {
     pub workspaces: i32,
@@ -112,7 +112,7 @@ pub struct PortableEntityCounts {
     pub attachments: i32,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PortableBundleSummary {
     pub scope_kind: String,
@@ -123,7 +123,7 @@ pub struct PortableBundleSummary {
     pub includes_attachments: bool,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PortableBundleManifest {
     pub format: String,
@@ -134,6 +134,69 @@ pub struct PortableBundleManifest {
     pub board_id: Option<Uuid>,
     pub includes_local_metadata: bool,
     pub summary: PortableBundleSummary,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableBundleScope {
+    pub scope_kind: String,
+    pub workspace_id: Option<Uuid>,
+    pub board_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableBundleOrigin {
+    pub exported_by_user_id: Uuid,
+    pub generated_at: String,
+    pub backend_visible_state: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableBundleIncludes {
+    pub appearance: bool,
+    pub activity_history: bool,
+    pub archived: bool,
+    pub attachments: bool,
+    pub local_metadata: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableBundlePayload {
+    pub workspaces: Value,
+    pub boards: Value,
+    pub columns: Value,
+    pub cards: Value,
+    pub labels: Value,
+    pub card_labels: Value,
+    pub checklists: Value,
+    pub checklist_items: Value,
+    pub comments: Value,
+    pub board_appearance_settings: Value,
+    pub activity_entries: Value,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableBundleRestoreHints {
+    pub recommended_strategy: String,
+    pub requires_manual_review: bool,
+    pub destructive_restore_allowed: bool,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableBundle {
+    #[serde(rename = "manifest.json")]
+    pub manifest_json: PortableBundleManifest,
+    pub scope: PortableBundleScope,
+    pub origin: PortableBundleOrigin,
+    pub includes: PortableBundleIncludes,
+    pub payload: PortableBundlePayload,
+    pub restore_hints: PortableBundleRestoreHints,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -179,6 +242,7 @@ pub struct PortableExportResponse {
     pub suggested_file_name: String,
     pub target_ref: Option<String>,
     pub bundle_manifest: PortableBundleManifest,
+    pub bundle: PortableBundle,
     pub message: String,
     pub warnings: Vec<String>,
 }
@@ -192,6 +256,8 @@ pub struct CreateImportPreviewRequest {
     pub restore_strategy: String,
     #[serde(default)]
     pub bundle_manifest: Value,
+    #[serde(default)]
+    pub bundle: Value,
     #[serde(default)]
     pub options: Value,
 }

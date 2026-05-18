@@ -2505,6 +2505,164 @@ components:
           type: boolean
         summary:
           $ref: '#/components/schemas/PortableBundleSummary'
+    PortableBundlePayload:
+      type: object
+      required:
+      - workspaces
+      - boards
+      - columns
+      - cards
+      - labels
+      - cardLabels
+      - checklists
+      - checklistItems
+      - comments
+      - boardAppearanceSettings
+      - activityEntries
+      properties:
+        workspaces:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        boards:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        columns:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        cards:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        labels:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        cardLabels:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        checklists:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        checklistItems:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        comments:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        boardAppearanceSettings:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        activityEntries:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    PortableBundle:
+      type: object
+      required:
+      - manifest.json
+      - scope
+      - origin
+      - includes
+      - payload
+      - restoreHints
+      properties:
+        manifest.json:
+          $ref: '#/components/schemas/PortableBundleManifest'
+        scope:
+          type: object
+          required:
+          - scopeKind
+          properties:
+            scopeKind:
+              type: string
+              enum:
+              - workspace
+              - board
+            workspaceId:
+              type:
+              - string
+              - 'null'
+              format: uuid
+            boardId:
+              type:
+              - string
+              - 'null'
+              format: uuid
+        origin:
+          type: object
+          required:
+          - exportedByUserId
+          - generatedAt
+          - backendVisibleState
+          properties:
+            exportedByUserId:
+              type: string
+              format: uuid
+            generatedAt:
+              type: string
+              format: date-time
+            backendVisibleState:
+              type: boolean
+        includes:
+          type: object
+          required:
+          - appearance
+          - activityHistory
+          - archived
+          - attachments
+          - localMetadata
+          properties:
+            appearance:
+              type: boolean
+            activityHistory:
+              type: boolean
+            archived:
+              type: boolean
+            attachments:
+              type: boolean
+            localMetadata:
+              type: boolean
+        payload:
+          $ref: '#/components/schemas/PortableBundlePayload'
+        restoreHints:
+          type: object
+          required:
+          - recommendedStrategy
+          - requiresManualReview
+          - destructiveRestoreAllowed
+          - notes
+          properties:
+            recommendedStrategy:
+              type: string
+              enum:
+              - create_copy
+            requiresManualReview:
+              type: boolean
+            destructiveRestoreAllowed:
+              type: boolean
+            notes:
+              type: array
+              items:
+                type: string
     ImportExportCapabilitiesResponse:
       type: object
       required:
@@ -2623,6 +2781,7 @@ components:
       - exportMode
       - suggestedFileName
       - bundleManifest
+      - bundle
       - message
       - warnings
       properties:
@@ -2636,7 +2795,7 @@ components:
         status:
           type: string
           enum:
-          - ready_stub
+          - ready
         exportMode:
           type: string
           enum:
@@ -2650,6 +2809,8 @@ components:
           - 'null'
         bundleManifest:
           $ref: '#/components/schemas/PortableBundleManifest'
+        bundle:
+          $ref: '#/components/schemas/PortableBundle'
         message:
           type: string
         warnings:
@@ -2684,6 +2845,9 @@ components:
         bundleManifest:
           type: object
           additionalProperties: true
+        bundle:
+          type: object
+          additionalProperties: true
         options:
           type: object
           additionalProperties: true
@@ -2712,7 +2876,8 @@ components:
         status:
           type: string
           enum:
-          - preview_stub
+          - preview_ready
+          - preview_needs_bundle
         detectedFormat:
           type: string
           enum:
@@ -2800,7 +2965,7 @@ components:
         status:
           type: string
           enum:
-          - accepted_stub
+          - preview_required
         importMode:
           type: string
           enum:
@@ -4958,13 +5123,13 @@ paths:
                 $ref: '#/components/schemas/ImportExportCapabilitiesResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
-      x-v1Status: contract_stub
+      x-v1Status: real_v1
       x-frontendUsed: true
   /integrations/import-export/exports:
     post:
       tags:
       - integrations
-      summary: Create portable export or coordinated backup manifest stub
+      summary: Create portable export or coordinated backup JSON bundle
       security:
       - bearerAuth: []
       requestBody:
@@ -4975,7 +5140,7 @@ paths:
               $ref: '#/components/schemas/CreatePortableExportRequest'
       responses:
         '202':
-          description: Export manifest stub
+          description: Ready portable export or backup JSON bundle
           content:
             application/json:
               schema:
@@ -4988,13 +5153,13 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-      x-v1Status: contract_stub
+      x-v1Status: real_v1
       x-frontendUsed: true
   /integrations/import-export/imports/preview:
     post:
       tags:
       - integrations
-      summary: Preview import or restore plan before apply
+      summary: Preview import or restore plan from a bundle manifest
       security:
       - bearerAuth: []
       requestBody:
@@ -5005,7 +5170,7 @@ paths:
               $ref: '#/components/schemas/CreateImportPreviewRequest'
       responses:
         '200':
-          description: Import preview surface
+          description: Non-destructive import preview surface
           content:
             application/json:
               schema:
@@ -5018,13 +5183,13 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-      x-v1Status: contract_stub
+      x-v1Status: real_v1
       x-frontendUsed: true
   /integrations/import-export/imports:
     post:
       tags:
       - integrations
-      summary: Create import or restore execution stub
+      summary: Reserved import execution endpoint; non-destructive in v1
       security:
       - bearerAuth: []
       requestBody:
@@ -5035,7 +5200,7 @@ paths:
               $ref: '#/components/schemas/CreateImportExecutionRequest'
       responses:
         '202':
-          description: Import execution stub response
+          description: Preview-required response; no destructive restore is executed in v1
           content:
             application/json:
               schema:

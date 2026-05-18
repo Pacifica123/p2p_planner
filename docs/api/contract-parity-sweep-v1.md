@@ -53,12 +53,14 @@ python tools/contract_parity_sweep.py --check
 - activity/audit: board activity, card activity, workspace audit log.
 - minimal card enrichment: labels, checklists, checklist items, comments.
 - sync baseline: replica registration/status, idempotent push, cursor pull.
+- export/backup safety net: capabilities, real workspace/board JSON bundle export and non-destructive import preview.
 
 ## Deferred/internal surface
 
 Следующие зоны остаются не готовыми как полноценные product routes:
 
-- `integrations/import-export/webhooks`: это `contract_stub` surface. Он валидирует доступ/формат и возвращает стабильные stub/capability responses, но пока не делает настоящий export bundle, real import execution или webhook delivery.
+- `integrations/import-export/imports`: execution endpoint remains non-destructive in v1 and returns `preview_required`; actual apply/import-as-copy mutation is future work.
+- `integrations/webhooks`: это `contract_stub` surface. Он валидирует provider key и возвращает стабильный stub receipt, но пока не делает signature verification или webhook delivery.
 - `POST /auth/dev-bootstrap`: `internal_dev` только для local/dev bootstrap.
 
 ## Что было исправлено в OpenAPI
@@ -72,6 +74,7 @@ python tools/contract_parity_sweep.py --check
 - Checklist item paths выровнены под backend: `/checklist-items/{itemId}`.
 - Убран несуществующий checklist item reorder route.
 - Sync выровнен под backend и переведен в `real_v1`: `GET/POST /sync/replicas`, `GET /sync/status`, `POST /sync/push`, `GET /sync/pull`.
+- Import/export safety net переведен из manifest stub в реальный JSON bundle contract: `GET /integrations/import-export/capabilities`, `POST /integrations/import-export/exports`, `POST /integrations/import-export/imports/preview`.
 - Добавлен `501 NotImplemented` response для оставшихся deferred/contract stubs.
 - Error envelope schema выровнен с текущим backend: `error.code`, `error.message`, `error.details` без обязательного `requestId`.
 

@@ -365,3 +365,98 @@ Device-specific state вроде pending ops, local cursors и transient UI stat
 - background job engine.
 
 То есть этап закрывает **архитектурный контракт и будущее API surface**, а не production-ready restore pipeline.
+
+---
+
+## 13. V1 safety-net implementation baseline
+
+Статус после патча `export backup safety net`: backend больше не возвращает только manifest-oriented stub для dedicated import/export surface.
+
+### 13.1. Что реально экспортируется
+
+`POST /integrations/import-export/exports` формирует versioned JSON bundle со свойством `manifest.json` и application-level payload. Поддержанные scopes:
+
+- `scopeKind=workspace` + `workspaceId`;
+- `scopeKind=board` + `boardId`.
+
+В bundle входят backend-visible сущности:
+
+- workspace metadata;
+- boards;
+- board columns;
+- cards;
+- board labels и card-label assignments;
+- checklists и checklist items;
+- comments;
+- board appearance settings, если `includeAppearance=true`;
+- activity entries, если `includeActivityHistory=true`.
+
+В bundle намеренно не входят:
+
+- access/refresh tokens;
+- session cookies;
+- `user_sessions`;
+- provider secrets;
+- sync cursors и transient local-first pending queue;
+- raw database dump sections.
+
+### 13.2. Bundle shape
+
+Текущий JSON artifact сохраняется как один файл `*.bundle.json`. Внутри него есть ключ `manifest.json`, чтобы bundle был self-describing даже без отдельного zip-container:
+
+```json
+{
+  "manifest.json": {
+    "format": "p2p_planner_bundle",
+    "formatVersion": 1,
+    "bundleKind": "backup_snapshot",
+    "scopeKind": "board",
+    "workspaceId": "uuid",
+    "boardId": "uuid",
+    "includesLocalMetadata": false,
+    "summary": {
+      "scopeKind": "board",
+      "entityCounts": {
+        "workspaces": 1,
+        "boards": 1,
+        "columns": 3,
+        "cards": 12,
+        "comments": 2,
+        "checklists": 1,
+        "attachments": 0
+      },
+      "includesActivityHistory": true,
+      "includesAppearance": true,
+      "includesArchived": true,
+      "includesAttachments": false
+    }
+  },
+  "payload": {
+    "workspaces": [],
+    "boards": [],
+    "columns": [],
+    "cards": [],
+    "labels": [],
+    "cardLabels": [],
+    "checklists": [],
+    "checklistItems": [],
+    "comments": [],
+    "boardAppearanceSettings": [],
+    "activityEntries": []
+  },
+  "restoreHints": {
+    "recommendedStrategy": "create_copy",
+    "destructiveRestoreAllowed": false
+  }
+}
+```
+
+### 13.3. Import preview baseline
+
+`POST /integrations/import-export/imports/preview` принимает либо `bundle`, либо `bundleManifest`, проверяет `format=formatVersion=1` и возвращает non-destructive preview summary.
+
+V1 baseline **не выполняет destructive restore**. `POST /integrations/import-export/imports` остается reserved execution boundary и возвращает `preview_required`, не мутируя domain state. Это специально сохраняет гарантию безопасности: сначала preview, затем будущий apply через domain commands, а не raw table writes.
+
+### 13.4. Frontend baseline
+
+На board screen добавлена кнопка `💾`, которая запрашивает board-level `backup_snapshot` и скачивает `*.bundle.json` через браузер. Это user-owned safety copy, а не scheduled backup и не encrypted backup UX.

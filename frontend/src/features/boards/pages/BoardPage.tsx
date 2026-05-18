@@ -23,6 +23,7 @@ import { LocalFirstStatusBanner } from '@/features/localFirst/components/LocalFi
 import { SyncBaselineStatus } from '@/features/sync/components/SyncBaselineStatus';
 import { useSyncBaseline } from '@/features/sync/hooks/useSyncBaseline';
 import { LocalFirstBoardProvider } from '@/features/localFirst/context/LocalFirstBoardContext';
+import { createPortableExport } from '@/features/integrations/api/importExport';
 import { useLocalFirstBoardRuntime } from '@/features/localFirst/hooks/useLocalFirstBoard';
 import { getBoardSurfaceStyle } from '@/shared/appearance/theme';
 import { formatDateTime } from '@/shared/lib/date';
@@ -85,6 +86,8 @@ export function BoardPage() {
   const [dragSession, setDragSession] = useState<DragSessionState | null>(null);
   const [optimisticCards, setOptimisticCards] = useState<Card[] | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const dropHandledRef = useRef(false);
 
   const hasPendingCardMove = localFirst.isFlushing;
@@ -138,6 +141,38 @@ export function BoardPage() {
     const next = window.prompt('Новое название board', boardQuery.data.name)?.trim();
     if (!next || next === boardQuery.data.name) return;
     await updateBoardMutation.mutateAsync({ input: { name: next } });
+  }
+
+  async function handleExportBoardBackup() {
+    if (!workspaceId || !boardId || isExporting) return;
+    setIsExporting(true);
+    setExportStatus(null);
+    try {
+      const response = await createPortableExport({
+        scopeKind: 'board',
+        workspaceId,
+        boardId,
+        exportMode: 'backup_snapshot',
+        includeArchived: true,
+        includeActivityHistory: true,
+        includeAppearance: true,
+      });
+      const blob = new Blob([JSON.stringify(response.bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = response.suggestedFileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      const counts = response.bundleManifest.summary.entityCounts;
+      setExportStatus(`Backup JSON готов: ${counts.boards} board, ${counts.columns} columns, ${counts.cards} cards.`);
+    } catch (error) {
+      setExportStatus(error instanceof Error ? error.message : 'Не удалось создать backup/export bundle.');
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   function handleCardDragStart(card: Card, cardsInColumn: Card[], event: DragEvent<HTMLElement>) {
@@ -339,6 +374,7 @@ export function BoardPage() {
         <div className="page-header__actions">
           <Button onClick={() => navigate(paths.workspaceBoards(workspaceId))}>К boards list</Button>
           <Button iconOnly onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))} title="Настроить board" aria-label="Настроить board">🎨</Button>
+          <Button iconOnly onClick={() => void handleExportBoardBackup()} disabled={isExporting} title="Скачать backup JSON" aria-label="Скачать backup JSON">💾</Button>
           <Button iconOnly onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data} title="Переименовать board" aria-label="Переименовать board">✏️</Button>
           <Button iconOnly onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch(), localFirst.flushPendingOperations(), syncBaseline.pullWorkspace(), syncBaseline.refreshStatus()])} title="Обновить board" aria-label="Обновить board">↻</Button>
         </div>
@@ -346,6 +382,14 @@ export function BoardPage() {
 
         <LocalFirstStatusBanner runtime={localFirst} />
         <SyncBaselineStatus runtime={syncBaseline} />
+
+        {exportStatus ? (
+        <div className="inline-banner">
+          <strong>Export / backup</strong>
+          <span>{exportStatus}</span>
+          <Button variant="ghost" iconOnly onClick={() => setExportStatus(null)} title="Скрыть сообщение" aria-label="Скрыть сообщение">✕</Button>
+        </div>
+      ) : null}
 
         {moveError ? (
         <div className="inline-banner inline-banner--error">

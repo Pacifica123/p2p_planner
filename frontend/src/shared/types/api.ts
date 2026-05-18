@@ -330,6 +330,48 @@ export interface PortableBundleManifest {
   summary: PortableBundleSummary;
 }
 
+export interface PortableBundlePayload {
+  workspaces: Record<string, unknown>[];
+  boards: Record<string, unknown>[];
+  columns: Record<string, unknown>[];
+  cards: Record<string, unknown>[];
+  labels: Record<string, unknown>[];
+  cardLabels: Record<string, unknown>[];
+  checklists: Record<string, unknown>[];
+  checklistItems: Record<string, unknown>[];
+  comments: Record<string, unknown>[];
+  boardAppearanceSettings: Record<string, unknown>[];
+  activityEntries: Record<string, unknown>[];
+}
+
+export interface PortableBundle {
+  'manifest.json': PortableBundleManifest;
+  scope: {
+    scopeKind: 'workspace' | 'board';
+    workspaceId?: string | null;
+    boardId?: string | null;
+  };
+  origin: {
+    exportedByUserId: string;
+    generatedAt: string;
+    backendVisibleState: boolean;
+  };
+  includes: {
+    appearance: boolean;
+    activityHistory: boolean;
+    archived: boolean;
+    attachments: boolean;
+    localMetadata: boolean;
+  };
+  payload: PortableBundlePayload;
+  restoreHints: {
+    recommendedStrategy: 'create_copy';
+    requiresManualReview: boolean;
+    destructiveRestoreAllowed: boolean;
+    notes: string[];
+  };
+}
+
 export interface ImportExportCapabilitiesResponse {
   providerKey: 'import_export';
   format: 'p2p_planner_bundle';
@@ -358,11 +400,12 @@ export interface CreatePortableExportRequest {
 export interface PortableExportResponse {
   jobId: string;
   providerKey: 'import_export';
-  status: 'ready_stub';
+  status: 'ready';
   exportMode: 'portable_export' | 'backup_snapshot';
   suggestedFileName: string;
   targetRef?: string | null;
   bundleManifest: PortableBundleManifest;
+  bundle: PortableBundle;
   message: string;
   warnings: string[];
 }
@@ -373,13 +416,14 @@ export interface CreateImportPreviewRequest {
   targetWorkspaceId?: string | null;
   restoreStrategy: 'create_copy' | 'merge_review';
   bundleManifest?: Record<string, unknown>;
+  bundle?: Record<string, unknown>;
   options?: Record<string, unknown>;
 }
 
 export interface ImportPreviewResponse {
   previewId: string;
   providerKey: 'import_export';
-  status: 'preview_stub';
+  status: 'preview_ready' | 'preview_needs_bundle';
   detectedFormat: 'p2p_planner_bundle';
   detectedFormatVersion: 1;
   importMode: 'portable_import' | 'restore_backup';
@@ -403,7 +447,7 @@ export interface CreateImportExecutionRequest {
 export interface ImportExecutionResponse {
   jobId: string;
   providerKey: 'import_export';
-  status: 'accepted_stub';
+  status: 'preview_required';
   importMode: 'portable_import' | 'restore_backup';
   restoreStrategy: 'create_copy' | 'merge_review';
   previewId?: string | null;
