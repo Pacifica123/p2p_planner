@@ -27,7 +27,15 @@ def parse_payload(raw: str):
         return raw
 
 
-def request(method: str, path: str, body=None, expected_status: int = 200, include_auth: bool = True):
+def request(
+    method: str,
+    path: str,
+    body=None,
+    expected_status: int = 200,
+    include_auth: bool = True,
+    auth_token=None,
+    extra_headers=None,
+):
     global ACCESS_TOKEN
     url = f"{BASE_URL}{path}"
     data = None
@@ -36,8 +44,11 @@ def request(method: str, path: str, body=None, expected_status: int = 200, inclu
 
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header('Content-Type', 'application/json')
-    if include_auth and ACCESS_TOKEN:
-        req.add_header('Authorization', f'Bearer {ACCESS_TOKEN}')
+    token = ACCESS_TOKEN if auth_token is None else auth_token
+    if include_auth and token:
+        req.add_header('Authorization', f'Bearer {token}')
+    for key, value in (extra_headers or {}).items():
+        req.add_header(key, value)
 
     status = None
     payload = None
@@ -137,6 +148,18 @@ def ensure_authenticated_user():
         return ensure_smoke_session_fallback_sign_in()
 
 
+def sign_up_ephemeral_user(email_suffix: str):
+    global ACCESS_TOKEN
+    _, payload = request('POST', '/auth/sign-up', {
+        'email': f'smoke-other-{email_suffix}@local.test',
+        'password': SMOKE_USER_PASSWORD,
+        'displayName': 'Smoke Other User',
+    }, expected_status=201, include_auth=False)
+    data = api_data(payload)
+    ACCESS_TOKEN = data['accessToken']
+    return data
+
+
 def main():
     print(f"BASE_URL={BASE_URL}")
     print(f"SMOKE_USER_EMAIL={SMOKE_USER_EMAIL}")
@@ -155,6 +178,11 @@ def main():
 
     try:
         request('GET', '/health', include_auth=False)
+        _, anonymous_workspaces_payload = request('GET', '/workspaces', expected_status=401, include_auth=False)
+        assert_error(anonymous_workspaces_payload, 'unauthorized', 'Authentication is required', 'anonymous workspaces blocked')
+        _, wrong_token_payload = request('GET', '/workspaces', expected_status=401, include_auth=True, auth_token='not-a-valid-token')
+        assert_error(wrong_token_payload, 'unauthorized', 'Access token', 'wrong bearer token blocked')
+
         ensure_authenticated_user()
         _, session_payload = request('GET', '/auth/session')
         session_data = api_data(session_payload)
@@ -193,6 +221,50 @@ def main():
             'columnId': created['column_id'],
         }, expected_status=201)
         created['second_card_id'] = data_id(second_card)
+
+        primary_access_token = ACCESS_TOKEN
+        other_session = sign_up_ephemeral_user(created['workspace_id'])
+        other_access_token = other_session['accessToken']
+        _, forbidden_workspace = request('GET', f"/workspaces/{created['workspace_id']}", expected_status=403, auth_token=other_access_token)
+        assert_error(forbidden_workspace, 'forbidden', 'Workspace is not accessible', 'foreign workspace blocked')
+        _, forbidden_activity = request('GET', f"/boards/{created['board_id']}/activity", expected_status=403, auth_token=other_access_token)
+        assert_error(forbidden_activity, 'forbidden', 'Workspace is not accessible', 'foreign board activity blocked')
+        _, forbidden_audit = request('GET', f"/workspaces/{created['workspace_id']}/audit-log", expected_status=403, auth_token=other_access_token)
+        assert_error(forbidden_audit, 'forbidden', 'Workspace is not accessible', 'foreign audit log blocked')
+        _, forbidden_export = request('POST', '/integrations/import-export/exports', {
+            'scopeKind': 'board',
+            'workspaceId': created['workspace_id'],
+            'boardId': created['board_id'],
+            'exportMode': 'backup_snapshot',
+        }, expected_status=403, auth_token=other_access_token)
+        assert_error(forbidden_export, 'forbidden', 'Workspace is not accessible', 'foreign export blocked')
+
+        _, other_replica_payload = request('POST', '/sync/replicas', {
+            'replicaKey': f"smoke-foreign-replica-{created['workspace_id']}",
+            'kind': 'browser_profile',
+            'displayName': 'Smoke foreign replica',
+            'protocolVersion': 'sync-baseline-v1',
+        }, expected_status=201, auth_token=other_access_token)
+        other_replica = api_data(other_replica_payload)['replica']
+        _, forbidden_sync_pull = request('GET', f"/sync/pull?replicaId={other_replica['id']}&scope=workspace&workspaceId={created['workspace_id']}&lastServerOrder=0&limit=5", expected_status=403, auth_token=other_access_token)
+        assert_error(forbidden_sync_pull, 'forbidden', 'Workspace is not accessible', 'foreign sync pull blocked')
+        _, forbidden_sync_push = request('POST', '/sync/push', {
+            'replicaId': other_replica['id'],
+            'workspaceId': created['workspace_id'],
+            'events': [{
+                'eventId': str(uuid.uuid4()),
+                'replicaId': other_replica['id'],
+                'replicaSeq': 1,
+                'entityType': 'card',
+                'entityId': created['card_id'],
+                'operation': 'update',
+                'fieldMask': ['title'],
+                'logicalClock': 1,
+                'payload': {'title': 'Forbidden write'},
+            }],
+        }, expected_status=403, auth_token=other_access_token)
+        assert_error(forbidden_sync_push, 'forbidden', 'Workspace is not accessible', 'foreign sync push blocked')
+        ACCESS_TOKEN = primary_access_token
 
         request('GET', f"/cards/{created['card_id']}")
         request('PATCH', f"/cards/{created['card_id']}", {

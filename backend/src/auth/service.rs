@@ -38,9 +38,9 @@ pub struct SignOutEnvelope {
 }
 
 fn ensure_dev_bootstrap_allowed(state: &AppState) -> AppResult<()> {
-    match state.settings.app.env.to_ascii_lowercase().as_str() {
-        "prod" | "production" => Err(AppError::not_found("Not found")),
-        _ => Ok(()),
+    match state.settings.app.env.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "local" | "dev" | "development" | "test" | "testing" => Ok(()),
+        _ => Err(AppError::not_found("Not found")),
     }
 }
 

@@ -34,6 +34,15 @@ pub fn build_app(state: AppState) -> Router {
         .filter_map(|value| HeaderValue::from_str(value).ok())
         .collect::<Vec<_>>();
 
+    let mut allowed_headers = vec![
+        header::AUTHORIZATION,
+        header::CONTENT_TYPE,
+        header::ACCEPT,
+    ];
+    if state.settings.dev_header_auth_allowed() {
+        allowed_headers.push(HeaderName::from_static("x-user-id"));
+    }
+
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(allowed_origins))
         .allow_credentials(true)
@@ -45,12 +54,7 @@ pub fn build_app(state: AppState) -> Router {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([
-            header::AUTHORIZATION,
-            header::CONTENT_TYPE,
-            header::ACCEPT,
-            HeaderName::from_static("x-user-id"),
-        ]);
+        .allow_headers(allowed_headers);
 
     let middleware_stack = ServiceBuilder::new()
         .layer(RequestBodyLimitLayer::new(body_limit_bytes))

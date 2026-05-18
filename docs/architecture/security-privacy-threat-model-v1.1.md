@@ -963,3 +963,25 @@ Security v1.1 для P2P Planner =
 - auth/refresh/relay интернет-facing поверхности требуют abuse-controls как blocker, а не “когда-нибудь потом”.
 
 Именно такой слой дает шанс не пожалеть потом о “быстром security-решении”, потому что он сначала расставляет границы доверия, инварианты и жизненный цикл данных, а уже потом позволяет наращивать hardening.
+
+---
+
+## 23. Auth/security hardening baseline for v1
+
+Патч `auth security hardening` закрывает минимальный beta-safety baseline без смены выбранной auth-модели:
+
+- `AUTH__ENABLE_DEV_HEADER_AUTH` остается выключенным по умолчанию и теперь дополнительно валидируется по deployment profile: включать dev-header auth можно только в `local/dev/test` окружениях.
+- `POST /auth/dev-bootstrap` больше не доступен для beta/self-host/staging/production-like профилей даже как скрытый helper.
+- CORS по-прежнему строится из allowlist, но `X-User-Id` попадает в разрешенные request headers только когда реально включен local/dev header-auth режим.
+- Для beta/self-host/production-like профилей startup config guard требует явный CORS allowlist, запрещает wildcard `*`, требует `AUTH__COOKIE_SECURE=true` и не принимает placeholder/слишком короткий `AUTH__JWT_SECRET`.
+- `SameSite=None` разрешен только вместе с `Secure`, чтобы refresh-cookie deployment profile не оказался несовместимым с браузерной моделью cookies.
+- Sync push baseline теперь требует `workspaceId` для workspace-scoped events и не считает чужой `eventId` duplicate-событием для другой replica.
+- Sync payload/metadata перед сохранением в `change_events` проходит redaction/truncation для чувствительных JSON ключей (`password`, `token`, `secret`, `authorization`, `cookie`, `jwt`, `apiKey`).
+- Backend smoke расширен negative auth/security cases: anonymous request, wrong bearer token, forbidden workspace, and derived endpoint access for activity/audit/export/sync.
+
+Ограничения baseline:
+
+- это не MFA/passkey/E2EE слой;
+- local-first snapshots остаются клиентской ответственностью и не шифруются в этом патче;
+- full refresh-token family analytics и suspicious login UI остаются future hardening;
+- browser smoke по реальному backend-path остается задачей release gates.

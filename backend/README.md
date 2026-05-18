@@ -36,6 +36,8 @@ Health endpoints:
 
 Legacy `X-User-Id` fallback оставлен только для dev/test сценариев и выключен по умолчанию через `AUTH__ENABLE_DEV_HEADER_AUTH=false`. Его не нужно считать нормальным browser flow и не нужно возвращать в CORS без отдельного решения.
 
+Для beta/self-host/production-like профилей backend теперь валидирует security env на старте: `X-User-Id` не попадает в CORS headers без local/dev header-auth режима, wildcard CORS запрещен, `AUTH__COOKIE_SECURE=true` обязателен, а `AUTH__JWT_SECRET` должен быть реальным non-default секретом.
+
 ## Smoke tests
 
 - `tests/core_crud_smoke.rs`

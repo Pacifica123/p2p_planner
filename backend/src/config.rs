@@ -115,11 +115,40 @@ impl CookieSameSite {
     }
 }
 
+fn normalized_env(env: &str) -> String {
+    env.trim().to_ascii_lowercase().replace('-', "_")
+}
+
+fn is_local_dev_env(env: &str) -> bool {
+    matches!(
+        normalized_env(env).as_str(),
+        "local" | "dev" | "development" | "test" | "testing"
+    )
+}
+
+fn is_hardened_env(env: &str) -> bool {
+    matches!(
+        normalized_env(env).as_str(),
+        "beta" | "preview" | "staging" | "stage" | "self_host" | "selfhost" | "prod" | "production"
+    )
+}
+
+fn looks_like_placeholder_secret(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    normalized.is_empty()
+        || normalized.contains("change-me")
+        || normalized.contains("changeme")
+        || normalized.contains("default")
+        || normalized == "secret"
+        || normalized == "dev-secret"
+        || normalized == "local-secret"
+}
+
 impl Settings {
     pub fn load() -> Result<Self, ConfigError> {
         dotenvy::dotenv().ok();
 
-        Config::builder()
+        let settings: Self = Config::builder()
             .add_source(File::with_name("config/default").required(false))
             .add_source(
                 Environment::default()
@@ -130,7 +159,64 @@ impl Settings {
                     .try_parsing(true),
             )
             .build()?
-            .try_deserialize()
+            .try_deserialize()?;
+
+        settings.validate()?;
+        Ok(settings)
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let local_dev_env = is_local_dev_env(&self.app.env);
+        let hardened_env = is_hardened_env(&self.app.env);
+
+        if self.auth.enable_dev_header_auth && !local_dev_env {
+            return Err(ConfigError::Message(
+                "AUTH__ENABLE_DEV_HEADER_AUTH may only be enabled for local/dev/test profiles".to_string(),
+            ));
+        }
+
+        if matches!(self.auth.cookie_same_site, CookieSameSite::None) && !self.auth.cookie_secure {
+            return Err(ConfigError::Message(
+                "AUTH__COOKIE_SAME_SITE=none requires AUTH__COOKIE_SECURE=true".to_string(),
+            ));
+        }
+
+        if hardened_env {
+            if self.http.cors_allowed_origins.is_empty() {
+                return Err(ConfigError::Message(
+                    "HTTP__CORS_ALLOWED_ORIGINS must be explicit for beta/self-host/production profiles".to_string(),
+                ));
+            }
+
+            if self
+                .http
+                .cors_allowed_origins
+                .iter()
+                .any(|origin| origin.trim() == "*")
+            {
+                return Err(ConfigError::Message(
+                    "HTTP__CORS_ALLOWED_ORIGINS must not contain wildcard '*' for beta/self-host/production profiles".to_string(),
+                ));
+            }
+
+            if !self.auth.cookie_secure {
+                return Err(ConfigError::Message(
+                    "AUTH__COOKIE_SECURE=true is required for beta/self-host/production profiles".to_string(),
+                ));
+            }
+
+            if looks_like_placeholder_secret(&self.auth.jwt_secret) || self.auth.jwt_secret.len() < 32 {
+                return Err(ConfigError::Message(
+                    "AUTH__JWT_SECRET must be a non-default secret with at least 32 characters for beta/self-host/production profiles".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn dev_header_auth_allowed(&self) -> bool {
+        self.auth.enable_dev_header_auth && is_local_dev_env(&self.app.env)
     }
 
     pub fn socket_addr(&self) -> SocketAddr {

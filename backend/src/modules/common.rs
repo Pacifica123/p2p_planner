@@ -48,7 +48,7 @@ pub async fn auth_context(state: &AppState, headers: &HeaderMap) -> AppResult<Au
         });
     }
 
-    if state.settings.auth.enable_dev_header_auth {
+    if state.settings.dev_header_auth_allowed() {
         let user_id = headers
             .get("x-user-id")
             .and_then(|value| value.to_str().ok())

@@ -60,6 +60,31 @@ fn validate_entity_type(entity_type: &str) -> AppResult<()> {
     }
 }
 
+fn requires_workspace_scope(entity_type: &str) -> bool {
+    !matches!(entity_type, "workspace")
+}
+
+fn validate_workspace_scoping(workspace_id: Option<Uuid>, event: &ClientChangeEvent) -> AppResult<()> {
+    if workspace_id.is_none() && requires_workspace_scope(&event.entity_type) {
+        return Err(AppError::bad_request(
+            "workspaceId is required for workspace-scoped sync events",
+        ));
+    }
+
+    if let Some(workspace_id) = workspace_id {
+        if event.entity_type == "workspace" {
+            let entity_id = parse_uuid(&event.entity_id, "entityId")?;
+            if entity_id != workspace_id {
+                return Err(AppError::bad_request(
+                    "workspace sync event entityId must match request workspaceId",
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_event_shape(event: &ClientChangeEvent) -> AppResult<()> {
     parse_uuid(&event.event_id, "eventId")?;
     parse_uuid(&event.replica_id, "event.replicaId")?;
@@ -121,6 +146,7 @@ pub async fn push_changes(
     let mut previous_seq: Option<i64> = None;
     for event in &payload.events {
         validate_event_shape(event)?;
+        validate_workspace_scoping(workspace_id, event)?;
         let event_replica_id = parse_uuid(&event.replica_id, "event.replicaId")?;
         if event_replica_id != replica_id {
             return Err(AppError::bad_request("All events must belong to request replicaId"));

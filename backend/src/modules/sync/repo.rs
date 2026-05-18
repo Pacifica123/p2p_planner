@@ -58,6 +58,58 @@ fn map_server_event(row: &sqlx::postgres::PgRow) -> AppResult<ServerChangeEvent>
     })
 }
 
+fn sensitive_json_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|ch| *ch != '_' && *ch != '-')
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    matches!(
+        normalized.as_str(),
+        "password"
+            | "passwordhash"
+            | "refreshtoken"
+            | "accesstoken"
+            | "authorization"
+            | "cookie"
+            | "secret"
+            | "token"
+            | "jwt"
+            | "apikey"
+    )
+}
+
+fn truncate_string(value: &str) -> Value {
+    if value.len() > 512 {
+        Value::String(format!("{}…", &value[..512]))
+    } else {
+        Value::String(value.to_string())
+    }
+}
+
+fn sanitize_json_value(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut sanitized = serde_json::Map::new();
+            for (key, inner) in map {
+                sanitized.insert(
+                    key.clone(),
+                    if sensitive_json_key(key) {
+                        Value::String("[redacted]".to_string())
+                    } else {
+                        sanitize_json_value(inner)
+                    },
+                );
+            }
+            Value::Object(sanitized)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_json_value).collect()),
+        Value::String(value) => truncate_string(value),
+        _ => value.clone(),
+    }
+}
+
 fn replica_select_sql(extra_where: &str, order_by: &str) -> String {
     format!(
         r#"
@@ -233,7 +285,7 @@ async fn duplicate_result(pool: &PgPool, event_id: Uuid, replica_id: Uuid, repli
         r#"
         select id, replica_seq, server_order
         from change_events
-        where id = $1 or (replica_id = $2 and replica_seq = $3)
+        where (id = $1 and replica_id = $2) or (replica_id = $2 and replica_seq = $3)
         order by case when id = $1 then 0 else 1 end
         limit 1
         "#,
@@ -391,7 +443,7 @@ pub async fn push_changes(
 
         let field_mask = event.field_mask.clone().unwrap_or_default();
         let operation = normalize_operation(&event.operation);
-        let metadata = metadata_with_source(&event, &auth);
+        let metadata = sanitize_json_value(&metadata_with_source(&event, &auth));
         let occurred_at = event.occurred_at.clone();
 
         let inserted = sqlx::query(
@@ -432,7 +484,7 @@ pub async fn push_changes(
         .bind(entity_id)
         .bind(operation)
         .bind(&field_mask)
-        .bind(event.payload.clone())
+        .bind(sanitize_json_value(&event.payload))
         .bind(metadata)
         .bind(event.logical_clock)
         .bind(event.replica_seq)

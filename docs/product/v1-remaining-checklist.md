@@ -103,16 +103,24 @@
 
 ## 6. Auth/security hardening
 
-- [ ] `AUTH__ENABLE_DEV_HEADER_AUTH=false` в beta/profile по умолчанию.
-- [ ] `X-User-Id` оставить только для local/dev.
-- [ ] CORS allowlist без wildcard для beta/self-host.
-- [ ] JWT/secret values не default.
-- [ ] Refresh cookie атрибуты под deployment profile.
-- [ ] Sign-out чистит frontend session state.
-- [ ] Sign-out-all инвалидирует refresh family.
-- [ ] Negative auth smoke: no token / wrong token / forbidden workspace.
-- [ ] Derived endpoints проверяют access: activity/audit/export/sync.
-- [ ] Логи не содержат password/token/secret.
+Статус: закрыто патчем `auth security hardening`. Детали baseline зафиксированы в `docs/architecture/security-privacy-threat-model-v1.1.md`, раздел 23: dev-header auth ограничен local/dev/test профилями, CORS/JWT/cookie config получил startup guards, sync push/pull усилены workspace access boundaries, а smoke покрывает negative auth и derived endpoint access cases.
+
+- [x] `AUTH__ENABLE_DEV_HEADER_AUTH=false` в beta/profile по умолчанию.
+- [x] `X-User-Id` оставить только для local/dev.
+- [x] CORS allowlist без wildcard для beta/self-host.
+- [x] JWT/secret values не default.
+- [x] Refresh cookie атрибуты под deployment profile.
+- [x] Sign-out чистит frontend session state.
+- [x] Sign-out-all инвалидирует refresh family.
+- [x] Negative auth smoke: no token / wrong token / forbidden workspace.
+- [x] Derived endpoints проверяют access: activity/audit/export/sync.
+- [x] Логи не содержат password/token/secret.
+
+Ограничения baseline:
+
+- MFA/passkeys/E2EE не входят в v1 hardening;
+- local-first snapshot encryption не реализован;
+- browser smoke по реальному backend остается частью следующего release-gates блока.
 
 ## 7. Testing and release gates
 
