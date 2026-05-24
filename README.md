@@ -64,8 +64,9 @@ python tools/devbootstrap.py smoke --level quick
 python tools/devbootstrap.py smoke --level standard --allow-dev-db-write
 python tools/devbootstrap.py release-gates --dry-run
 python tools/devbootstrap.py release-gates
-python tools/devbootstrap.py release-gates --include-real-backend-browser --allow-dev-db-write
-python tools/devbootstrap.py release-gates --include-clean-machine
+python tools/devbootstrap.py release-gates --prepare-frontend --install-playwright-browsers
+python tools/devbootstrap.py release-gates --prepare-frontend --install-playwright-browsers --include-real-backend-browser --allow-dev-db-write
+python tools/devbootstrap.py release-gates --prepare-frontend --include-clean-machine
 python tools/devbootstrap.py status
 python tools/devbootstrap.py stop --dry-run
 python tools/devbootstrap.py stop
@@ -73,7 +74,7 @@ python tools/devbootstrap.py stop
 
 Финальный v1-hardening слой добавляет `self-check`: встроенные fixtures для env parser/diff, URL parse, failure classifiers, root discovery, report JSON contract и release-gates v2 contracts. Его стоит запускать после каждого патча к `tools/devbootstrap.py` вместе с `ast.parse`.
 
-`release-gates` — v2-агрегатор по принципу одной команды: он запускает реализованные backend/frontend/browser/docs gates с keep-going semantics, пишет `summary.txt`, `release-gates.md`, `release-gates.json`, `logs/*.log` и собирает маленький `release-gates_*.zip` в `.dev-bootstrap/runs/...`. Real-backend browser path и clean-machine quickstart сделаны явными opt-in gates, потому что пишут в live backend/DB или создают временную clean-machine копию проекта.
+`release-gates` — v2-агрегатор по принципу одной команды: он запускает реализованные backend/frontend/browser/docs gates с keep-going semantics, пишет `summary.txt`, `release-gates.md`, `release-gates.json`, `logs/*.log` и собирает маленький `release-gates_*.zip` в `.dev-bootstrap/runs/...`. Если frontend dependencies отсутствуют или marker устарел, обычный запуск честно остановит frontend gates как infra failure; для одного самодостаточного прогона используй `--prepare-frontend`, тогда `prepare-frontend` будет выполнен внутри того же release-gates bundle до планирования frontend build/test/browser gates. Real-backend browser path и clean-machine quickstart сделаны явными opt-in gates, потому что пишут в live backend/DB или создают временную clean-machine копию проекта.
 
 Обычные `diagnose`, `plan`, `prepare-env`, `diagnose --section postgres`, `start-db`, `check-backend`, `start-backend`, `prepare-frontend`, `start-frontend` и `up` дополнительно сохраняют отчеты в `.dev-bootstrap/runs/...`; эта служебная папка игнорируется Git. Phase 1 проверяет корень проекта, обязательные файлы, доступные инструменты, порты и базовые health URL. Phase 2 читает env-контракт, показывает diff ключей, маскирует секреты и безопасно создает отсутствующие `backend/.env` / `frontend/.env.local` из example-файлов без перезаписи существующих env. Phase 3 проверяет PostgreSQL target из `DATABASE__URL`, умеет классифицировать частые проблемы БД и может поднять compose-сервис `postgres`, если configured port закрыт. Phase 4 добавляет backend-проверку через `cargo metadata` / `cargo check` и guarded `cargo run` с PID/state/log capture и ожиданием `/health` + `/api/v1/health`. Phase 5 добавляет frontend-подготовку через `npm ci` / `npm install`, install-marker для `node_modules`, guarded `npm run dev`, `frontend.log`, PID/state и проверку `VITE_API_BASE_URL` против backend health. Phase 6 добавляет `up`: единый безопасный pipeline `diagnose → plan → prepare-env → start-db → check-backend → start-backend → prepare-frontend → start-frontend → smoke → report` с `--dry-run`, skip-флагами и остановкой на первом блокирующем сбое. Phase 7 добавляет отдельные smoke gates: `quick` проверяет backend/frontend HTTP-доступность, `standard` добавляет backend Python smoke и frontend `npm run test:run`, `full` добавляет browser smoke через `npm run test:browser`. Для write-capable backend smoke нужен `TEST_DATABASE_URL` или явный `--allow-dev-db-write`, чтобы случайно не писать в обычную dev-БД. Phase 8 закрывает lifecycle: `status` показывает tracked PID/ports/health/compose snapshot, а `stop` завершает только backend/frontend процессы из `.dev-bootstrap/state.json`; PostgreSQL compose service останавливается только при явном `stop --include-db`. Phase 9 поднимает инструмент до `1.0.0`, фиксирует общий JSON-envelope отчетов, централизует timeout policy и добавляет `self-check` как внутренний v1 sanity suite.
 
@@ -233,4 +234,4 @@ cd frontend
 npm run test:browser:real-backend
 ```
 
-Для безопасного DB-writing release review подготовь отдельную test DB по инструкции `docs/dev-bootstrap/release-gates-test-database.md` и запускай real-backend browser gate через `python tools/devbootstrap.py release-gates --include-real-backend-browser`.
+Для безопасного DB-writing release review подготовь отдельную test DB по инструкции `docs/dev-bootstrap/release-gates-test-database.md` и запускай real-backend browser gate через `python tools/devbootstrap.py release-gates --prepare-frontend --install-playwright-browsers --include-real-backend-browser`.

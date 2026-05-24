@@ -52,9 +52,12 @@ A fuller release review can then run:
 
 ```bash
 python tools/devbootstrap.py release-gates \
+  --prepare-frontend \
+  --install-playwright-browsers \
   --include-real-backend-browser \
-  --include-clean-machine \
-  --install-playwright-browsers
+  --include-clean-machine
 ```
+
+`--prepare-frontend` runs `prepare-frontend` inside the same release-gates bundle before frontend build/test/browser gates are planned. This is useful when `frontend/node_modules` or `.dev-bootstrap/frontend-install.json` is missing/stale.
 
 Use `--allow-dev-db-write` only when the configured dev database is disposable and writing into it is intentional.

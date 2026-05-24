@@ -5305,6 +5305,27 @@ def release_gates_overall_status(gates: list[GateResult], *, dry_run: bool) -> t
     return "unknown", "release_gates_unknown"
 
 
+def release_gates_next_action_for_code(code: str) -> str | None:
+    actions = {
+        "frontend_dependencies_missing": "Run `python tools/devbootstrap.py release-gates --prepare-frontend --install-playwright-browsers` to let release-gates install missing/stale frontend dependencies before frontend gates, or run `python tools/devbootstrap.py prepare-frontend --force-install` first.",
+        "browser_smoke_prerequisite": "Install Playwright browser prerequisites by rerunning with `--install-playwright-browsers` or by running `cd frontend && npx playwright install`.",
+        "db_test_prerequisite_missing": "Prepare a write-safe test DB, export `TEST_DATABASE_URL`, and see `docs/dev-bootstrap/release-gates-test-database.md` before rerunning DB integration gates.",
+        "smoke_db_write_guard": "For backend Python smoke, restart the live backend against the test DB and set `TEST_DATABASE_URL`; use `--allow-dev-db-write` only when the configured dev DB is disposable.",
+        "real_backend_browser_opt_in_required": "After frontend deps and write-safe DB are ready, add `--include-real-backend-browser` to run the no-mock browser path.",
+        "real_backend_browser_write_guard": "Set `TEST_DATABASE_URL` and restart backend against that DB before running `--include-real-backend-browser`, or consciously pass `--allow-dev-db-write`.",
+        "runtime_unreachable": "Run `python tools/devbootstrap.py status`; if backend/frontend ports are stale or foreign, run `python tools/devbootstrap.py stop` for tracked processes and restart with `python tools/devbootstrap.py up`.",
+        "frontend_port_conflict": "Inspect the process occupying the frontend port; devbootstrap will not kill a foreign process automatically. Use `status`, `stop`, then `up` when it is your tracked process.",
+        "clean_machine_optional_not_requested": "For final release review, rerun with `--include-clean-machine` after required gates are no longer blocked.",
+    }
+    return actions.get(code)
+
+
+def release_gates_add_unique_action(actions: list[str], action: str, seen: set[str]) -> None:
+    if action not in seen:
+        actions.append(action)
+        seen.add(action)
+
+
 def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
     result.overall_status, result.classification = release_gates_overall_status(result.gates, dry_run=result.dry_run)
     result.findings.clear()
@@ -5319,14 +5340,33 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
                 }
             )
     result.next_actions.clear()
+    seen_actions: set[str] = set()
     if result.dry_run:
-        result.next_actions.append("Run `python tools/devbootstrap.py release-gates` without --dry-run to execute implemented gates and create a fresh bundle.")
-    elif result.overall_status == "incomplete":
-        result.next_actions.append("Resolve skipped prerequisites, run opt-in real-backend browser/clean-machine gates when needed, or implement missing release-gates before treating this as a full v1 release signal.")
+        release_gates_add_unique_action(result.next_actions, "Run `python tools/devbootstrap.py release-gates` without --dry-run to execute implemented gates and create a fresh bundle.", seen_actions)
     elif result.overall_status == "ok":
-        result.next_actions.append("Configured release-gates passed; continue with later release validation or manual review.")
+        release_gates_add_unique_action(result.next_actions, "Configured release-gates passed; continue with later release validation or manual review.", seen_actions)
     else:
-        result.next_actions.append("Inspect release-gates logs and fix the classified finding before rerunning.")
+        priority = [
+            "frontend_dependencies_missing",
+            "browser_smoke_prerequisite",
+            "db_test_prerequisite_missing",
+            "smoke_db_write_guard",
+            "real_backend_browser_write_guard",
+            "real_backend_browser_opt_in_required",
+            "runtime_unreachable",
+            "frontend_port_conflict",
+            "clean_machine_optional_not_requested",
+        ]
+        codes = {finding["code"] for finding in result.findings}
+        for code in priority:
+            if code in codes:
+                action = release_gates_next_action_for_code(code)
+                if action:
+                    release_gates_add_unique_action(result.next_actions, action, seen_actions)
+        if result.overall_status == "incomplete":
+            release_gates_add_unique_action(result.next_actions, "Resolve skipped prerequisites, run opt-in real-backend browser/clean-machine gates when needed, or implement missing release-gates before treating this as a full v1 release signal.", seen_actions)
+        if not result.next_actions:
+            release_gates_add_unique_action(result.next_actions, "Inspect release-gates logs and fix the classified finding before rerunning.", seen_actions)
 
 
 def render_release_gates_summary(result: ReleaseGatesResult) -> str:
@@ -5515,6 +5555,28 @@ def command_release_gates(args: argparse.Namespace) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
+    next_gate_index = 1
+    if args.prepare_frontend:
+        prepare_spec = GateSpec(
+            name="frontend_prepare_dependencies",
+            cwd=".",
+            command=[sys.executable, "tools/devbootstrap.py", "prepare-frontend", "--no-write-report"],
+            description="Install or verify frontend dependencies before building release-gates frontend specs.",
+            timeout_seconds=TIMEOUT_POLICY["npm_install"],
+        )
+        effective_timeout = min(args.timeout_seconds, prepare_spec.timeout_seconds) if args.timeout_seconds > 0 else prepare_spec.timeout_seconds
+        result.gates.append(
+            run_gate_process_step(
+                project_root=project_root,
+                logs_dir=logs_dir,
+                index=next_gate_index,
+                spec=prepare_spec,
+                timeout_seconds=effective_timeout,
+                dry_run=args.dry_run,
+            )
+        )
+        next_gate_index += 1
+
     specs = build_release_gate_specs(
         project_root,
         allow_dev_db_write=args.allow_dev_db_write,
@@ -5524,7 +5586,7 @@ def command_release_gates(args: argparse.Namespace) -> int:
         include_clean_machine=args.include_clean_machine,
         dry_run=args.dry_run,
     )
-    for index, spec in enumerate(specs, start=1):
+    for index, spec in enumerate(specs, start=next_gate_index):
         effective_timeout = min(args.timeout_seconds, spec.timeout_seconds) if args.timeout_seconds > 0 else spec.timeout_seconds
         result.gates.append(
             run_gate_process_step(
@@ -6476,6 +6538,43 @@ def case_self_check_release_gates_frontend_dependency_preflight() -> str:
     return "release-gates frontend dependency preflight checked"
 
 
+def case_self_check_release_gates_targeted_next_actions() -> str:
+    result = ReleaseGatesResult(
+        generated_at="2026-05-24T00:00:00+00:00",
+        tool_version=TOOL_VERSION,
+        project_root="/tmp/project",
+        invoked_from="/tmp/project",
+        run_id="selfcheck-release-gates-actions",
+        dry_run=False,
+        timeout_seconds=123,
+        gates=[
+            GateResult(
+                name="frontend_build",
+                status="infra_failed",
+                classification="frontend_dependencies_missing",
+                message="frontend/node_modules is missing",
+                cwd="frontend",
+                command=["npm", "run", "build"],
+            ),
+            GateResult(
+                name="backend_cargo_test_db_ignored",
+                status="skipped_prerequisite",
+                classification="db_test_prerequisite_missing",
+                message="TEST_DATABASE_URL is absent",
+                cwd="backend",
+                command=["cargo", "test", "--", "--include-ignored"],
+            ),
+        ],
+    )
+    finalize_release_gates_result(result)
+    joined = "\n".join(result.next_actions)
+    assert result.overall_status == "infra_failed"
+    assert "--prepare-frontend" in joined
+    assert "TEST_DATABASE_URL" in joined
+    assert "release-gates-test-database.md" in joined
+    return "targeted release-gates next actions checked"
+
+
 def case_self_check_release_gates_keep_going_behavior() -> str:
     with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-keepgoing-") as tmp:
         root = Path(tmp)
@@ -6525,6 +6624,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_ignored_classifier", case_self_check_release_gates_ignored_classifier)
     self_check_case(result, "release_gates_playwright_classifier", case_self_check_release_gates_playwright_classifier)
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
+    self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
     if result.failures:
         result.classification = "failed"
@@ -6700,6 +6800,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["release_gate"], help="Maximum timeout for each implemented gate command.")
     release_gates.add_argument("--output-dir", help="Write the run directory to this path instead of .dev-bootstrap/runs/<run-id>.")
     release_gates.add_argument("--allow-dev-db-write", action="store_true", help="Allow backend Python smoke to write through the configured live backend API when TEST_DATABASE_URL is not present.")
+    release_gates.add_argument("--prepare-frontend", action="store_true", help="Run prepare-frontend inside the release-gates bundle before frontend build/test/browser gates are planned.")
     release_gates.add_argument("--install-playwright-browsers", action="store_true", help="Run npx playwright install when browser binaries are missing before browser smoke.")
     release_gates.add_argument("--include-real-backend-browser", action="store_true", help="Run the dedicated write-capable real-backend Playwright path when its spec and prerequisites exist.")
     release_gates.add_argument("--real-backend-browser-spec", default="e2e/smoke/real-backend.smoke.spec.ts", help="Frontend-relative Playwright spec path for the real-backend browser gate.")
