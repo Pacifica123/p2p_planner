@@ -36,6 +36,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -44,7 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "2.0.0-draft"
 STATE_VERSION = 1
 REPORT_SCHEMA_VERSION = 1
 TIMEOUT_POLICY = {
@@ -60,6 +61,7 @@ TIMEOUT_POLICY = {
     "smoke_step": 600,
     "up_step": 120,
     "stop_grace": 10,
+    "release_gate": 600,
 }
 BOOTSTRAP_DIR_NAME = ".dev-bootstrap"
 DEFAULT_PORTS = {
@@ -4248,6 +4250,504 @@ def command_up(args: argparse.Namespace) -> int:
 
 
 @dataclass
+class GateSpec:
+    name: str
+    cwd: str
+    command: list[str] = field(default_factory=list)
+    description: str = ""
+    required: bool = True
+    timeout_seconds: int = TIMEOUT_POLICY["release_gate"]
+    env_extra: dict[str, str] = field(default_factory=dict)
+    not_implemented_reason: str | None = None
+
+
+@dataclass
+class GateResult:
+    name: str
+    status: str
+    classification: str
+    message: str
+    cwd: str
+    command: list[str] = field(default_factory=list)
+    required: bool = True
+    returncode: int | None = None
+    duration_ms: int | None = None
+    log_path: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ReleaseGatesResult:
+    generated_at: str
+    tool_version: str
+    project_root: str | None
+    invoked_from: str
+    run_id: str
+    dry_run: bool
+    timeout_seconds: int
+    report_dir: str | None = None
+    archive_path: str | None = None
+    overall_status: str = "unknown"
+    classification: str = "unknown"
+    gates: list[GateResult] = field(default_factory=list)
+    findings: list[dict[str, str]] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+
+
+RELEASE_GATES_ARCHIVE_EXCLUDED_PARTS = {
+    ".git",
+    ".venv",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "coverage",
+    "__pycache__",
+    ".pytest_cache",
+}
+RELEASE_GATES_ARCHIVE_EXCLUDED_NAMES = {".env"}
+RELEASE_GATES_ARCHIVE_EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".sqlite", ".sqlite3", ".db")
+
+
+def release_gate_command_display(command: list[str]) -> str:
+    return " ".join(command)
+
+
+def release_gate_log_path(logs_dir: Path, index: int, step_name: str) -> Path:
+    safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "_", step_name).strip("._") or "gate"
+    return logs_dir / f"{index:02d}_{safe_name}.log"
+
+
+def release_gate_sanitize_output(project_root: Path | None, text: str) -> str:
+    if not text:
+        return ""
+    cleaned = text
+    values: dict[str, str] = {}
+    if project_root is not None:
+        for relative in ["backend/.env", "backend/.env.example", "frontend/.env.local", "frontend/.env.example"]:
+            parsed, _ = parse_env_file(project_root / relative)
+            values.update(parsed)
+    for key, value in os.environ.items():
+        if is_secret_key(key):
+            values.setdefault(key, value)
+    for key, value in values.items():
+        if not value:
+            continue
+        masked = mask_value(key, value)
+        if masked != value:
+            cleaned = cleaned.replace(value, masked)
+            if key.upper() in {"DATABASE__URL", "DATABASE_URL"}:
+                try:
+                    parsed = urllib.parse.urlsplit(value)
+                    if parsed.password:
+                        cleaned = cleaned.replace(urllib.parse.unquote(parsed.password), "***")
+                except Exception:
+                    pass
+    cleaned = re.sub(r"(postgres(?:ql)?://[^:\s/@]+:)[^@\s]+(@)", r"\1***\2", cleaned)
+    return cleaned
+
+
+def classify_gate_output(name: str, stdout: str, stderr: str, error: str | None, returncode: int | None) -> tuple[str, str, str]:
+    output = "\n".join(part for part in [stdout, stderr, error or ""] if part)
+    lower = output.lower()
+    if error == "timeout":
+        return "timeout", f"{name}_timeout", "gate timed out"
+    if returncode == 0:
+        if "ignored" in lower and "test result:" in lower:
+            return "partial_pass", "critical_tests_ignored", "command exited 0, but output mentions ignored tests"
+        return "ok", "ok", "gate completed"
+    if "playwright" in lower and ("browser" in lower or "install" in lower or "executable doesn't exist" in lower):
+        return "infra_failed", "browser_smoke_prerequisite", "Playwright browser prerequisite appears to be missing"
+    if "command not found" in lower or "not found on path" in lower or "no such file or directory" in lower:
+        return "infra_failed", "missing_prerequisite", "required command or file is unavailable"
+    if "connection refused" in lower or "networkerror" in lower or "failed to fetch" in lower:
+        return "infra_failed", "runtime_unreachable", "runtime prerequisite is unreachable"
+    return "failed", f"{name}_failed", "gate failed; see log"
+
+
+def run_gate_process_step(
+    *,
+    project_root: Path,
+    logs_dir: Path,
+    index: int,
+    spec: GateSpec,
+    timeout_seconds: int,
+    dry_run: bool = False,
+) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, spec.name)
+    cwd = project_root / spec.cwd if spec.cwd else project_root
+    if spec.not_implemented_reason:
+        message = spec.not_implemented_reason
+        log_path.write_text(
+            "\n".join(
+                [
+                    f"# {spec.name}",
+                    "status: not_implemented",
+                    f"cwd: {spec.cwd or '.'}",
+                    f"reason: {message}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return GateResult(
+            name=spec.name,
+            status="not_implemented",
+            classification="not_implemented",
+            message=message,
+            cwd=spec.cwd or ".",
+            command=spec.command,
+            required=spec.required,
+            log_path=rel(log_path, project_root),
+        )
+    if dry_run:
+        command_text = release_gate_command_display(spec.command)
+        log_path.write_text(
+            "\n".join(
+                [
+                    f"$ {command_text}",
+                    f"cwd: {spec.cwd or '.'}",
+                    "status: planned",
+                    "reason: --dry-run was provided; command was not executed",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return GateResult(
+            name=spec.name,
+            status="planned",
+            classification="dry_run",
+            message="would run gate command",
+            cwd=spec.cwd or ".",
+            command=spec.command,
+            required=spec.required,
+            log_path=rel(log_path, project_root),
+        )
+    started = time.monotonic()
+    env_extra = {"PYTHONDONTWRITEBYTECODE": "1"}
+    env_extra.update(spec.env_extra)
+    probe = run_process_probe(spec.name, spec.command, cwd=cwd, timeout=timeout_seconds, env_extra=env_extra)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    stdout = release_gate_sanitize_output(project_root, probe.stdout or "")
+    stderr = release_gate_sanitize_output(project_root, probe.stderr or probe.error or "")
+    status, classification, message = classify_gate_output(spec.name, stdout, stderr, probe.error, probe.returncode)
+    if not probe.available:
+        status, classification, message = "infra_failed", "missing_prerequisite", f"required command is unavailable: {spec.command[0]}"
+    log_path.write_text(
+        "\n".join(
+            [
+                f"$ {release_gate_command_display(spec.command)}",
+                f"cwd: {spec.cwd or '.'}",
+                f"exit: {probe.returncode if probe.returncode is not None else probe.error or '<none>'}",
+                f"duration_ms: {duration_ms}",
+                f"status: {status}",
+                f"classification: {classification}",
+                "",
+                "## stdout",
+                stdout or "<empty>",
+                "",
+                "## stderr",
+                stderr or "<empty>",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return GateResult(
+        name=spec.name,
+        status=status,
+        classification=classification,
+        message=message,
+        cwd=spec.cwd or ".",
+        command=spec.command,
+        required=spec.required,
+        returncode=probe.returncode,
+        duration_ms=duration_ms,
+        log_path=rel(log_path, project_root),
+    )
+
+
+def build_release_gate_specs(project_root: Path) -> list[GateSpec]:
+    return [
+        GateSpec(
+            name="self_check",
+            cwd=".",
+            command=[sys.executable, "tools/devbootstrap.py", "self-check", "--no-write-report", "--json"],
+            description="Run devbootstrap internal stdlib fixtures before aggregating release-gates.",
+            timeout_seconds=120,
+        ),
+        GateSpec(
+            name="diagnose",
+            cwd=".",
+            command=[sys.executable, "tools/devbootstrap.py", "diagnose", "--no-write-report", "--json"],
+            description="Capture read-only environment diagnostics for the release-gates bundle.",
+            timeout_seconds=120,
+        ),
+        GateSpec(
+            name="release_gates_matrix",
+            cwd=".",
+            command=[],
+            description="Placeholder for backend/frontend/browser/docs release gates planned in phases 3-6.",
+            not_implemented_reason="Phase 1/2 implements the keep-going runner and report bundle only; backend/frontend/browser/docs gates are intentionally reserved for later phases.",
+        ),
+    ]
+
+
+def release_gates_overall_status(gates: list[GateResult], *, dry_run: bool) -> tuple[str, str]:
+    if dry_run:
+        return "dry_run", "release_gates_dry_run"
+    statuses = {gate.status for gate in gates if gate.required}
+    if "failed" in statuses:
+        return "failed", "release_gates_failed"
+    if "timeout" in statuses:
+        return "failed", "release_gates_timeout"
+    if "infra_failed" in statuses:
+        return "infra_failed", "release_gates_infra_failed"
+    if "not_implemented" in statuses:
+        return "incomplete", "release_gates_incomplete"
+    if "partial_pass" in statuses:
+        return "partial_pass", "release_gates_partial_pass"
+    if statuses and statuses.issubset({"ok"}):
+        return "ok", "release_gates_ok"
+    return "unknown", "release_gates_unknown"
+
+
+def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
+    result.overall_status, result.classification = release_gates_overall_status(result.gates, dry_run=result.dry_run)
+    result.findings.clear()
+    for gate in result.gates:
+        if gate.status not in {"ok", "planned"}:
+            severity = "warn" if gate.status in {"partial_pass", "not_implemented"} else "fail"
+            result.findings.append(
+                {
+                    "severity": severity,
+                    "code": gate.classification,
+                    "message": f"{gate.name}: {gate.message}",
+                }
+            )
+    result.next_actions.clear()
+    if result.dry_run:
+        result.next_actions.append("Run `python tools/devbootstrap.py release-gates` without --dry-run to execute implemented gates and create a fresh bundle.")
+    elif result.overall_status == "incomplete":
+        result.next_actions.append("Implement Phase 3+ gates before treating release-gates as a full v1 release signal.")
+    elif result.overall_status == "ok":
+        result.next_actions.append("Configured release-gates passed; continue with later release validation or manual review.")
+    else:
+        result.next_actions.append("Inspect release-gates logs and fix the classified finding before rerunning.")
+
+
+def render_release_gates_summary(result: ReleaseGatesResult) -> str:
+    lines: list[str] = []
+    lines.append("# release-gates summary")
+    lines.append("")
+    lines.append(f"Overall: {result.overall_status}")
+    lines.append(f"Classification: {result.classification}")
+    lines.append(f"Generated: {result.generated_at}")
+    lines.append(f"Dry run: {result.dry_run}")
+    lines.append(f"Project root: {result.project_root or 'not found'}")
+    lines.append(f"Report dir: {result.report_dir or '<not written>'}")
+    if result.archive_path:
+        lines.append(f"Archive: {result.archive_path}")
+    lines.append("")
+    for gate in result.gates:
+        lines.append(f"> {release_gate_command_display(gate.command) if gate.command else gate.name}")
+        lines.append(f"status: {gate.status}")
+        lines.append(f"classification: {gate.classification}")
+        lines.append(f"reason: {gate.message}")
+        if gate.log_path:
+            lines.append(f"log: {gate.log_path}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def render_release_gates_report(result: ReleaseGatesResult) -> str:
+    lines: list[str] = []
+    lines.append("# devbootstrap release-gates report")
+    lines.append("")
+    lines.append(f"- Generated at: `{result.generated_at}`")
+    lines.append(f"- Tool version: `{result.tool_version}`")
+    lines.append(f"- Project root: `{result.project_root or 'not found'}`")
+    lines.append(f"- Invoked from: `{result.invoked_from}`")
+    lines.append(f"- Overall status: `{result.overall_status}`")
+    lines.append(f"- Classification: `{result.classification}`")
+    lines.append(f"- Dry run: `{result.dry_run}`")
+    if result.archive_path:
+        lines.append(f"- Archive: `{result.archive_path}`")
+    lines.append("")
+    lines.append("## Gates")
+    lines.append("")
+    lines.append("| Gate | Status | Classification | Command | Log |")
+    lines.append("|---|---|---|---|---|")
+    for gate in result.gates:
+        command = release_gate_command_display(gate.command) if gate.command else gate.name
+        log = f"`{gate.log_path}`" if gate.log_path else ""
+        lines.append(f"| `{gate.name}` | {gate.status} | `{gate.classification}` | `{command}` | {log} |")
+    lines.append("")
+    lines.append("## Findings")
+    lines.append("")
+    if result.findings:
+        for finding in result.findings:
+            lines.append(f"- **{finding['severity'].upper()}** `{finding['code']}` — {finding['message']}")
+    else:
+        lines.append("- No blocking findings from configured release-gates.")
+    lines.append("")
+    lines.append("## Next safe actions")
+    lines.append("")
+    for action in result.next_actions:
+        lines.append(f"- {action}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def release_gates_json_payload(result: ReleaseGatesResult) -> dict[str, Any]:
+    return {
+        "schemaVersion": 1,
+        "command": "release-gates",
+        "toolVersion": result.tool_version,
+        "generatedAt": result.generated_at,
+        "projectRoot": result.project_root,
+        "invokedFrom": result.invoked_from,
+        "runId": result.run_id,
+        "dryRun": result.dry_run,
+        "timeoutSeconds": result.timeout_seconds,
+        "overallStatus": result.overall_status,
+        "classification": result.classification,
+        "reportDir": result.report_dir,
+        "archivePath": result.archive_path,
+        "gates": [as_jsonable(gate) for gate in result.gates],
+        "findings": result.findings,
+        "nextActions": result.next_actions,
+    }
+
+
+def release_gates_archive_excluded(path: Path, root: Path, archive_path: Path) -> bool:
+    if path == archive_path:
+        return True
+    if path.suffix == ".zip" and path.name.startswith("release-gates_"):
+        return True
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    if any(part in RELEASE_GATES_ARCHIVE_EXCLUDED_PARTS for part in relative.parts):
+        return True
+    if path.name in RELEASE_GATES_ARCHIVE_EXCLUDED_NAMES:
+        return True
+    if path.name.startswith(".env."):
+        return True
+    if path.suffix in RELEASE_GATES_ARCHIVE_EXCLUDED_SUFFIXES:
+        return True
+    return False
+
+
+def create_release_gates_archive(run_dir: Path, archive_path: Path) -> None:
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(run_dir.rglob("*")):
+            if path.is_dir() or release_gates_archive_excluded(path, run_dir, archive_path):
+                continue
+            zf.write(path, path.relative_to(run_dir).as_posix())
+
+
+def write_release_gates_reports(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> None:
+    result.report_dir = rel(run_dir, project_root)
+    timestamp = now_utc().strftime("%Y%m%d_%H%M%S")
+    archive_path = run_dir / f"release-gates_{timestamp}.zip"
+    result.archive_path = rel(archive_path, project_root)
+    (run_dir / "summary.txt").write_text(render_release_gates_summary(result), encoding="utf-8")
+    (run_dir / "release-gates.md").write_text(render_release_gates_report(result), encoding="utf-8")
+    write_json(run_dir / "release-gates.json", release_gates_json_payload(result))
+    create_release_gates_archive(run_dir, archive_path)
+    append_report_to_state(project_root, run_dir, result.run_id)
+
+
+def print_release_gates_summary(result: ReleaseGatesResult) -> None:
+    print_header("devbootstrap release-gates")
+    print(f"Tool version: {result.tool_version}")
+    print(f"Project root: {result.project_root or 'not found'}")
+    print(f"Overall: {result.overall_status}")
+    print(f"Classification: {result.classification}")
+    print(f"Dry run: {result.dry_run}")
+    print("\nGates:")
+    for gate in result.gates:
+        suffix = f" — {gate.log_path}" if gate.log_path else ""
+        print(f"  - {gate.status.upper()} {gate.name}: {gate.message}{suffix}")
+    if result.findings:
+        print("\nFindings:")
+        for finding in result.findings:
+            print(f"  - {finding['severity'].upper()} {finding['code']}: {finding['message']}")
+    if result.next_actions:
+        print("\nNext safe actions:")
+        for action in result.next_actions:
+            print(f"  - {action}")
+    if result.report_dir:
+        print(f"\nReport: {result.report_dir}/release-gates.md")
+    if result.archive_path:
+        print(f"Archive: {result.archive_path}")
+
+
+def command_release_gates(args: argparse.Namespace) -> int:
+    invoked_from = Path.cwd()
+    project_root = find_project_root(invoked_from)
+    run_id_value = run_id("release-gates")
+    result = ReleaseGatesResult(
+        generated_at=iso_now(),
+        tool_version=TOOL_VERSION,
+        project_root=str(project_root) if project_root else None,
+        invoked_from=str(invoked_from),
+        run_id=run_id_value,
+        dry_run=args.dry_run,
+        timeout_seconds=args.timeout_seconds,
+    )
+    if project_root is None:
+        result.overall_status = "failed"
+        result.classification = "invalid_project_root"
+        result.findings.append({"severity": "fail", "code": "invalid_project_root", "message": "Could not find project root."})
+        result.next_actions.append("Run this command from the project root, tools/, backend/ or frontend/ directory.")
+        print_release_gates_summary(result)
+        if args.json:
+            print("\nJSON:")
+            print(json.dumps(release_gates_json_payload(result), ensure_ascii=False, indent=2))
+        return 1
+
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+        if not output_dir.is_absolute():
+            output_dir = project_root / output_dir
+        run_dir = output_dir
+        run_id_value = run_dir.name
+        result.run_id = run_id_value
+    else:
+        run_dir = project_root / BOOTSTRAP_DIR_NAME / "runs" / run_id_value
+    logs_dir = run_dir / "logs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    specs = build_release_gate_specs(project_root)
+    for index, spec in enumerate(specs, start=1):
+        effective_timeout = min(args.timeout_seconds, spec.timeout_seconds) if args.timeout_seconds > 0 else spec.timeout_seconds
+        result.gates.append(
+            run_gate_process_step(
+                project_root=project_root,
+                logs_dir=logs_dir,
+                index=index,
+                spec=spec,
+                timeout_seconds=effective_timeout,
+                dry_run=args.dry_run,
+            )
+        )
+    finalize_release_gates_result(result)
+    write_release_gates_reports(project_root, result, run_dir)
+    print_release_gates_summary(result)
+    if args.json:
+        print("\nJSON:")
+        print(json.dumps(release_gates_json_payload(result), ensure_ascii=False, indent=2))
+    if result.dry_run:
+        return 0
+    return 0 if result.overall_status == "ok" else 1
+
+
+@dataclass
 class StopTarget:
     name: str
     pid: int | None
@@ -4904,7 +5404,7 @@ def self_check_case(result: SelfCheckResult, name: str, func: Any) -> None:
 
 
 def case_self_check_version_and_timeout_policy() -> str:
-    assert TOOL_VERSION == "1.0.0", f"expected TOOL_VERSION 1.0.0, got {TOOL_VERSION}"
+    assert TOOL_VERSION == "2.0.0-draft", f"expected TOOL_VERSION 2.0.0-draft, got {TOOL_VERSION}"
     required = {
         "probe_command",
         "port_probe",
@@ -4918,6 +5418,7 @@ def case_self_check_version_and_timeout_policy() -> str:
         "smoke_step",
         "up_step",
         "stop_grace",
+        "release_gate",
     }
     missing = sorted(required.difference(TIMEOUT_POLICY))
     assert not missing, "missing timeout policy keys: " + ", ".join(missing)
@@ -5231,6 +5732,13 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--no-write-report", action="store_true", help="Do not create a standalone smoke report; step logs may still be temporary for command execution.")
     smoke.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     smoke.set_defaults(func=command_smoke)
+
+    release_gates = subparsers.add_parser("release-gates", help="Run keep-going release-gates scaffold and create a shareable report bundle.")
+    release_gates.add_argument("--dry-run", action="store_true", help="Create a planned release-gates bundle without executing gate commands.")
+    release_gates.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["release_gate"], help="Maximum timeout for each implemented gate command.")
+    release_gates.add_argument("--output-dir", help="Write the run directory to this path instead of .dev-bootstrap/runs/<run-id>.")
+    release_gates.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
+    release_gates.set_defaults(func=command_release_gates)
 
     status = subparsers.add_parser("status", help="Show devbootstrap runtime state, process liveness, ports and health probes.")
     status.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")

@@ -1,6 +1,6 @@
 # devbootstrap v2 release gates plan
 
-- Статус: Draft v2 plan
+- Статус: Draft v2 plan; Phase 1/2 implemented in `tools/devbootstrap.py`
 - Дата: 2026-05-24
 - Назначение: спланировать развитие `tools/devbootstrap.py` до режима «одной волшебной кнопки» для проверки блока `7. Testing and release gates` из `docs/product/v1-remaining-checklist.md`.
 
@@ -313,7 +313,23 @@ Overall status rules:
 
 ### Phase 1 — Generic keep-going gate runner
 
-Add internal primitives:
+Status in this patch: **implemented as the release-gates scaffold**.
+
+Implemented internal primitives:
+
+- `GateSpec`;
+- `GateResult`;
+- `ReleaseGatesResult`;
+- `run_gate_process_step(...)`;
+- common log writer;
+- stdout/stderr capture;
+- duration, return code and timeout handling;
+- output classifiers for `ok`, `partial_pass`, `failed`, `infra_failed`, `timeout` and `not_implemented`.
+
+Remaining backend/frontend gate matrix is intentionally left for Phase 3+.
+
+Original Phase 1 target:
+
 
 - `GateSpec`;
 - `GateResult`;
@@ -333,7 +349,24 @@ python tools/devbootstrap.py release-gates --dry-run
 
 ### Phase 2 — Release-gates command and summary bundle
 
-Add CLI command:
+Status in this patch: **implemented as a runnable command and report-bundle contract**.
+
+Implemented:
+
+- `python tools/devbootstrap.py release-gates`;
+- `--dry-run` mode for safe plan/report generation;
+- optional `--output-dir`;
+- `release-gates.md`;
+- `release-gates.json`;
+- `summary.txt`;
+- `logs/*.log`;
+- `release-gates_YYYYMMDD_HHMMSS.zip`;
+- archive exclusion rules for `__pycache__`, `.pytest_cache`, `node_modules`, `target`, `dist`, `build`, `.env*`, local DB files and bytecode.
+
+The command currently runs only the implemented scaffold gates (`self-check`, `diagnose`) and includes an explicit `not_implemented` gate for the future release matrix, so it cannot be mistaken for a full v1 release pass before Phase 3+.
+
+Original Phase 2 target:
+
 
 ```bash
 python tools/devbootstrap.py release-gates
