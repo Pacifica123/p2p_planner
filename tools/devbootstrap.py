@@ -4311,7 +4311,7 @@ RELEASE_GATES_ARCHIVE_EXCLUDED_PARTS = {
     ".pytest_cache",
 }
 RELEASE_GATES_ARCHIVE_EXCLUDED_NAMES = {".env"}
-RELEASE_GATES_ARCHIVE_EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".sqlite", ".sqlite3", ".db")
+RELEASE_GATES_ARCHIVE_EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".sqlite", ".sqlite3", ".db", ".tsbuildinfo")
 
 
 def release_gate_command_display(command: list[str]) -> str:
@@ -4606,6 +4606,73 @@ def frontend_package_has_dependency(package_data: dict[str, Any], dependency_nam
         if isinstance(value, dict) and dependency_name in value:
             return True
     return False
+
+
+def release_gate_frontend_dependency_status(project_root: Path) -> tuple[bool, str | None, dict[str, Any]]:
+    package_data, package_error = read_frontend_package(project_root)
+    package_json_path = project_root / "frontend" / "package.json"
+    package_lock_path = project_root / "frontend" / "package-lock.json"
+    node_modules_path = project_root / "frontend" / "node_modules"
+    marker_path = frontend_install_marker_path(project_root)
+    package_json_hash = sha256_file(package_json_path)
+    package_lock_hash = sha256_file(package_lock_path)
+    marker = load_frontend_install_marker(project_root)
+    marker_valid = frontend_install_marker_matches(project_root, package_json_hash, package_lock_hash)
+    marker_error = marker.get("_error") if isinstance(marker, dict) else None
+    details: dict[str, Any] = {
+        "packageError": package_error,
+        "packageJsonExists": package_json_path.is_file(),
+        "packageLockExists": package_lock_path.is_file(),
+        "nodeModulesExists": node_modules_path.is_dir(),
+        "installMarkerPath": rel(marker_path, project_root),
+        "installMarkerExists": marker_path.is_file(),
+        "installMarkerValid": marker_valid,
+        "installMarkerError": marker_error,
+        "packageJsonSha256": package_json_hash,
+        "packageLockSha256": package_lock_hash,
+        "markerPackageJsonSha256": marker.get("packageJsonSha256") if isinstance(marker, dict) else None,
+        "markerPackageLockSha256": marker.get("packageLockSha256") if isinstance(marker, dict) else None,
+        "installCommand": release_gate_command_display(frontend_install_command(project_root)),
+    }
+    findings: list[str] = []
+    if package_error:
+        findings.append(package_error)
+    if not package_lock_path.is_file():
+        findings.append("frontend/package-lock.json is missing")
+    if not node_modules_path.is_dir():
+        findings.append("frontend/node_modules is missing")
+    elif not marker_valid:
+        findings.append("frontend install marker is missing or stale for package.json/package-lock.json")
+
+    # Keep package_data in scope intentionally through read_frontend_package: invalid JSON is
+    # reported as a dependency preflight failure before npm/vite/vitest can emit noisy cascades.
+    _ = package_data
+    if findings:
+        reason = "; ".join(findings) + "; run `python tools/devbootstrap.py prepare-frontend --force-install` before release-gates."
+        return False, reason, details
+    return True, None, details
+
+
+def release_gate_frontend_dependency_skip_spec(
+    *,
+    name: str,
+    command: list[str],
+    description: str,
+    reason: str,
+    details: dict[str, Any],
+    timeout_seconds: int = 600,
+) -> GateSpec:
+    return GateSpec(
+        name=name,
+        cwd="frontend",
+        command=command,
+        description=description,
+        timeout_seconds=timeout_seconds,
+        skip_status="infra_failed",
+        skip_classification="frontend_dependencies_missing",
+        skip_reason=reason,
+        details=details,
+    )
 
 
 def release_gate_path_has_text(path: Path, required_fragments: list[str]) -> tuple[bool, list[str], str]:
@@ -4937,24 +5004,53 @@ def build_release_gate_specs(
                 )
             )
 
-    specs.extend(
-        [
-            GateSpec(
-                name="frontend_build",
-                cwd="frontend",
-                command=["npm", "run", "build"],
-                description="Run TypeScript/Vite production build.",
-                timeout_seconds=600,
-            ),
-            GateSpec(
-                name="frontend_unit_integration",
-                cwd="frontend",
-                command=["npm", "run", "test:run"],
-                description="Run Vitest unit/integration tests.",
-                timeout_seconds=600,
-            ),
-        ]
-    )
+    frontend_deps_ready, frontend_deps_reason, frontend_deps_details = release_gate_frontend_dependency_status(project_root)
+    frontend_build_details = {"frontendDependencies": frontend_deps_details}
+    frontend_test_details = {"frontendDependencies": frontend_deps_details}
+    if dry_run or frontend_deps_ready:
+        if dry_run and not frontend_deps_ready:
+            frontend_build_details["dryRunPrerequisiteBypassed"] = True
+            frontend_test_details["dryRunPrerequisiteBypassed"] = True
+        specs.extend(
+            [
+                GateSpec(
+                    name="frontend_build",
+                    cwd="frontend",
+                    command=["npm", "run", "build"],
+                    description="Run TypeScript/Vite production build.",
+                    timeout_seconds=600,
+                    details=frontend_build_details,
+                ),
+                GateSpec(
+                    name="frontend_unit_integration",
+                    cwd="frontend",
+                    command=["npm", "run", "test:run"],
+                    description="Run Vitest unit/integration tests.",
+                    timeout_seconds=600,
+                    details=frontend_test_details,
+                ),
+            ]
+        )
+    else:
+        dependency_reason = frontend_deps_reason or "frontend dependencies are missing or stale; run `python tools/devbootstrap.py prepare-frontend --force-install` before release-gates."
+        specs.extend(
+            [
+                release_gate_frontend_dependency_skip_spec(
+                    name="frontend_build",
+                    command=["npm", "run", "build"],
+                    description="Run TypeScript/Vite production build.",
+                    reason=dependency_reason,
+                    details=frontend_build_details,
+                ),
+                release_gate_frontend_dependency_skip_spec(
+                    name="frontend_unit_integration",
+                    command=["npm", "run", "test:run"],
+                    description="Run Vitest unit/integration tests.",
+                    reason=dependency_reason,
+                    details=frontend_test_details,
+                ),
+            ]
+        )
 
     package_data, package_error = read_frontend_package(project_root)
     scripts = frontend_scripts_from_package(package_data) if not package_error else {}
@@ -4968,9 +5064,20 @@ def build_release_gate_specs(
         "nodePackagePresent": playwright_node_package_present,
         "chromiumExecutablePresent": chromium_present,
         "checkedBrowserCacheRoots": chromium_evidence,
+        "frontendDependencies": frontend_deps_details,
     }
 
-    if dry_run and not package_error and "test:browser" in scripts and playwright_dependency_present:
+    if not frontend_deps_ready and not dry_run:
+        specs.append(
+            release_gate_frontend_dependency_skip_spec(
+                name="frontend_browser_smoke",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke.",
+                reason=frontend_deps_reason or "frontend dependencies are missing or stale; run `python tools/devbootstrap.py prepare-frontend --force-install` before release-gates.",
+                details=browser_details,
+            )
+        )
+    elif dry_run and not package_error and "test:browser" in scripts and playwright_dependency_present:
         browser_details["dryRunPrerequisiteBypassed"] = not playwright_node_package_present or not chromium_present
         specs.append(
             GateSpec(
@@ -6301,13 +6408,22 @@ def case_self_check_release_gates_archive_exclusions() -> str:
         (root / "node_modules").mkdir()
         (root / "node_modules" / "bad.txt").write_text("bad", encoding="utf-8")
         (root / ".env").write_text("SECRET=bad", encoding="utf-8")
+        (root / "frontend.tsbuildinfo").write_text("generated", encoding="utf-8")
         archive_path = root / "release-gates_selfcheck.zip"
         create_release_gates_archive(root, archive_path)
         with zipfile.ZipFile(archive_path) as zf:
             names = set(zf.namelist())
     assert "summary.txt" in names
     assert "logs/01_ok.log" in names
-    forbidden = [name for name in names if "__pycache__" in name or ".pytest_cache" in name or "node_modules" in name or name == ".env" or name.endswith(".pyc")]
+    forbidden = [
+        name
+        for name in names
+        if "__pycache__" in name
+        or ".pytest_cache" in name
+        or "node_modules" in name
+        or name == ".env"
+        or name.endswith((".pyc", ".tsbuildinfo"))
+    ]
     assert not forbidden, "forbidden archive entries: " + ", ".join(sorted(forbidden))
     return "release-gates archive exclusion rules checked"
 
@@ -6328,6 +6444,36 @@ def case_self_check_release_gates_playwright_classifier() -> str:
     assert classification == "browser_smoke_prerequisite"
     assert "Playwright" in message
     return "Playwright missing-browser classifier checked"
+
+
+def case_self_check_release_gates_frontend_dependency_preflight() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-frontend-") as tmp:
+        root = Path(tmp)
+        frontend = root / "frontend"
+        frontend.mkdir()
+        (root / "backend").mkdir()
+        (frontend / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "build": "tsc -b && vite build",
+                        "test:run": "vitest run",
+                        "test:browser": "playwright test e2e/smoke/auth-and-workspaces.smoke.spec.ts",
+                    },
+                    "devDependencies": {"@playwright/test": "1.55.0"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+        specs = build_release_gate_specs(root)
+        by_name = {spec.name: spec for spec in specs}
+    for name in ["frontend_build", "frontend_unit_integration", "frontend_browser_smoke"]:
+        spec = by_name[name]
+        assert spec.skip_status == "infra_failed", name
+        assert spec.skip_classification == "frontend_dependencies_missing", name
+        assert "prepare-frontend --force-install" in (spec.skip_reason or ""), name
+    return "release-gates frontend dependency preflight checked"
 
 
 def case_self_check_release_gates_keep_going_behavior() -> str:
@@ -6378,6 +6524,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_archive_exclusions", case_self_check_release_gates_archive_exclusions)
     self_check_case(result, "release_gates_ignored_classifier", case_self_check_release_gates_ignored_classifier)
     self_check_case(result, "release_gates_playwright_classifier", case_self_check_release_gates_playwright_classifier)
+    self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
     if result.failures:
         result.classification = "failed"

@@ -141,7 +141,7 @@
 
 - [ ] Убедиться, что `target/`, `node_modules/`, `dist/`, `build/` не попадают в snapshots.
 - [ ] Убедиться, что `release/**/*.zip` и `release/**/*.exe` заменяются заглушками.
-- [ ] Добавить exclude для `*.tsbuildinfo`.
+- [x] Добавить exclude для `*.tsbuildinfo`.
 - [ ] Проверить, нужны ли generated `vite.config.js/.d.ts`; если нет — исключить.
 - [ ] Проверить, что патчи всегда идут в новом формате: `manifest.json + files/...`.
 

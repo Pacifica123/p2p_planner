@@ -111,7 +111,17 @@ python tools/devbootstrap.py release-gates --json
 | `frontend_unit_integration` | `frontend` | `npm run test:run` | Проверить Vitest unit/integration tests. |
 | `frontend_browser_smoke` | `frontend` | `npm run test:browser` | Проверить Playwright browser smoke. |
 
-Для browser smoke нужен отдельный prerequisite detector:
+Перед запуском любого frontend gate runner должен проверить:
+
+- `frontend/package.json`;
+- `frontend/package-lock.json`;
+- `frontend/node_modules`;
+- `.dev-bootstrap/frontend-install.json`;
+- совпадение install-marker hash-ей с текущими `package.json` / `package-lock.json`.
+
+Если зависимости отсутствуют или marker устарел, gate должен стать `infra_failed` / `frontend_dependencies_missing`, а не запускать `tsc`, Vitest или Playwright. Подсказка для next action: `python tools/devbootstrap.py prepare-frontend --force-install`. `--dry-run` этот prerequisite не требует и только показывает планируемую матрицу gates.
+
+Для browser smoke также нужен отдельный prerequisite detector:
 
 - проверить наличие Playwright package;
 - проверить наличие ожидаемых browser binaries;
@@ -309,6 +319,10 @@ Overall status rules:
 - any `partial_pass` without hard failures → `partial_pass`;
 
 ---
+
+## 7.1. Test database setup
+
+Практический безопасный контур для DB-writing release gates описан в `docs/dev-bootstrap/release-gates-test-database.md`. Ключевой принцип: `TEST_DATABASE_URL` должен указывать на отдельную test DB, а live backend для Python smoke / real-backend browser должен быть перезапущен против этой же DB.
 
 ## 8. Implementation phases
 

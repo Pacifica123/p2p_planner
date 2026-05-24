@@ -225,3 +225,12 @@ cargo test --test appearance_smoke -- --ignored
 cd frontend
 npm run test:browser
 ```
+
+`test:browser` запускает только mocked exact-spec `e2e/smoke/auth-and-workspaces.smoke.spec.ts`. Write-capable no-mock сценарий вынесен в отдельный opt-in script:
+
+```bash
+cd frontend
+npm run test:browser:real-backend
+```
+
+Для безопасного DB-writing release review подготовь отдельную test DB по инструкции `docs/dev-bootstrap/release-gates-test-database.md` и запускай real-backend browser gate через `python tools/devbootstrap.py release-gates --include-real-backend-browser`.

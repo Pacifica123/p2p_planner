@@ -9,8 +9,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:browser": "playwright test",
-    "test:browser:headed": "playwright test --headed",
+    "test:browser": "playwright test e2e/smoke/auth-and-workspaces.smoke.spec.ts",
+    "test:browser:headed": "playwright test e2e/smoke/auth-and-workspaces.smoke.spec.ts --headed",
     "test:browser:real-backend": "playwright test e2e/smoke/real-backend.smoke.spec.ts"
   },
   "dependencies": {

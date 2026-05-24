@@ -46,14 +46,14 @@ ARCHIVE_EXCLUDED_PARTS = {
     "tmp",
     "__pycache__",
 }
-ARCHIVE_EXCLUDED_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+ARCHIVE_EXCLUDED_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".tsbuildinfo")
 RELEASE_DIR_NAME = "release"
 RELEASE_ARCHIVE_PAYLOAD_SUFFIXES = (".zip",)
 RELEASE_EXECUTABLE_PAYLOAD_SUFFIXES = (".exe",)
 RELEASE_ZIP_PLACEHOLDER = "тут_был_zip_архив.txt"
 RELEASE_EXE_PLACEHOLDER = "тут_был_экзешник.txt"
 ARCHIVE_SIZE_WARNING_BYTES = 100 * 1024 * 1024
-DANGEROUS_GIT_PATH_SUFFIXES = ARCHIVE_EXCLUDED_SUFFIXES + (".pyc", ".pyo")
+DANGEROUS_GIT_PATH_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".pyc", ".pyo")
 DANGEROUS_GIT_PATH_PARTS = {"node_modules", "target", ".git", "__pycache__"}
 
 

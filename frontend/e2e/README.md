@@ -2,7 +2,7 @@
 
 Здесь живет короткий browser smoke слой на Playwright.
 
-Он намеренно остается маленьким и проверяет только критичный пользовательский путь:
+Обычный smoke намеренно остается маленьким, deterministic и mocked. Он проверяет только критичный пользовательский путь:
 - boot;
 - auth screen;
 - sign-in transition;
@@ -15,6 +15,13 @@
 npm run test:browser
 ```
 
+Этот npm script запускает только exact-spec:
+
+```bash
+playwright test e2e/smoke/auth-and-workspaces.smoke.spec.ts
+```
+
+Это важно для `devbootstrap release-gates`: mocked browser smoke не должен случайно запускать сценарии, которые пишут через настоящий backend.
 
 ## Real-backend browser path
 
