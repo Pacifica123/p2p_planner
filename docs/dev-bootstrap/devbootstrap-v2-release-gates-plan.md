@@ -1,6 +1,6 @@
 # devbootstrap v2 release gates plan
 
-- Статус: Draft v2 plan; Phase 1/2/3/4 implemented in `tools/devbootstrap.py`
+- Статус: Draft v2 plan; Phase 1–7 implemented in `tools/devbootstrap.py`
 - Дата: 2026-05-24
 - Назначение: спланировать развитие `tools/devbootstrap.py` до режима «одной волшебной кнопки» для проверки блока `7. Testing and release gates` из `docs/product/v1-remaining-checklist.md`.
 
@@ -327,7 +327,7 @@ Implemented internal primitives:
 - duration, return code and timeout handling;
 - output classifiers for `ok`, `partial_pass`, `failed`, `infra_failed`, `timeout` and `not_implemented`.
 
-Backend/frontend gate matrix is now implemented in Phase 3/4; real-backend browser path, clean-machine and docs gates remain reserved for Phase 5/6.
+Backend/frontend gate matrix is implemented in Phase 3/4; Phase 5/6/7 add the real-backend browser gate, docs gates, optional clean-machine quickstart and self-check fixtures.
 
 Original Phase 1 target:
 
@@ -431,41 +431,68 @@ Acceptance:
 
 ### Phase 5 — Real backend browser path gate
 
-Add or reserve:
+Status in this patch: **implemented as a dedicated opt-in real-backend browser gate**.
 
-- separate Playwright spec without API mocks;
-- CLI selection for mocked smoke vs real-backend smoke;
-- clear `not_implemented` until spec exists.
+Implemented:
+
+- separate Playwright spec `frontend/e2e/smoke/real-backend.smoke.spec.ts` without `page.route` API mocks;
+- npm script `npm run test:browser:real-backend`;
+- release-gates flag `--include-real-backend-browser`;
+- real-backend browser write guard: the gate requires `TEST_DATABASE_URL` or explicit `--allow-dev-db-write`;
+- report details that mocked browser smoke does not satisfy `browser_real_backend_path`;
+- if the spec is absent in a future branch, the gate returns `not_implemented` rather than silently passing.
 
 Acceptance:
 
 - mocked browser smoke cannot accidentally close the real-backend checklist item;
-- report explains which browser path was checked.
+- report explains which browser path was checked;
+- write-capable browser path is explicit and cannot mutate a dev DB accidentally.
 
 ### Phase 6 — Clean-machine and docs gates
 
-Add optional clean-machine check and static docs checks.
+Status in this patch: **implemented**.
+
+Implemented:
+
+- optional `--include-clean-machine` gate that copies the project to a temporary clean-machine directory while excluding `.git`, `.dev-bootstrap`, `node_modules`, `target`, `dist`, `build`, `__pycache__`, `.pytest_cache`, local env files and bytecode;
+- clean-machine safe sequence:
+
+```bash
+python tools/devbootstrap.py self-check --no-write-report
+python tools/devbootstrap.py diagnose --no-write-report
+python tools/devbootstrap.py plan --no-write-report
+python tools/devbootstrap.py prepare-env --no-write-report
+python tools/devbootstrap.py up --dry-run --smoke-level quick
+```
+
+- static docs gate `readme_startup_commands_present`;
+- static docs gate `release_notes_known_limitations_present`;
+- static docs gate `v1_remaining_checklist_release_gates_present`;
+- `docs/product/v1-known-limitations.md` as the current known limitations boundary for v1/beta release review.
 
 Acceptance:
 
 - clean-machine gate can be enabled explicitly;
-- README/release notes gaps are visible in report.
+- README/release notes gaps are visible in report;
+- docs gates write their own `logs/*.log` entries into the release-gates bundle.
 
 ### Phase 7 — Self-check fixtures for v2
 
-Extend `self-check` with pure stdlib tests for:
+Status in this patch: **implemented**.
+
+Implemented pure stdlib self-check fixtures for:
 
 - release-gates JSON envelope;
 - summary rendering;
 - archive exclusion rules;
 - ignored-test output classifier;
 - Playwright missing-browser classifier;
-- keep-going behavior.
+- keep-going behavior after a failed prerequisite.
 
 Acceptance:
 
 ```bash
-python tools/devbootstrap.py self-check --no-write-report
+PYTHONDONTWRITEBYTECODE=1 python tools/devbootstrap.py self-check --no-write-report
 ```
 
 passes without creating `__pycache__` or `.pytest_cache`.

@@ -10,7 +10,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:browser": "playwright test",
-    "test:browser:headed": "playwright test --headed"
+    "test:browser:headed": "playwright test --headed",
+    "test:browser:real-backend": "playwright test e2e/smoke/real-backend.smoke.spec.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.51.1",

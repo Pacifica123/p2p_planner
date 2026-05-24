@@ -4262,6 +4262,7 @@ class GateSpec:
     skip_reason: str | None = None
     skip_status: str = "skipped_prerequisite"
     skip_classification: str = "skipped_prerequisite"
+    internal_check: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
 
@@ -4442,7 +4443,7 @@ def run_gate_process_step(
             details=spec.details,
         )
     if dry_run:
-        command_text = release_gate_command_display(spec.command)
+        command_text = release_gate_command_display(spec.command) if spec.command else f"internal:{spec.internal_check or spec.name}"
         log_path.write_text(
             "\n".join(
                 [
@@ -4465,6 +4466,14 @@ def run_gate_process_step(
             required=spec.required,
             log_path=rel(log_path, project_root),
             details=spec.details,
+        )
+    if spec.internal_check:
+        return run_release_gate_internal_step(
+            project_root=project_root,
+            logs_dir=logs_dir,
+            index=index,
+            spec=spec,
+            timeout_seconds=timeout_seconds,
         )
     started = time.monotonic()
     env_extra = {"PYTHONDONTWRITEBYTECODE": "1"}
@@ -4599,11 +4608,249 @@ def frontend_package_has_dependency(package_data: dict[str, Any], dependency_nam
     return False
 
 
+def release_gate_path_has_text(path: Path, required_fragments: list[str]) -> tuple[bool, list[str], str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False, required_fragments, f"{path.as_posix()} is missing"
+    missing = [fragment for fragment in required_fragments if fragment not in text]
+    if missing:
+        return False, missing, "missing required fragments: " + ", ".join(missing)
+    return True, [], f"{len(required_fragments)} required fragments found"
+
+
+def release_gate_check_readme_startup_commands(project_root: Path) -> tuple[str, str, str, list[str], dict[str, Any]]:
+    required = [
+        "python tools/devbootstrap.py release-gates",
+        "python tools/devbootstrap.py up --dry-run",
+        "python tools/devbootstrap.py smoke --level quick",
+    ]
+    ok, missing, message = release_gate_path_has_text(project_root / "README.md", required)
+    lines = ["# README startup commands gate", f"status: {'ok' if ok else 'failed'}", message]
+    if missing:
+        lines.append("missing:")
+        lines.extend(f"- {item}" for item in missing)
+    details = {"path": "README.md", "requiredFragments": required, "missingFragments": missing}
+    if ok:
+        return "ok", "ok", "README contains current devbootstrap startup/release-gates commands", lines, details
+    return "failed", "readme_startup_commands_missing", message, lines, details
+
+
+def release_gate_check_known_limitations(project_root: Path) -> tuple[str, str, str, list[str], dict[str, Any]]:
+    candidates = [
+        project_root / "docs" / "product" / "v1-known-limitations.md",
+        project_root / "docs" / "product" / "release-notes-v1.md",
+        project_root / "docs" / "product" / "v1-release-notes.md",
+    ]
+    required_any = ["Known limitations", "Ограничения", "known limitations", "limitations"]
+    evidence: list[str] = ["# release notes / known limitations gate"]
+    found_path: Path | None = None
+    found_text = ""
+    for path in candidates:
+        if not path.exists():
+            evidence.append(f"missing: {path.relative_to(project_root).as_posix()}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if any(fragment in text for fragment in required_any):
+            found_path = path
+            found_text = text
+            break
+        evidence.append(f"present_without_required_marker: {path.relative_to(project_root).as_posix()}")
+    details = {"candidatePaths": [path.relative_to(project_root).as_posix() for path in candidates], "foundPath": rel(found_path, project_root) if found_path else None}
+    if found_path is None:
+        message = "No release notes / known limitations document with an explicit limitations marker was found."
+        evidence.extend(["status: failed", message])
+        return "failed", "release_notes_known_limitations_missing", message, evidence, details
+    important_markers = ["real backend browser", "clean-machine", "release-gates"]
+    missing_markers = [marker for marker in important_markers if marker.lower() not in found_text.lower()]
+    details["missingRecommendedMarkers"] = missing_markers
+    if missing_markers:
+        message = "Known limitations document exists but misses release-gates-specific markers: " + ", ".join(missing_markers)
+        evidence.extend(["status: failed", message])
+        return "failed", "release_notes_known_limitations_incomplete", message, evidence, details
+    message = f"Known limitations document found: {found_path.relative_to(project_root).as_posix()}"
+    evidence.extend(["status: ok", message])
+    return "ok", "ok", message, evidence, details
+
+
+def release_gate_check_v1_checklist(project_root: Path) -> tuple[str, str, str, list[str], dict[str, Any]]:
+    required = [
+        "## 7. Testing and release gates",
+        "`cargo test`",
+        "`python tests/smoke_core_api.py`",
+        "`npm run build`",
+        "`npm run test:run`",
+        "`npm run test:browser`",
+        "Browser smoke проверяет реальный backend path",
+        "Clean-machine quickstart проверен",
+    ]
+    path = project_root / "docs" / "product" / "v1-remaining-checklist.md"
+    ok, missing, message = release_gate_path_has_text(path, required)
+    lines = ["# v1 remaining checklist release-gates gate", f"status: {'ok' if ok else 'failed'}", message]
+    if missing:
+        lines.append("missing:")
+        lines.extend(f"- {item}" for item in missing)
+    details = {"path": "docs/product/v1-remaining-checklist.md", "requiredFragments": required, "missingFragments": missing}
+    if ok:
+        return "ok", "ok", "v1 remaining checklist contains the Testing and release gates matrix", lines, details
+    return "failed", "v1_remaining_checklist_release_gates_missing", message, lines, details
+
+
+def release_gate_clean_machine_ignore(directory: str, names: list[str]) -> set[str]:
+    excluded_names = {
+        ".git",
+        ".dev-bootstrap",
+        ".venv",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        "coverage",
+        "__pycache__",
+        ".pytest_cache",
+    }
+    ignored: set[str] = set()
+    directory_path = Path(directory)
+    for name in names:
+        path = directory_path / name
+        if name in excluded_names:
+            ignored.add(name)
+            continue
+        if name in {".env", ".env.local"}:
+            ignored.add(name)
+            continue
+        if name.endswith((".pyc", ".pyo", ".sqlite", ".sqlite3", ".db", ".tsbuildinfo")):
+            ignored.add(name)
+            continue
+        if directory_path.name == "release" and name.endswith((".zip", ".exe")):
+            ignored.add(name)
+    return ignored
+
+
+def release_gate_run_clean_machine_quickstart(project_root: Path, timeout_seconds: int) -> tuple[str, str, str, list[str], dict[str, Any]]:
+    evidence: list[str] = ["# clean-machine quickstart gate"]
+    details: dict[str, Any] = {"commands": []}
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-clean-machine-") as tmp:
+        tmp_path = Path(tmp)
+        clean_root = tmp_path / project_root.name
+        shutil.copytree(project_root, clean_root, ignore=release_gate_clean_machine_ignore)
+        commands = [
+            [sys.executable, "tools/devbootstrap.py", "self-check", "--no-write-report"],
+            [sys.executable, "tools/devbootstrap.py", "diagnose", "--no-write-report"],
+            [sys.executable, "tools/devbootstrap.py", "plan", "--no-write-report"],
+            [sys.executable, "tools/devbootstrap.py", "prepare-env", "--no-write-report"],
+            [sys.executable, "tools/devbootstrap.py", "up", "--dry-run", "--smoke-level", "quick"],
+        ]
+        env_extra = {"PYTHONDONTWRITEBYTECODE": "1"}
+        for command in commands:
+            command_text = release_gate_command_display(command)
+            evidence.append(f"$ {command_text}")
+            started = time.monotonic()
+            probe = run_process_probe("clean_machine_quickstart", command, cwd=clean_root, timeout=timeout_seconds, env_extra=env_extra)
+            duration_ms = int((time.monotonic() - started) * 1000)
+            stdout = release_gate_sanitize_output(clean_root, probe.stdout or "")
+            stderr = release_gate_sanitize_output(clean_root, probe.stderr or probe.error or "")
+            status, classification, message = classify_gate_output("clean_machine_quickstart", stdout, stderr, probe.error, probe.returncode)
+            if not probe.available:
+                status, classification, message = "infra_failed", "missing_prerequisite", f"required command is unavailable: {command[0]}"
+            details["commands"].append(
+                {
+                    "command": command,
+                    "returncode": probe.returncode,
+                    "durationMs": duration_ms,
+                    "status": status,
+                    "classification": classification,
+                }
+            )
+            evidence.extend(
+                [
+                    f"exit: {probe.returncode if probe.returncode is not None else probe.error or '<none>'}",
+                    f"duration_ms: {duration_ms}",
+                    f"status: {status}",
+                    f"classification: {classification}",
+                    "stdout:",
+                    stdout or "<empty>",
+                    "stderr:",
+                    stderr or "<empty>",
+                    "",
+                ]
+            )
+            if status not in {"ok"}:
+                return status, classification, message, evidence, details
+    return "ok", "ok", "clean-machine safe quickstart sequence completed", evidence, details
+
+
+def run_release_gate_internal_check(project_root: Path, spec: GateSpec, timeout_seconds: int) -> tuple[str, str, str, list[str], dict[str, Any]]:
+    if spec.internal_check == "docs_readme_startup_commands_present":
+        return release_gate_check_readme_startup_commands(project_root)
+    if spec.internal_check == "docs_release_notes_known_limitations_present":
+        return release_gate_check_known_limitations(project_root)
+    if spec.internal_check == "docs_v1_remaining_checklist_release_gates_present":
+        return release_gate_check_v1_checklist(project_root)
+    if spec.internal_check == "clean_machine_quickstart":
+        return release_gate_run_clean_machine_quickstart(project_root, timeout_seconds)
+    return "failed", "unknown_internal_gate", f"unknown internal release gate: {spec.internal_check}", [f"unknown internal release gate: {spec.internal_check}"], {}
+
+
+def run_release_gate_internal_step(
+    *,
+    project_root: Path,
+    logs_dir: Path,
+    index: int,
+    spec: GateSpec,
+    timeout_seconds: int,
+) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, spec.name)
+    started = time.monotonic()
+    try:
+        status, classification, message, lines, details = run_release_gate_internal_check(project_root, spec, timeout_seconds)
+    except Exception as exc:
+        status = "failed"
+        classification = "internal_gate_error"
+        message = f"internal gate raised {exc.__class__.__name__}: {exc}"
+        lines = [message]
+        details = {}
+    duration_ms = int((time.monotonic() - started) * 1000)
+    merged_details = dict(spec.details)
+    merged_details.update(details)
+    log_path.write_text(
+        "\n".join(
+            [
+                f"# {spec.name}",
+                f"internal_check: {spec.internal_check}",
+                f"cwd: {spec.cwd or '.'}",
+                f"duration_ms: {duration_ms}",
+                f"status: {status}",
+                f"classification: {classification}",
+                "",
+                *lines,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return GateResult(
+        name=spec.name,
+        status=status,
+        classification=classification,
+        message=message,
+        cwd=spec.cwd or ".",
+        command=spec.command,
+        required=spec.required,
+        duration_ms=duration_ms,
+        log_path=rel(log_path, project_root),
+        details=merged_details,
+    )
+
+
 def build_release_gate_specs(
     project_root: Path,
     *,
     allow_dev_db_write: bool = False,
     install_playwright_browsers: bool = False,
+    include_real_backend_browser: bool = False,
+    real_backend_browser_spec: str = "e2e/smoke/real-backend.smoke.spec.ts",
+    include_clean_machine: bool = False,
     dry_run: bool = False,
 ) -> list[GateSpec]:
     specs: list[GateSpec] = [
@@ -4820,24 +5067,115 @@ def build_release_gate_specs(
             )
         )
 
-    specs.extend(
-        [
+    real_backend_spec = Path(real_backend_browser_spec)
+    real_backend_spec_project_path = project_root / "frontend" / real_backend_spec
+    real_backend_allowed, real_backend_reason = release_gate_smoke_allowed(project_root, allow_dev_db_write)
+    real_backend_details = {
+        "specPath": real_backend_spec.as_posix(),
+        "specExists": real_backend_spec_project_path.exists(),
+        "writePermission": real_backend_reason,
+        "requiresNoPageRouteMocks": True,
+        "mockedBrowserSmokeDoesNotSatisfyThisGate": True,
+    }
+    if real_backend_spec_project_path.exists() and (include_real_backend_browser or dry_run) and (real_backend_allowed or dry_run):
+        if dry_run and not real_backend_allowed:
+            real_backend_details["dryRunPrerequisiteBypassed"] = True
+        specs.append(
             GateSpec(
                 name="browser_real_backend_path",
                 cwd="frontend",
-                command=[],
-                description="Reserved real-backend Playwright path without API mocks.",
-                not_implemented_reason="Phase 5 will add or select a real-backend browser spec; mocked browser smoke must not close this checklist item.",
-            ),
+                command=["npm", "run", "test:browser:real-backend"],
+                description="Run the dedicated Playwright browser path against a live backend without page.route API mocks.",
+                timeout_seconds=900,
+                details=real_backend_details,
+            )
+        )
+    elif real_backend_spec_project_path.exists() and not include_real_backend_browser:
+        specs.append(
             GateSpec(
-                name="clean_machine_and_docs_gates",
+                name="browser_real_backend_path",
+                cwd="frontend",
+                command=["npm", "run", "test:browser:real-backend"],
+                description="Dedicated real-backend Playwright path exists but is opt-in because it writes through the live backend.",
+                skip_reason="Pass --include-real-backend-browser plus TEST_DATABASE_URL or --allow-dev-db-write to execute this write-capable browser gate.",
+                skip_classification="real_backend_browser_opt_in_required",
+                details=real_backend_details,
+            )
+        )
+    elif real_backend_spec_project_path.exists():
+        specs.append(
+            GateSpec(
+                name="browser_real_backend_path",
+                cwd="frontend",
+                command=["npm", "run", "test:browser:real-backend"],
+                description="Dedicated real-backend Playwright path exists but cannot run without explicit write permission.",
+                skip_reason=real_backend_reason,
+                skip_classification="real_backend_browser_write_guard",
+                details=real_backend_details,
+            )
+        )
+    else:
+        specs.append(
+            GateSpec(
+                name="browser_real_backend_path",
+                cwd="frontend",
+                command=["npm", "run", "test:browser:real-backend"],
+                description="Dedicated real-backend Playwright path without API mocks.",
+                not_implemented_reason="Dedicated real-backend browser spec is missing; mocked browser smoke must not close this checklist item.",
+                details=real_backend_details,
+            )
+        )
+
+    specs.extend(
+        [
+            GateSpec(
+                name="readme_startup_commands_present",
                 cwd=".",
                 command=[],
-                description="Reserved clean-machine and static docs release gates.",
-                not_implemented_reason="Phase 6 will add optional clean-machine checks and static README/release notes/checklist gates.",
+                description="Check that README documents current devbootstrap startup and release-gates commands.",
+                internal_check="docs_readme_startup_commands_present",
+            ),
+            GateSpec(
+                name="release_notes_known_limitations_present",
+                cwd=".",
+                command=[],
+                description="Check that release notes / known limitations are present and explicit.",
+                internal_check="docs_release_notes_known_limitations_present",
+            ),
+            GateSpec(
+                name="v1_remaining_checklist_release_gates_present",
+                cwd=".",
+                command=[],
+                description="Check that v1 remaining checklist still contains Testing and release gates.",
+                internal_check="docs_v1_remaining_checklist_release_gates_present",
             ),
         ]
     )
+
+    if include_clean_machine:
+        specs.append(
+            GateSpec(
+                name="clean_machine_quickstart",
+                cwd=".",
+                command=[],
+                description="Run an optional clean-machine safe quickstart sequence in a temporary project copy.",
+                timeout_seconds=900,
+                internal_check="clean_machine_quickstart",
+            )
+        )
+    else:
+        specs.append(
+            GateSpec(
+                name="clean_machine_quickstart",
+                cwd=".",
+                command=[],
+                description="Optional clean-machine quickstart gate.",
+                required=False,
+                skip_status="skipped_optional",
+                skip_classification="clean_machine_optional_not_requested",
+                skip_reason="Clean-machine quickstart is optional; pass --include-clean-machine to run it in a temporary project copy.",
+            )
+        )
     return specs
 
 
@@ -4865,7 +5203,7 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
     result.findings.clear()
     for gate in result.gates:
         if gate.status not in {"ok", "planned"}:
-            severity = "warn" if gate.status in {"partial_pass", "not_implemented", "skipped_prerequisite"} else "fail"
+            severity = "warn" if (not gate.required or gate.status in {"partial_pass", "not_implemented", "skipped_prerequisite", "skipped_optional"}) else "fail"
             result.findings.append(
                 {
                     "severity": severity,
@@ -4877,7 +5215,7 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
     if result.dry_run:
         result.next_actions.append("Run `python tools/devbootstrap.py release-gates` without --dry-run to execute implemented gates and create a fresh bundle.")
     elif result.overall_status == "incomplete":
-        result.next_actions.append("Resolve skipped prerequisites or implement reserved Phase 5/6 gates before treating release-gates as a full v1 release signal.")
+        result.next_actions.append("Resolve skipped prerequisites, run opt-in real-backend browser/clean-machine gates when needed, or implement missing release-gates before treating this as a full v1 release signal.")
     elif result.overall_status == "ok":
         result.next_actions.append("Configured release-gates passed; continue with later release validation or manual review.")
     else:
@@ -5074,6 +5412,9 @@ def command_release_gates(args: argparse.Namespace) -> int:
         project_root,
         allow_dev_db_write=args.allow_dev_db_write,
         install_playwright_browsers=args.install_playwright_browsers,
+        include_real_backend_browser=args.include_real_backend_browser,
+        real_backend_browser_spec=args.real_backend_browser_spec,
+        include_clean_machine=args.include_clean_machine,
         dry_run=args.dry_run,
     )
     for index, spec in enumerate(specs, start=1):
@@ -5901,6 +6242,122 @@ def case_self_check_report_markdown_contract() -> str:
     return "minimal report.md sections checked"
 
 
+def case_self_check_release_gates_json_envelope() -> str:
+    result = ReleaseGatesResult(
+        generated_at="2026-05-24T00:00:00+00:00",
+        tool_version=TOOL_VERSION,
+        project_root="/tmp/project",
+        invoked_from="/tmp/project",
+        run_id="selfcheck-release-gates",
+        dry_run=False,
+        timeout_seconds=123,
+        report_dir=".dev-bootstrap/runs/selfcheck-release-gates",
+        archive_path=".dev-bootstrap/runs/selfcheck-release-gates/release-gates_selfcheck.zip",
+        overall_status="ok",
+        classification="release_gates_ok",
+        gates=[GateResult(name="fixture_gate", status="ok", classification="ok", message="gate completed", cwd=".", command=["true"], log_path="logs/01_fixture_gate.log")],
+    )
+    payload = release_gates_json_payload(result)
+    assert payload["schemaVersion"] == 1
+    assert payload["command"] == "release-gates"
+    assert payload["toolVersion"] == TOOL_VERSION
+    assert payload["overallStatus"] == "ok"
+    assert payload["archivePath"].endswith(".zip")
+    assert payload["gates"][0]["name"] == "fixture_gate"
+    return "release-gates JSON envelope checked"
+
+
+def case_self_check_release_gates_summary_rendering() -> str:
+    result = ReleaseGatesResult(
+        generated_at="2026-05-24T00:00:00+00:00",
+        tool_version=TOOL_VERSION,
+        project_root="/tmp/project",
+        invoked_from="/tmp/project",
+        run_id="selfcheck-release-gates",
+        dry_run=True,
+        timeout_seconds=123,
+        overall_status="dry_run",
+        classification="release_gates_dry_run",
+        gates=[GateResult(name="frontend_build", status="planned", classification="dry_run", message="would run gate command", cwd="frontend", command=["npm", "run", "build"], log_path="logs/07_frontend_build.log")],
+    )
+    rendered = render_release_gates_summary(result)
+    assert "# release-gates summary" in rendered
+    assert "Overall: dry_run" in rendered
+    assert "> npm run build" in rendered
+    assert "logs/07_frontend_build.log" in rendered
+    return "release-gates summary rendering checked"
+
+
+def case_self_check_release_gates_archive_exclusions() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-archive-") as tmp:
+        root = Path(tmp) / "run"
+        (root / "logs").mkdir(parents=True)
+        (root / "logs" / "01_ok.log").write_text("ok\n", encoding="utf-8")
+        (root / "summary.txt").write_text("summary\n", encoding="utf-8")
+        (root / "__pycache__").mkdir()
+        (root / "__pycache__" / "bad.pyc").write_bytes(b"bad")
+        (root / ".pytest_cache").mkdir()
+        (root / ".pytest_cache" / "bad").write_text("bad", encoding="utf-8")
+        (root / "node_modules").mkdir()
+        (root / "node_modules" / "bad.txt").write_text("bad", encoding="utf-8")
+        (root / ".env").write_text("SECRET=bad", encoding="utf-8")
+        archive_path = root / "release-gates_selfcheck.zip"
+        create_release_gates_archive(root, archive_path)
+        with zipfile.ZipFile(archive_path) as zf:
+            names = set(zf.namelist())
+    assert "summary.txt" in names
+    assert "logs/01_ok.log" in names
+    forbidden = [name for name in names if "__pycache__" in name or ".pytest_cache" in name or "node_modules" in name or name == ".env" or name.endswith(".pyc")]
+    assert not forbidden, "forbidden archive entries: " + ", ".join(sorted(forbidden))
+    return "release-gates archive exclusion rules checked"
+
+
+def case_self_check_release_gates_ignored_classifier() -> str:
+    stdout = "test result: ok. 12 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out"
+    status, classification, message = classify_gate_output("backend_cargo_test_default", stdout, "", None, 0)
+    assert status == "partial_pass"
+    assert classification == "critical_tests_ignored"
+    assert "ignored" in message
+    return "ignored Rust tests classifier checked"
+
+
+def case_self_check_release_gates_playwright_classifier() -> str:
+    stderr = "Error: browserType.launch: Executable doesn't exist. Please run: npx playwright install"
+    status, classification, message = classify_gate_output("frontend_browser_smoke", "", stderr, None, 1)
+    assert status == "infra_failed"
+    assert classification == "browser_smoke_prerequisite"
+    assert "Playwright" in message
+    return "Playwright missing-browser classifier checked"
+
+
+def case_self_check_release_gates_keep_going_behavior() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-keepgoing-") as tmp:
+        root = Path(tmp)
+        logs = root / "logs"
+        logs.mkdir()
+        first = run_gate_process_step(
+            project_root=root,
+            logs_dir=logs,
+            index=1,
+            spec=GateSpec(name="first_missing_command", cwd=".", command=["definitely-missing-devbootstrap-command-xyz"]),
+            timeout_seconds=5,
+        )
+        second = run_gate_process_step(
+            project_root=root,
+            logs_dir=logs,
+            index=2,
+            spec=GateSpec(name="second_still_runs", cwd=".", command=[sys.executable, "-c", "print('ok')"]),
+            timeout_seconds=5,
+        )
+    assert first.status == "infra_failed"
+    assert second.status == "ok"
+    assert first.log_path and second.log_path
+    overall, classification = release_gates_overall_status([first, second], dry_run=False)
+    assert overall == "infra_failed"
+    assert classification == "release_gates_infra_failed"
+    return "keep-going execution after a failed prerequisite checked"
+
+
 def build_self_check_result(project_root: Path | None, invoked_from: Path) -> SelfCheckResult:
     result = SelfCheckResult(
         generated_at=iso_now(),
@@ -5916,6 +6373,12 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "env_diff", case_self_check_env_diff)
     self_check_case(result, "report_json_contract", case_self_check_report_json_contract)
     self_check_case(result, "report_markdown_contract", case_self_check_report_markdown_contract)
+    self_check_case(result, "release_gates_json_envelope", case_self_check_release_gates_json_envelope)
+    self_check_case(result, "release_gates_summary_rendering", case_self_check_release_gates_summary_rendering)
+    self_check_case(result, "release_gates_archive_exclusions", case_self_check_release_gates_archive_exclusions)
+    self_check_case(result, "release_gates_ignored_classifier", case_self_check_release_gates_ignored_classifier)
+    self_check_case(result, "release_gates_playwright_classifier", case_self_check_release_gates_playwright_classifier)
+    self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
     if result.failures:
         result.classification = "failed"
         result.next_actions.append("Fix failing self-check cases before using devbootstrap as the v1 routine entrypoint.")
@@ -6091,6 +6554,9 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--output-dir", help="Write the run directory to this path instead of .dev-bootstrap/runs/<run-id>.")
     release_gates.add_argument("--allow-dev-db-write", action="store_true", help="Allow backend Python smoke to write through the configured live backend API when TEST_DATABASE_URL is not present.")
     release_gates.add_argument("--install-playwright-browsers", action="store_true", help="Run npx playwright install when browser binaries are missing before browser smoke.")
+    release_gates.add_argument("--include-real-backend-browser", action="store_true", help="Run the dedicated write-capable real-backend Playwright path when its spec and prerequisites exist.")
+    release_gates.add_argument("--real-backend-browser-spec", default="e2e/smoke/real-backend.smoke.spec.ts", help="Frontend-relative Playwright spec path for the real-backend browser gate.")
+    release_gates.add_argument("--include-clean-machine", action="store_true", help="Run the optional clean-machine quickstart gate in a temporary project copy.")
     release_gates.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     release_gates.set_defaults(func=command_release_gates)
 

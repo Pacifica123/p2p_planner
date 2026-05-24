@@ -13,12 +13,13 @@
 - `product/mvp-scope-v1.md` — продуктовые границы первой версии.
 - `product/beta-scope-v1.md` — beta backlog, must-have/nice-to-have границы, release gates и решение по mobile/release model.
 - `product/v1-execution-roadmap.md` — текущая правда о реализованном/частичном/stub surface и contract parity baseline перед v1.
+- `product/v1-known-limitations.md` — known limitations для v1/beta и честная граница release-gates.
 - `adr/` — принятые архитектурные решения.
 - `domain/` — доменная модель, инварианты, права доступа, жизненный цикл и термины.
 - `sync/` — glossary, протокол синхронизации и каноническая conflict policy.
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
-- `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy. План v2 для одной команды release-gates и микроархива диагностик зафиксирован в `dev-bootstrap/devbootstrap-v2-release-gates-plan.md`.
+- `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy. План v2 для одной команды release-gates и микроархива диагностик зафиксирован в `dev-bootstrap/devbootstrap-v2-release-gates-plan.md`; Phase 1–7 этого runner уже реализованы как scaffold, backend/frontend gates, real-backend browser gate, docs gates, optional clean-machine gate и self-check fixtures.
 
 ## Зафиксированные принципы
 
@@ -108,4 +109,6 @@ local-first, sync и optional p2p.
 - `docs/dev-bootstrap/devbootstrap-v1-operations.md` — эксплуатационная памятка devbootstrap v1: quick commands, command responsibilities, report artifact contract, timeout policy, failure handling rules and cleanup rules.
 
 - `docs/dev-bootstrap/devbootstrap-v2-release-gates-plan.md` — план devbootstrap v2 release-gates runner: одна команда для полного прогона Testing and release gates, keep-going semantics, общий summary и микроархив логов/отчетов.
+
+- `docs/product/v1-known-limitations.md` — known limitations для v1/beta: release-gates boundaries, real-backend browser path, clean-machine quickstart и продуктовые ограничения beta-scope.
 
