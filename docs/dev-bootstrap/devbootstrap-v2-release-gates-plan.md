@@ -1,6 +1,6 @@
 # devbootstrap v2 release gates plan
 
-- Статус: Draft v2 plan; Phase 1/2 implemented in `tools/devbootstrap.py`
+- Статус: Draft v2 plan; Phase 1/2/3/4 implemented in `tools/devbootstrap.py`
 - Дата: 2026-05-24
 - Назначение: спланировать развитие `tools/devbootstrap.py` до режима «одной волшебной кнопки» для проверки блока `7. Testing and release gates` из `docs/product/v1-remaining-checklist.md`.
 
@@ -74,6 +74,7 @@ python tools/devbootstrap.py release-gates --json
 Ожидаемое поведение по умолчанию:
 
 - `keep-going=true`: не останавливаться после первого failed gate;
+- `--dry-run` проверяет контракт bundle и планируемую матрицу gates, но не должен требовать установленный `node_modules`, скачанные Playwright browsers или live test DB;
 - не делать destructive DB reset;
 - не удалять Docker volumes;
 - не убивать foreign processes;
@@ -303,9 +304,9 @@ Overall status rules:
 
 - all gates `ok` → `ok`;
 - any `failed` → `failed`;
-- only infra/prerequisite failures → `infra_failed`;
+- only infra failures → `infra_failed`;
+- any skipped required prerequisite or `not_implemented` gate → `incomplete`;
 - any `partial_pass` without hard failures → `partial_pass`;
-- any `not_implemented` in required v1 gates → `incomplete`.
 
 ---
 
@@ -326,7 +327,7 @@ Implemented internal primitives:
 - duration, return code and timeout handling;
 - output classifiers for `ok`, `partial_pass`, `failed`, `infra_failed`, `timeout` and `not_implemented`.
 
-Remaining backend/frontend gate matrix is intentionally left for Phase 3+.
+Backend/frontend gate matrix is now implemented in Phase 3/4; real-backend browser path, clean-machine and docs gates remain reserved for Phase 5/6.
 
 Original Phase 1 target:
 
@@ -363,7 +364,7 @@ Implemented:
 - `release-gates_YYYYMMDD_HHMMSS.zip`;
 - archive exclusion rules for `__pycache__`, `.pytest_cache`, `node_modules`, `target`, `dist`, `build`, `.env*`, local DB files and bytecode.
 
-The command currently runs only the implemented scaffold gates (`self-check`, `diagnose`) and includes an explicit `not_implemented` gate for the future release matrix, so it cannot be mistaken for a full v1 release pass before Phase 3+.
+The command now runs the implemented scaffold, backend and frontend gates. It still includes explicit `not_implemented` gates for Phase 5/6, so it cannot be mistaken for a complete v1 release pass until the real-backend browser path, clean-machine and docs gates are implemented.
 
 Original Phase 2 target:
 
@@ -389,12 +390,19 @@ Acceptance:
 
 ### Phase 3 — Backend gates
 
-Add:
+Status in this patch: **implemented**.
 
-- `cargo test`;
-- `cargo test -- --include-ignored` with `TEST_DATABASE_URL` handling;
-- Python smoke first run;
-- Python smoke second run for idempotency.
+Implemented:
+
+- `backend_cargo_test_default` → `cargo test`;
+- `backend_cargo_test_db_ignored` → `cargo test -- --include-ignored`;
+- DB env propagation for ignored tests: `TEST_DATABASE_URL`, or `DATABASE_URL`, or backend env `TEST_DATABASE_URL` / `DATABASE__URL` / `DATABASE_URL` mapped to `TEST_DATABASE_URL`;
+- explicit `skipped_prerequisite` when no DB URL can be found for DB integration tests;
+- `backend_python_smoke_first`;
+- `backend_python_smoke_second` for idempotency;
+- smoke write guard: smoke runs when `TEST_DATABASE_URL` is explicitly present or `--allow-dev-db-write` is passed; otherwise it is reported as `skipped_prerequisite`;
+- keep-going semantics: backend failures/skips do not prevent frontend gates from running;
+- exact command logs in `logs/*.log`.
 
 Acceptance:
 
@@ -404,13 +412,17 @@ Acceptance:
 
 ### Phase 4 — Frontend gates
 
-Add:
+Status in this patch: **implemented**.
 
-- `npm run build`;
-- `npm run test:run`;
-- Playwright browser prerequisite detector;
-- `npm run test:browser`;
-- optional `npx playwright install` under explicit flag.
+Implemented:
+
+- `frontend_build` → `npm run build`;
+- `frontend_unit_integration` → `npm run test:run`;
+- Playwright package/browser prerequisite detector;
+- `frontend_browser_smoke` → `npm run test:browser`;
+- optional `playwright_install` → `npx playwright install` only when `--install-playwright-browsers` is explicitly passed and browser binaries are missing;
+- missing Playwright package/browser state is classified as `browser_smoke_prerequisite` / `infra_failed`;
+- keep-going semantics preserve build/unit results even when browser smoke is skipped or fails.
 
 Acceptance:
 

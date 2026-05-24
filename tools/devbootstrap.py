@@ -4259,6 +4259,10 @@ class GateSpec:
     timeout_seconds: int = TIMEOUT_POLICY["release_gate"]
     env_extra: dict[str, str] = field(default_factory=dict)
     not_implemented_reason: str | None = None
+    skip_reason: str | None = None
+    skip_status: str = "skipped_prerequisite"
+    skip_classification: str = "skipped_prerequisite"
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -4347,16 +4351,26 @@ def release_gate_sanitize_output(project_root: Path | None, text: str) -> str:
     return cleaned
 
 
+def rust_test_output_has_ignored_tests(output: str) -> bool:
+    for match in re.finditer(r"(?:^|[;\s])([1-9]\d*)\s+ignored\b", output, flags=re.IGNORECASE | re.MULTILINE):
+        try:
+            if int(match.group(1)) > 0:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def classify_gate_output(name: str, stdout: str, stderr: str, error: str | None, returncode: int | None) -> tuple[str, str, str]:
     output = "\n".join(part for part in [stdout, stderr, error or ""] if part)
     lower = output.lower()
     if error == "timeout":
         return "timeout", f"{name}_timeout", "gate timed out"
     if returncode == 0:
-        if "ignored" in lower and "test result:" in lower:
-            return "partial_pass", "critical_tests_ignored", "command exited 0, but output mentions ignored tests"
+        if "test result:" in lower and rust_test_output_has_ignored_tests(output):
+            return "partial_pass", "critical_tests_ignored", "command exited 0, but one or more Rust tests were ignored"
         return "ok", "ok", "gate completed"
-    if "playwright" in lower and ("browser" in lower or "install" in lower or "executable doesn't exist" in lower):
+    if "playwright" in lower and ("browser" in lower or "install" in lower or "executable doesn't exist" in lower or "please run" in lower):
         return "infra_failed", "browser_smoke_prerequisite", "Playwright browser prerequisite appears to be missing"
     if "command not found" in lower or "not found on path" in lower or "no such file or directory" in lower:
         return "infra_failed", "missing_prerequisite", "required command or file is unavailable"
@@ -4376,6 +4390,32 @@ def run_gate_process_step(
 ) -> GateResult:
     log_path = release_gate_log_path(logs_dir, index, spec.name)
     cwd = project_root / spec.cwd if spec.cwd else project_root
+    if spec.skip_reason:
+        message = spec.skip_reason
+        log_path.write_text(
+            "\n".join(
+                [
+                    f"# {spec.name}",
+                    f"status: {spec.skip_status}",
+                    f"classification: {spec.skip_classification}",
+                    f"cwd: {spec.cwd or '.'}",
+                    f"reason: {message}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return GateResult(
+            name=spec.name,
+            status=spec.skip_status,
+            classification=spec.skip_classification,
+            message=message,
+            cwd=spec.cwd or ".",
+            command=spec.command,
+            required=spec.required,
+            log_path=rel(log_path, project_root),
+            details=spec.details,
+        )
     if spec.not_implemented_reason:
         message = spec.not_implemented_reason
         log_path.write_text(
@@ -4399,6 +4439,7 @@ def run_gate_process_step(
             command=spec.command,
             required=spec.required,
             log_path=rel(log_path, project_root),
+            details=spec.details,
         )
     if dry_run:
         command_text = release_gate_command_display(spec.command)
@@ -4423,6 +4464,7 @@ def run_gate_process_step(
             command=spec.command,
             required=spec.required,
             log_path=rel(log_path, project_root),
+            details=spec.details,
         )
     started = time.monotonic()
     env_extra = {"PYTHONDONTWRITEBYTECODE": "1"}
@@ -4465,11 +4507,106 @@ def run_gate_process_step(
         returncode=probe.returncode,
         duration_ms=duration_ms,
         log_path=rel(log_path, project_root),
+        details=spec.details,
     )
 
 
-def build_release_gate_specs(project_root: Path) -> list[GateSpec]:
-    return [
+def release_gate_database_env(project_root: Path) -> tuple[dict[str, str], str | None]:
+    env_extra: dict[str, str] = {}
+    if os.environ.get("TEST_DATABASE_URL"):
+        env_extra["TEST_DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+        return env_extra, "environment TEST_DATABASE_URL"
+    if os.environ.get("DATABASE_URL"):
+        env_extra["TEST_DATABASE_URL"] = os.environ["DATABASE_URL"]
+        return env_extra, "environment DATABASE_URL mapped to TEST_DATABASE_URL"
+
+    backend_values, _ = parse_env_file(project_root / "backend" / ".env")
+    for key in ["TEST_DATABASE_URL", "DATABASE__URL", "DATABASE_URL"]:
+        value = backend_values.get(key)
+        if value:
+            env_extra["TEST_DATABASE_URL"] = value
+            return env_extra, f"backend env {key} mapped to TEST_DATABASE_URL"
+    return env_extra, None
+
+
+def release_gate_explicit_test_database_url(project_root: Path) -> tuple[str | None, str | None]:
+    if os.environ.get("TEST_DATABASE_URL"):
+        return os.environ["TEST_DATABASE_URL"], "environment TEST_DATABASE_URL"
+    backend_values, _ = parse_env_file(project_root / "backend" / ".env")
+    if backend_values.get("TEST_DATABASE_URL"):
+        return backend_values["TEST_DATABASE_URL"], "backend env TEST_DATABASE_URL"
+    return None, None
+
+
+def release_gate_smoke_env(project_root: Path) -> dict[str, str]:
+    env_extra = {"BASE_URL": smoke_expected_base_url(project_root).rstrip("/")}
+    test_db_url, _ = release_gate_explicit_test_database_url(project_root)
+    if test_db_url:
+        env_extra["TEST_DATABASE_URL"] = test_db_url
+    return env_extra
+
+
+def release_gate_smoke_allowed(project_root: Path, allow_dev_db_write: bool) -> tuple[bool, str]:
+    if allow_dev_db_write:
+        return True, "--allow-dev-db-write was provided"
+    _, db_source = release_gate_explicit_test_database_url(project_root)
+    if db_source:
+        return True, db_source
+    return False, "backend Python smoke writes through the live backend API; set TEST_DATABASE_URL or pass --allow-dev-db-write"
+
+
+def playwright_browser_cache_roots(project_root: Path) -> list[Path]:
+    roots: list[Path] = []
+    configured = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if configured == "0":
+        roots.append(project_root / "frontend" / "node_modules" / "playwright-core" / ".local-browsers")
+    elif configured:
+        roots.append(Path(configured).expanduser())
+
+    home = Path.home()
+    if platform.system().lower().startswith("win"):
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            roots.append(Path(local_app_data) / "ms-playwright")
+    elif platform.system().lower() == "darwin":
+        roots.append(home / "Library" / "Caches" / "ms-playwright")
+    else:
+        roots.append(home / ".cache" / "ms-playwright")
+    return list(dict.fromkeys(roots))
+
+
+def playwright_chromium_executable_present(project_root: Path) -> tuple[bool, list[str]]:
+    evidence: list[str] = []
+    executable_names = {"chrome", "chrome.exe", "headless_shell", "headless_shell.exe", "chromium", "chromium.exe"}
+    for root in playwright_browser_cache_roots(project_root):
+        evidence.append(str(root))
+        if not root.exists():
+            continue
+        try:
+            for path in root.rglob("*"):
+                if path.is_file() and path.name in executable_names and "chrom" in path.as_posix().lower():
+                    return True, evidence + [str(path)]
+        except OSError as exc:
+            evidence.append(f"could not inspect {root}: {exc}")
+    return False, evidence
+
+
+def frontend_package_has_dependency(package_data: dict[str, Any], dependency_name: str) -> bool:
+    for field_name in ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]:
+        value = package_data.get(field_name)
+        if isinstance(value, dict) and dependency_name in value:
+            return True
+    return False
+
+
+def build_release_gate_specs(
+    project_root: Path,
+    *,
+    allow_dev_db_write: bool = False,
+    install_playwright_browsers: bool = False,
+    dry_run: bool = False,
+) -> list[GateSpec]:
+    specs: list[GateSpec] = [
         GateSpec(
             name="self_check",
             cwd=".",
@@ -4485,13 +4622,223 @@ def build_release_gate_specs(project_root: Path) -> list[GateSpec]:
             timeout_seconds=120,
         ),
         GateSpec(
-            name="release_gates_matrix",
-            cwd=".",
-            command=[],
-            description="Placeholder for backend/frontend/browser/docs release gates planned in phases 3-6.",
-            not_implemented_reason="Phase 1/2 implements the keep-going runner and report bundle only; backend/frontend/browser/docs gates are intentionally reserved for later phases.",
+            name="backend_cargo_test_default",
+            cwd="backend",
+            command=["cargo", "test"],
+            description="Run the default Rust test profile and detect ignored critical tests.",
+            timeout_seconds=900,
         ),
     ]
+
+    db_env_extra, db_source = release_gate_database_env(project_root)
+    if db_source or dry_run:
+        details = {"databaseEnvSource": db_source}
+        if dry_run and not db_source:
+            details["dryRunPrerequisiteBypassed"] = True
+        specs.append(
+            GateSpec(
+                name="backend_cargo_test_db_ignored",
+                cwd="backend",
+                command=["cargo", "test", "--", "--include-ignored"],
+                description="Force ignored DB integration tests to run with TEST_DATABASE_URL.",
+                timeout_seconds=900,
+                env_extra=db_env_extra,
+                details=details,
+            )
+        )
+    else:
+        specs.append(
+            GateSpec(
+                name="backend_cargo_test_db_ignored",
+                cwd="backend",
+                command=["cargo", "test", "--", "--include-ignored"],
+                description="Force ignored DB integration tests to run with TEST_DATABASE_URL.",
+                skip_reason="TEST_DATABASE_URL is absent and no DATABASE__URL/DATABASE_URL was found in backend env; DB integration tests cannot be executed safely.",
+                skip_classification="db_test_prerequisite_missing",
+                details={"databaseEnvSource": None},
+            )
+        )
+
+    smoke_allowed, smoke_reason = release_gate_smoke_allowed(project_root, allow_dev_db_write)
+    smoke_env = release_gate_smoke_env(project_root)
+    for smoke_name in ["backend_python_smoke_first", "backend_python_smoke_second"]:
+        if smoke_allowed or dry_run:
+            details = {"smokePermission": smoke_reason}
+            if dry_run and not smoke_allowed:
+                details["dryRunPrerequisiteBypassed"] = True
+            specs.append(
+                GateSpec(
+                    name=smoke_name,
+                    cwd="backend",
+                    command=[sys.executable, "tests/smoke_core_api.py"],
+                    description="Run backend black-box smoke against the live backend API; second run checks idempotency.",
+                    timeout_seconds=900,
+                    env_extra=smoke_env,
+                    details=details,
+                )
+            )
+        else:
+            specs.append(
+                GateSpec(
+                    name=smoke_name,
+                    cwd="backend",
+                    command=[sys.executable, "tests/smoke_core_api.py"],
+                    description="Run backend black-box smoke against the live backend API; second run checks idempotency.",
+                    skip_reason=smoke_reason,
+                    skip_classification="smoke_db_write_guard",
+                    details={"smokePermission": smoke_reason},
+                )
+            )
+
+    specs.extend(
+        [
+            GateSpec(
+                name="frontend_build",
+                cwd="frontend",
+                command=["npm", "run", "build"],
+                description="Run TypeScript/Vite production build.",
+                timeout_seconds=600,
+            ),
+            GateSpec(
+                name="frontend_unit_integration",
+                cwd="frontend",
+                command=["npm", "run", "test:run"],
+                description="Run Vitest unit/integration tests.",
+                timeout_seconds=600,
+            ),
+        ]
+    )
+
+    package_data, package_error = read_frontend_package(project_root)
+    scripts = frontend_scripts_from_package(package_data) if not package_error else {}
+    playwright_dependency_present = bool(package_data) and frontend_package_has_dependency(package_data, "@playwright/test")
+    playwright_node_package_present = (project_root / "frontend" / "node_modules" / "@playwright" / "test").exists()
+    chromium_present, chromium_evidence = playwright_chromium_executable_present(project_root)
+    browser_details = {
+        "packageError": package_error,
+        "scriptPresent": "test:browser" in scripts,
+        "dependencyPresent": playwright_dependency_present,
+        "nodePackagePresent": playwright_node_package_present,
+        "chromiumExecutablePresent": chromium_present,
+        "checkedBrowserCacheRoots": chromium_evidence,
+    }
+
+    if dry_run and not package_error and "test:browser" in scripts and playwright_dependency_present:
+        browser_details["dryRunPrerequisiteBypassed"] = not playwright_node_package_present or not chromium_present
+        specs.append(
+            GateSpec(
+                name="frontend_browser_smoke",
+                cwd="frontend",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke.",
+                timeout_seconds=600,
+                details=browser_details,
+            )
+        )
+    elif package_error:
+        specs.append(
+            GateSpec(
+                name="frontend_browser_smoke",
+                cwd="frontend",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke.",
+                skip_status="infra_failed",
+                skip_classification="frontend_package_invalid",
+                skip_reason=package_error,
+                details=browser_details,
+            )
+        )
+    elif "test:browser" not in scripts:
+        specs.append(
+            GateSpec(
+                name="frontend_browser_smoke",
+                cwd="frontend",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke.",
+                skip_status="failed",
+                skip_classification="browser_smoke_script_missing",
+                skip_reason="frontend/package.json does not define scripts.test:browser",
+                details=browser_details,
+            )
+        )
+    elif not playwright_dependency_present or not playwright_node_package_present:
+        specs.append(
+            GateSpec(
+                name="frontend_browser_smoke",
+                cwd="frontend",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke.",
+                skip_status="infra_failed",
+                skip_classification="browser_smoke_prerequisite",
+                skip_reason="Playwright package is not installed in frontend/node_modules; run prepare-frontend or npm ci first.",
+                details=browser_details,
+            )
+        )
+    elif not chromium_present and install_playwright_browsers:
+        specs.append(
+            GateSpec(
+                name="playwright_install",
+                cwd="frontend",
+                command=["npx", "playwright", "install"],
+                description="Install Playwright browser binaries because --install-playwright-browsers was provided.",
+                timeout_seconds=900,
+                details=browser_details,
+            )
+        )
+        specs.append(
+            GateSpec(
+                name="frontend_browser_smoke",
+                cwd="frontend",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke after explicit browser install attempt.",
+                timeout_seconds=600,
+                details=browser_details,
+            )
+        )
+    elif not chromium_present:
+        specs.append(
+            GateSpec(
+                name="frontend_browser_smoke",
+                cwd="frontend",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke.",
+                skip_status="infra_failed",
+                skip_classification="browser_smoke_prerequisite",
+                skip_reason="Playwright Chromium browser executable is missing; rerun with --install-playwright-browsers or run npx playwright install manually.",
+                details=browser_details,
+            )
+        )
+    else:
+        specs.append(
+            GateSpec(
+                name="frontend_browser_smoke",
+                cwd="frontend",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke.",
+                timeout_seconds=600,
+                details=browser_details,
+            )
+        )
+
+    specs.extend(
+        [
+            GateSpec(
+                name="browser_real_backend_path",
+                cwd="frontend",
+                command=[],
+                description="Reserved real-backend Playwright path without API mocks.",
+                not_implemented_reason="Phase 5 will add or select a real-backend browser spec; mocked browser smoke must not close this checklist item.",
+            ),
+            GateSpec(
+                name="clean_machine_and_docs_gates",
+                cwd=".",
+                command=[],
+                description="Reserved clean-machine and static docs release gates.",
+                not_implemented_reason="Phase 6 will add optional clean-machine checks and static README/release notes/checklist gates.",
+            ),
+        ]
+    )
+    return specs
 
 
 def release_gates_overall_status(gates: list[GateResult], *, dry_run: bool) -> tuple[str, str]:
@@ -4504,7 +4851,7 @@ def release_gates_overall_status(gates: list[GateResult], *, dry_run: bool) -> t
         return "failed", "release_gates_timeout"
     if "infra_failed" in statuses:
         return "infra_failed", "release_gates_infra_failed"
-    if "not_implemented" in statuses:
+    if "not_implemented" in statuses or "skipped_prerequisite" in statuses:
         return "incomplete", "release_gates_incomplete"
     if "partial_pass" in statuses:
         return "partial_pass", "release_gates_partial_pass"
@@ -4518,7 +4865,7 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
     result.findings.clear()
     for gate in result.gates:
         if gate.status not in {"ok", "planned"}:
-            severity = "warn" if gate.status in {"partial_pass", "not_implemented"} else "fail"
+            severity = "warn" if gate.status in {"partial_pass", "not_implemented", "skipped_prerequisite"} else "fail"
             result.findings.append(
                 {
                     "severity": severity,
@@ -4530,7 +4877,7 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
     if result.dry_run:
         result.next_actions.append("Run `python tools/devbootstrap.py release-gates` without --dry-run to execute implemented gates and create a fresh bundle.")
     elif result.overall_status == "incomplete":
-        result.next_actions.append("Implement Phase 3+ gates before treating release-gates as a full v1 release signal.")
+        result.next_actions.append("Resolve skipped prerequisites or implement reserved Phase 5/6 gates before treating release-gates as a full v1 release signal.")
     elif result.overall_status == "ok":
         result.next_actions.append("Configured release-gates passed; continue with later release validation or manual review.")
     else:
@@ -4723,7 +5070,12 @@ def command_release_gates(args: argparse.Namespace) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    specs = build_release_gate_specs(project_root)
+    specs = build_release_gate_specs(
+        project_root,
+        allow_dev_db_write=args.allow_dev_db_write,
+        install_playwright_browsers=args.install_playwright_browsers,
+        dry_run=args.dry_run,
+    )
     for index, spec in enumerate(specs, start=1):
         effective_timeout = min(args.timeout_seconds, spec.timeout_seconds) if args.timeout_seconds > 0 else spec.timeout_seconds
         result.gates.append(
@@ -5737,6 +6089,8 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--dry-run", action="store_true", help="Create a planned release-gates bundle without executing gate commands.")
     release_gates.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["release_gate"], help="Maximum timeout for each implemented gate command.")
     release_gates.add_argument("--output-dir", help="Write the run directory to this path instead of .dev-bootstrap/runs/<run-id>.")
+    release_gates.add_argument("--allow-dev-db-write", action="store_true", help="Allow backend Python smoke to write through the configured live backend API when TEST_DATABASE_URL is not present.")
+    release_gates.add_argument("--install-playwright-browsers", action="store_true", help="Run npx playwright install when browser binaries are missing before browser smoke.")
     release_gates.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     release_gates.set_defaults(func=command_release_gates)
 
