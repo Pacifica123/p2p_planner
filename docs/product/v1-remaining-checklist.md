@@ -124,6 +124,8 @@
 
 ## 7. Testing and release gates
 
+Автоматизация будущего полного прогона этого блока зафиксирована в `docs/dev-bootstrap/devbootstrap-v2-release-gates-plan.md`. До реализации v2 эти пункты остаются ручными gates; важно не считать mocked browser smoke заменой real backend browser path.
+
 - [ ] `cargo test`.
 - [ ] `python tests/smoke_core_api.py`.
 - [ ] `npm run build`.
