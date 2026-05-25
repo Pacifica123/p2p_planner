@@ -4519,6 +4519,7 @@ class ReleaseGatesResult:
     timeout_seconds: int
     report_dir: str | None = None
     archive_path: str | None = None
+    remediation_bundle_path: str | None = None
     profile_plan: ReleaseGatesProfilePlan | None = None
     managed_test_db: ManagedTestDatabaseState | None = None
     managed_runtime: ManagedRuntimeState | None = None
@@ -7243,6 +7244,7 @@ def release_gates_overall_status(gates: list[GateResult], *, dry_run: bool) -> t
 
 def release_gates_next_action_for_code(code: str) -> str | None:
     actions = {
+        "missing_prerequisite": "Install the missing command shown in the gate log or use a shell where it is on PATH, then rerun release-gates.",
         "frontend_dependencies_missing": "Run `python tools/devbootstrap.py release-gates --prepare-deps` to let release-gates install missing/stale frontend dependencies before frontend gates, or run `python tools/devbootstrap.py prepare-frontend --install-mode=stale` first.",
         "frontend_dependencies_stale": "Run `python tools/devbootstrap.py release-gates --prepare-deps` or `python tools/devbootstrap.py prepare-frontend --install-mode=stale` to refresh the frontend install marker after package/lockfile/runtime changes.",
         "frontend_lockfile_mismatch": "Fix frontend/package-lock.json in a separate patch, then rerun release-gates; release-gates will not silently update lockfiles.",
@@ -7331,6 +7333,413 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
             release_gates_add_unique_action(result.next_actions, "Inspect release-gates logs and fix the classified finding before rerunning.", seen_actions)
 
 
+
+
+def release_gates_normalized_status(gate: GateResult) -> str:
+    if gate.status == "ok":
+        return "passed"
+    if gate.status == "failed":
+        return "failed"
+    if gate.status == "timeout":
+        return "infra_failed"
+    if gate.status == "infra_failed":
+        return "infra_failed"
+    if gate.status == "skipped_prerequisite":
+        return "skipped_prerequisite"
+    if gate.status == "skipped_optional":
+        return "skipped_optional"
+    if gate.status == "partial_pass":
+        return "partial_pass"
+    if gate.status == "not_implemented":
+        return "skipped_prerequisite"
+    if gate.status == "planned":
+        return "planned"
+    return gate.status or "unknown"
+
+
+def release_gates_gate_area(gate: GateResult) -> str:
+    name = gate.name
+    classification = gate.classification
+    if "clean_machine" in name:
+        return "clean-machine"
+    if name.startswith("frontend") or "browser" in name or "playwright" in name:
+        return "frontend"
+    if name.startswith("backend") or "cargo" in name or "smoke" in name:
+        return "backend"
+    if "runtime" in name:
+        return "runtime"
+    if "db" in name or "postgres" in classification:
+        return "database"
+    if name.startswith("docs") or "readme" in name or "checklist" in name or "release_notes" in name:
+        return "docs"
+    return "tooling"
+
+
+def release_gates_status_meaning(status: str) -> str:
+    meanings = {
+        "passed": "Gate реально выполнился и прошел.",
+        "failed": "Gate реально выполнился и нашел defect/test failure.",
+        "infra_failed": "Gate не смог проверить продукт из-за окружения/tooling.",
+        "skipped_prerequisite": "Gate безопасно пропущен из-за отсутствующего prerequisite.",
+        "skipped_optional": "Gate intentionally optional.",
+        "partial_pass": "Команда завершилась успешно, но release confidence неполный.",
+        "planned": "Dry-run plan: gate был запланирован, но не выполнялся.",
+    }
+    return meanings.get(status, "Нормализованный статус без отдельного описания.")
+
+
+def release_gates_classification_family(code: str) -> str:
+    if code in {"ok", "release_gates_ok"}:
+        return "passed"
+    if code in {"release_gates_dry_run"}:
+        return "planned"
+    infra_markers = (
+        "missing",
+        "stale",
+        "prerequisite",
+        "unavailable",
+        "permission_denied",
+        "port_occupied",
+        "network",
+        "runtime_unreachable",
+        "write_guard",
+        "opt_in_required",
+        "source_invalid",
+        "source_missing",
+        "lockfile_mismatch",
+    )
+    if any(marker in code for marker in infra_markers):
+        return "infrastructure"
+    if code.endswith("optional_not_requested") or code.startswith("clean_machine_optional"):
+        return "optional"
+    if code == "critical_tests_ignored":
+        return "incomplete_signal"
+    return "product_or_contract"
+
+
+def release_gates_gate_ledger_entry(gate: GateResult) -> dict[str, Any]:
+    normalized_status = release_gates_normalized_status(gate)
+    return {
+        "name": gate.name,
+        "area": release_gates_gate_area(gate),
+        "status": normalized_status,
+        "rawStatus": gate.status,
+        "classification": gate.classification,
+        "classificationFamily": release_gates_classification_family(gate.classification),
+        "required": gate.required,
+        "message": gate.message,
+        "cwd": gate.cwd,
+        "command": release_gate_command_display(gate.command) if gate.command else None,
+        "returncode": gate.returncode,
+        "durationMs": gate.duration_ms,
+        "logPath": gate.log_path,
+        "meaning": release_gates_status_meaning(normalized_status),
+        "details": gate.details,
+    }
+
+
+def release_gates_build_ledger(result: ReleaseGatesResult) -> dict[str, Any]:
+    entries = [release_gates_gate_ledger_entry(gate) for gate in result.gates]
+    counts: dict[str, int] = {}
+    for entry in entries:
+        status = str(entry["status"])
+        counts[status] = counts.get(status, 0) + 1
+    blockers = [
+        entry
+        for entry in entries
+        if entry["required"] and entry["status"] in {"failed", "infra_failed", "skipped_prerequisite", "partial_pass"}
+    ]
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "overallStatus": result.overall_status,
+        "classification": result.classification,
+        "releaseConfidence": release_gates_release_confidence(result),
+        "productRegressionsProven": release_gates_product_regressions_proven(result),
+        "countsByStatus": counts,
+        "blockers": blockers,
+        "gates": entries,
+    }
+
+
+def release_gates_release_confidence(result: ReleaseGatesResult) -> str:
+    if result.dry_run:
+        return "planned-only"
+    if result.overall_status == "ok":
+        return "complete-for-configured-gates"
+    if result.overall_status in {"incomplete", "partial_pass", "infra_failed"}:
+        return "incomplete"
+    if result.overall_status == "failed":
+        return "failed"
+    return "unknown"
+
+
+def release_gates_product_regressions_proven(result: ReleaseGatesResult) -> str:
+    product_failures = [
+        gate
+        for gate in result.gates
+        if gate.required
+        and gate.status == "failed"
+        and release_gates_classification_family(gate.classification) == "product_or_contract"
+    ]
+    if product_failures:
+        return "yes"
+    unknown_signal = [
+        gate
+        for gate in result.gates
+        if gate.required and release_gates_normalized_status(gate) in {"infra_failed", "skipped_prerequisite", "partial_pass"}
+    ]
+    if unknown_signal:
+        return "none-proven-but-incomplete"
+    return "none"
+
+
+def release_gates_infrastructure_blockers(result: ReleaseGatesResult) -> list[dict[str, str]]:
+    blockers: list[dict[str, str]] = []
+    for gate in result.gates:
+        status = release_gates_normalized_status(gate)
+        family = release_gates_classification_family(gate.classification)
+        if status in {"infra_failed", "skipped_prerequisite"} or family == "infrastructure":
+            blockers.append(
+                {
+                    "gate": gate.name,
+                    "code": gate.classification,
+                    "status": status,
+                    "message": gate.message,
+                    "nextAction": release_gates_next_action_for_code(gate.classification) or "Inspect the gate log and rerun release-gates after fixing this prerequisite.",
+                }
+            )
+    return blockers
+
+
+def release_gates_unverified_areas(result: ReleaseGatesResult) -> list[dict[str, str]]:
+    areas: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for gate in result.gates:
+        status = release_gates_normalized_status(gate)
+        if status not in {"infra_failed", "skipped_prerequisite", "skipped_optional", "partial_pass", "planned"}:
+            continue
+        area = release_gates_gate_area(gate)
+        key = (area, gate.name)
+        if key in seen:
+            continue
+        seen.add(key)
+        areas.append({"area": area, "gate": gate.name, "status": status, "reason": gate.message})
+    return areas
+
+
+def sha256_tree(project_root: Path, relative_path: str, suffixes: tuple[str, ...] | None = None) -> str | None:
+    root = project_root / relative_path
+    if not root.exists():
+        return None
+    digest = hashlib.sha256()
+    if root.is_file():
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(root.read_bytes())
+        return digest.hexdigest()
+    found = False
+    for path in sorted(root.rglob("*")):
+        if path.is_dir():
+            continue
+        if suffixes and path.suffix not in suffixes:
+            continue
+        try:
+            rel_path = path.relative_to(project_root).as_posix()
+        except ValueError:
+            continue
+        digest.update(rel_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+        found = True
+    return digest.hexdigest() if found else None
+
+
+def release_gates_environment_fingerprint(project_root: Path, result: ReleaseGatesResult) -> dict[str, Any]:
+    frontend_ready, frontend_reason, frontend_details = release_gate_frontend_dependency_status(project_root)
+    tool_names = ["git", "cargo", "rustc", "node", "npm", "docker", "docker_compose", "docker_compose_legacy", "psql", "pg_isready"]
+    tools: dict[str, Any] = {}
+    for name in tool_names:
+        command = TOOL_COMMANDS.get(name)
+        if not command:
+            continue
+        probe = probe_tool(name, command)
+        tools[name] = as_jsonable(probe)
+    ports = {name: as_jsonable(probe_port(name, port)) for name, port in DEFAULT_PORTS.items()}
+    http = {name: as_jsonable(probe_http(name, url)) for name, url in HEALTH_URLS.items()}
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "machine": platform.machine(),
+            "python": sys.version.split()[0],
+            "pythonExecutable": sys.executable,
+        },
+        "tools": tools,
+        "ports": ports,
+        "http": http,
+        "frontendDependencies": {
+            "ready": frontend_ready,
+            "reason": frontend_reason,
+            "details": frontend_details,
+        },
+        "hashes": {
+            "frontendPackageJsonSha256": sha256_file(project_root / "frontend" / "package.json"),
+            "frontendPackageLockSha256": sha256_file(project_root / "frontend" / "package-lock.json"),
+            "backendCargoTomlSha256": sha256_file(project_root / "backend" / "Cargo.toml"),
+            "backendCargoLockSha256": sha256_file(project_root / "backend" / "Cargo.lock"),
+            "backendMigrationsSha256": sha256_tree(project_root, "backend/migrations", (".sql",)),
+            "devbootstrapSha256": sha256_file(project_root / "tools" / "devbootstrap.py"),
+        },
+        "backend": {
+            "buildRsPresent": (project_root / "backend" / "build.rs").is_file(),
+            "migrationsPathPresent": (project_root / "backend" / "migrations").is_dir(),
+        },
+        "state": summarize_state(project_root),
+        "managedTestDb": managed_test_db_public_payload(result.managed_test_db) if result.managed_test_db else None,
+        "managedRuntime": managed_runtime_public_payload(result.managed_runtime) if result.managed_runtime else None,
+    }
+
+
+def render_release_gates_gate_ledger_md(ledger: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("# release-gates gate ledger")
+    lines.append("")
+    lines.append(f"- Run ID: `{ledger.get('runId')}`")
+    lines.append(f"- Overall: `{ledger.get('overallStatus')}`")
+    lines.append(f"- Classification: `{ledger.get('classification')}`")
+    lines.append(f"- Release confidence: `{ledger.get('releaseConfidence')}`")
+    lines.append(f"- Product regressions proven: `{ledger.get('productRegressionsProven')}`")
+    lines.append("")
+    counts = ledger.get("countsByStatus") if isinstance(ledger.get("countsByStatus"), dict) else {}
+    if counts:
+        lines.append("## Counts by status")
+        lines.append("")
+        for status, count in sorted(counts.items()):
+            lines.append(f"- `{status}`: {count}")
+        lines.append("")
+    lines.append("## Gates")
+    lines.append("")
+    lines.append("| Gate | Area | Status | Classification | Required | Log |")
+    lines.append("|---|---|---|---|---:|---|")
+    for entry in ledger.get("gates", []):
+        log = f"`{entry.get('logPath')}`" if entry.get("logPath") else ""
+        lines.append(
+            f"| `{entry.get('name')}` | `{entry.get('area')}` | `{entry.get('status')}` | `{entry.get('classification')}` | {entry.get('required')} | {log} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_release_gates_prerequisites_md(result: ReleaseGatesResult, blockers: list[dict[str, str]]) -> str:
+    lines: list[str] = []
+    lines.append("# release-gates prerequisites")
+    lines.append("")
+    if not blockers:
+        lines.append("No missing infrastructure prerequisites were detected by the configured gates.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.append("These blockers prevented release-gates from converting skipped/infra checks into real product signal:")
+    lines.append("")
+    for blocker in blockers:
+        lines.append(f"- `{blocker['code']}` from `{blocker['gate']}` — {blocker['message']}")
+        lines.append(f"  - Next action: {blocker['nextAction']}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_release_gates_skipped_gates_md(unverified: list[dict[str, str]]) -> str:
+    lines: list[str] = []
+    lines.append("# release-gates skipped and unverified gates")
+    lines.append("")
+    if not unverified:
+        lines.append("No skipped, planned or partial gates were recorded.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.append("| Area | Gate | Status | Reason |")
+    lines.append("|---|---|---|---|")
+    for item in unverified:
+        reason = str(item["reason"]).replace("\n", " ").replace("|", "\\|")
+        lines.append(f"| `{item['area']}` | `{item['gate']}` | `{item['status']}` | {reason} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def release_gates_rerun_commands(result: ReleaseGatesResult, blockers: list[dict[str, str]]) -> list[str]:
+    commands: list[str] = []
+    codes = {blocker["code"] for blocker in blockers}
+    if result.dry_run:
+        commands.append("python tools/devbootstrap.py release-gates")
+    if any(code in codes for code in {"frontend_dependencies_missing", "frontend_dependencies_stale", "browser_smoke_prerequisite"}):
+        commands.append("python tools/devbootstrap.py release-gates --prepare-deps --install-playwright-browsers")
+    if any(code in codes for code in {"db_test_prerequisite_missing", "smoke_db_write_guard", "real_backend_browser_write_guard", "managed_runtime_db_unavailable"}):
+        commands.append("python tools/devbootstrap.py release-gates --managed-test-db --managed-runtime")
+    if "real_backend_browser_opt_in_required" in codes:
+        commands.append("python tools/devbootstrap.py release-gates --managed-test-db --managed-runtime --include-real-backend-browser")
+    if any(code.startswith("managed_") or code.startswith("postgres_") for code in codes):
+        commands.append("python tools/devbootstrap.py release-gates --profile isolated-db")
+    if "clean_machine_optional_not_requested" in codes:
+        commands.append("python tools/devbootstrap.py release-gates --include-clean-machine --clean-machine-profile=dry")
+    if result.profile_plan and result.profile_plan.profile != "full-local-release":
+        commands.append("python tools/devbootstrap.py release-gates --profile full-local-release")
+    if not commands:
+        commands.append("python tools/devbootstrap.py release-gates")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for command in commands:
+        if command not in seen:
+            deduped.append(command)
+            seen.add(command)
+    return deduped
+
+
+def render_release_gates_next_actions_md(result: ReleaseGatesResult) -> str:
+    lines = ["# release-gates next actions", ""]
+    if result.next_actions:
+        for action in result.next_actions:
+            lines.append(f"- {action}")
+    else:
+        lines.append("- No next actions were generated.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_release_gates_rerun_commands_md(commands: list[str]) -> str:
+    lines = ["# release-gates rerun commands", ""]
+    lines.append("Commands are derived from the current blockers rather than generic advice.")
+    lines.append("")
+    for command in commands:
+        lines.append("```bash")
+        lines.append(command)
+        lines.append("```")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> None:
+    remediation_dir = run_dir / "remediation"
+    remediation_dir.mkdir(parents=True, exist_ok=True)
+    result.remediation_bundle_path = rel(remediation_dir, project_root)
+    ledger = release_gates_build_ledger(result)
+    blockers = release_gates_infrastructure_blockers(result)
+    unverified = release_gates_unverified_areas(result)
+    rerun_commands = release_gates_rerun_commands(result, blockers)
+    fingerprint = release_gates_environment_fingerprint(project_root, result)
+
+    write_json(remediation_dir / "gate-ledger.json", ledger)
+    (remediation_dir / "gate-ledger.md").write_text(render_release_gates_gate_ledger_md(ledger), encoding="utf-8")
+    (remediation_dir / "prerequisites.md").write_text(render_release_gates_prerequisites_md(result, blockers), encoding="utf-8")
+    (remediation_dir / "skipped-gates.md").write_text(render_release_gates_skipped_gates_md(unverified), encoding="utf-8")
+    (remediation_dir / "next-actions.md").write_text(render_release_gates_next_actions_md(result), encoding="utf-8")
+    (remediation_dir / "rerun-commands.md").write_text(render_release_gates_rerun_commands_md(rerun_commands), encoding="utf-8")
+    write_json(remediation_dir / "environment-fingerprint.json", fingerprint)
+
 def render_release_gates_summary(result: ReleaseGatesResult) -> str:
     lines: list[str] = []
     lines.append("# release-gates summary")
@@ -7355,6 +7764,7 @@ def render_release_gates_summary(result: ReleaseGatesResult) -> str:
         lines.append(f"Managed frontend: {result.managed_runtime.frontend_url or '<none>'}")
         lines.append(f"Managed runtime state: {result.managed_runtime.runtime_state_path or '<none>'}")
     lines.append(f"Report dir: {result.report_dir or '<not written>'}")
+    lines.append(f"Remediation bundle: {result.remediation_bundle_path or '<not written>'}")
     if result.archive_path:
         lines.append(f"Archive: {result.archive_path}")
     lines.append("")
@@ -7382,6 +7792,8 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
     lines.append(f"- Dry run: `{result.dry_run}`")
     if result.archive_path:
         lines.append(f"- Archive: `{result.archive_path}`")
+    if getattr(result, "remediation_bundle_path", None):
+        lines.append("- Remediation bundle: `" + result.remediation_bundle_path + "`")
     if result.profile_plan:
         lines.append("")
         lines.append("## Profile and consent")
@@ -7428,6 +7840,17 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         log = f"`{gate.log_path}`" if gate.log_path else ""
         lines.append(f"| `{gate.name}` | {gate.status} | `{gate.classification}` | `{command}` | {log} |")
     lines.append("")
+    if result.remediation_bundle_path:
+        lines.append("## Diagnostic remediation bundle")
+        lines.append("")
+        lines.append(f"- Bundle directory: `{result.remediation_bundle_path}`")
+        lines.append("- Gate ledger: `remediation/gate-ledger.md` / `remediation/gate-ledger.json`")
+        lines.append("- Prerequisites: `remediation/prerequisites.md`")
+        lines.append("- Skipped gates: `remediation/skipped-gates.md`")
+        lines.append("- Next actions: `remediation/next-actions.md`")
+        lines.append("- Rerun commands: `remediation/rerun-commands.md`")
+        lines.append("- Environment fingerprint: `remediation/environment-fingerprint.json`")
+        lines.append("")
     lines.append("## Findings")
     lines.append("")
     if result.findings:
@@ -7459,6 +7882,7 @@ def release_gates_json_payload(result: ReleaseGatesResult) -> dict[str, Any]:
         "classification": result.classification,
         "reportDir": result.report_dir,
         "archivePath": result.archive_path,
+        "remediationBundlePath": result.remediation_bundle_path,
         "profilePlan": as_jsonable(result.profile_plan) if result.profile_plan else None,
         "managedTestDb": managed_test_db_public_payload(result.managed_test_db) if result.managed_test_db else None,
         "managedRuntime": managed_runtime_public_payload(result.managed_runtime) if result.managed_runtime else None,
@@ -7501,6 +7925,7 @@ def write_release_gates_reports(project_root: Path, result: ReleaseGatesResult, 
     timestamp = now_utc().strftime("%Y%m%d_%H%M%S")
     archive_path = run_dir / f"release-gates_{timestamp}.zip"
     result.archive_path = rel(archive_path, project_root)
+    write_release_gates_remediation_bundle(project_root, result, run_dir)
     (run_dir / "summary.txt").write_text(render_release_gates_summary(result), encoding="utf-8")
     (run_dir / "release-gates.md").write_text(render_release_gates_report(result), encoding="utf-8")
     write_json(run_dir / "release-gates.json", release_gates_json_payload(result))
@@ -7518,6 +7943,8 @@ def print_release_gates_summary(result: ReleaseGatesResult) -> None:
     if result.profile_plan:
         print(f"Profile: {result.profile_plan.profile} (explicit={result.profile_plan.explicit_profile})")
         print(f"Consent plan: {result.profile_plan.consent_summary_path or '<not written>'}")
+    if result.remediation_bundle_path:
+        print(f"Remediation: {result.remediation_bundle_path}")
     if result.managed_runtime and result.managed_runtime.enabled:
         print("\nManaged runtime:")
         print(f"  - backend: {result.managed_runtime.backend_api_base_url or '<none>'}")
@@ -8809,6 +9236,59 @@ def case_self_check_clean_machine_profiles() -> str:
     return "clean-machine sandbox profiles and command plan checked"
 
 
+
+def case_self_check_release_gates_remediation_bundle() -> str:
+    result = ReleaseGatesResult(
+        generated_at="2026-05-25T00:00:00+00:00",
+        tool_version=TOOL_VERSION,
+        project_root="/tmp/project",
+        invoked_from="/tmp/project",
+        run_id="selfcheck-release-gates-remediation",
+        dry_run=False,
+        timeout_seconds=60,
+        overall_status="infra_failed",
+        classification="release_gates_infra_failed",
+    )
+    result.gates.append(
+        GateResult(
+            name="frontend_build",
+            status="infra_failed",
+            classification="frontend_dependencies_missing",
+            message="frontend/node_modules is missing",
+            cwd="frontend",
+            command=["npm", "run", "build"],
+            required=True,
+            log_path=".dev-bootstrap/runs/selfcheck/logs/frontend.log",
+        )
+    )
+    result.gates.append(
+        GateResult(
+            name="docs_readme_startup_commands_present",
+            status="ok",
+            classification="ok",
+            message="README contains startup commands",
+            cwd=".",
+            command=[],
+            required=True,
+        )
+    )
+    ledger = release_gates_build_ledger(result)
+    blockers = release_gates_infrastructure_blockers(result)
+    unverified = release_gates_unverified_areas(result)
+    commands = release_gates_rerun_commands(result, blockers)
+    assert ledger["releaseConfidence"] == "incomplete"
+    assert ledger["countsByStatus"]["infra_failed"] == 1
+    assert ledger["countsByStatus"]["passed"] == 1
+    assert ledger["productRegressionsProven"] == "none-proven-but-incomplete"
+    assert blockers and blockers[0]["code"] == "frontend_dependencies_missing"
+    assert any(item["gate"] == "frontend_build" for item in unverified)
+    assert any("--prepare-deps" in command for command in commands)
+    markdown = render_release_gates_gate_ledger_md(ledger)
+    assert "Release confidence" in markdown
+    assert "frontend_dependencies_missing" in markdown
+    return "release-gates remediation ledger and targeted rerun commands checked"
+
+
 def case_self_check_release_gates_targeted_next_actions() -> str:
     result = ReleaseGatesResult(
         generated_at="2026-05-24T00:00:00+00:00",
@@ -8901,6 +9381,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "frontend_prepare_modes", case_self_check_frontend_prepare_modes)
     self_check_case(result, "clean_machine_profiles", case_self_check_clean_machine_profiles)
     self_check_case(result, "release_gates_profiles_and_consent", case_self_check_release_gates_profiles_and_consent)
+    self_check_case(result, "release_gates_remediation_bundle", case_self_check_release_gates_remediation_bundle)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
     if result.failures:

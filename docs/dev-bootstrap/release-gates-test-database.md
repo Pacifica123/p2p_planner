@@ -28,6 +28,26 @@ python tools/devbootstrap.py release-gates --profile diagnostic --include-clean-
 
 Every run writes `release-gates-consent.md` and `release-gates-consent.json` into the run directory. The consent files show the resolved profile, explicit overrides, effective options, allowed side effects, denied side effects and planned gate families. Dry-run profile runs must not create databases, install dependencies, start processes, copy clean-machine sandboxes or perform browser downloads.
 
+## Diagnostic remediation bundle
+
+Every `release-gates` run writes a first-class remediation bundle under `remediation/` and includes it in `release-gates_*.zip`:
+
+```text
+remediation/
+  gate-ledger.md
+  gate-ledger.json
+  prerequisites.md
+  skipped-gates.md
+  next-actions.md
+  rerun-commands.md
+  environment-fingerprint.json
+```
+
+The ledger normalizes raw gate states into human/AI-friendly statuses: `passed`, `failed`, `infra_failed`, `skipped_prerequisite`, `skipped_optional`, `partial_pass` and `planned`. This makes the important distinction explicit: an `infra_failed` run can still prove that some gates passed while other release-critical areas remain unknown.
+
+`prerequisites.md` lists infrastructure blockers with targeted next actions. `skipped-gates.md` lists unverified areas. `rerun-commands.md` is generated from actual blocker classifications, for example `--prepare-deps --install-playwright-browsers` for frontend dependency/browser blockers or `--managed-test-db --managed-runtime` for write-safe DB/runtime blockers. `environment-fingerprint.json` captures OS, Python, Git, Cargo/Rust, Node/npm, Docker/Compose, `psql`/`pg_isready`, default port probes, frontend dependency marker details, lockfile/migrations hashes, `backend/build.rs` presence and the current `.dev-bootstrap/state.json` summary with secrets masked by omission.
+
+
 ## Managed ephemeral database
 
 The recommended one-command DB path is:
