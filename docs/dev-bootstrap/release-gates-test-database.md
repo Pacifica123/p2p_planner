@@ -81,12 +81,32 @@ A fuller release review can then run:
 
 ```bash
 python tools/devbootstrap.py release-gates \
-  --prepare-frontend \
+  --managed-test-db \
+  --prepare-deps \
   --install-playwright-browsers \
   --include-real-backend-browser \
   --include-clean-machine
 ```
 
-`--prepare-frontend` runs `prepare-frontend` inside the same release-gates bundle before frontend build/test/browser gates are planned. This is useful when `frontend/node_modules` or `.dev-bootstrap/frontend-install.json` is missing/stale.
+`--prepare-deps` is the managed dependency preparation umbrella. Bare `--prepare-deps` means `stale` / `missing-or-stale`: release-gates first runs `prepare-frontend --install-mode=stale --no-write-report`, then a backend `cargo test --no-run` warmup, and only after that plans frontend build/test/browser gates using the refreshed marker. The compatibility flag `--prepare-frontend` maps to the same stale mode.
+
+Available dependency modes:
+
+| Mode | Behavior |
+|---|---|
+| `never` | Do not prepare dependencies; only diagnose and skip/fail gates with precise prerequisites. |
+| `missing` | Run `npm ci` only when `frontend/node_modules` is absent. |
+| `stale` / `missing-or-stale` | Run `npm ci` when `node_modules` is missing or `.dev-bootstrap/frontend-install.json` does not match package hashes/platform/node/npm. |
+| `always` | Run `npm ci` every time. |
+
+The frontend install marker now records package hashes, Node/npm versions, OS/platform fingerprint, install mode and install command. `prepare-frontend` refuses to fall back to `npm install` when `frontend/package-lock.json` is missing unless `--allow-npm-install-without-lock` is passed explicitly, and it treats package/lockfile changes caused by install as a separate dependency failure instead of hiding them inside frontend test failures.
+
+Playwright browser binaries remain an explicit opt-in because the download can be large:
+
+```bash
+python tools/devbootstrap.py release-gates --prepare-deps --install-playwright-browsers
+```
+
+When browser cache is missing and this flag is enabled, release-gates runs `npx playwright install chromium` as a separate controlled gate before `npm run test:browser`. Without the flag, browser smoke is skipped as `browser_smoke_prerequisite` with a precise next action.
 
 Use `--allow-dev-db-write` only when the configured dev database is disposable and writing into it is intentional.

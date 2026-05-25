@@ -64,6 +64,8 @@ TIMEOUT_POLICY = {
     "release_gate": 600,
 }
 BOOTSTRAP_DIR_NAME = ".dev-bootstrap"
+FRONTEND_PREPARE_DEP_MODES = ("never", "missing", "stale", "missing-or-stale", "always")
+DEFAULT_FRONTEND_PREPARE_DEP_MODE = "stale"
 DEFAULT_PORTS = {
     "postgres": 5432,
     "backend": 18080,
@@ -2752,18 +2754,84 @@ def load_frontend_install_marker(project_root: Path) -> dict[str, Any]:
     return read_json(frontend_install_marker_path(project_root))
 
 
-def frontend_install_marker_matches(project_root: Path, package_json_hash: str | None, package_lock_hash: str | None) -> bool:
+def normalize_frontend_prepare_dep_mode(value: str | None) -> str:
+    mode = (value or DEFAULT_FRONTEND_PREPARE_DEP_MODE).strip().lower()
+    if mode == "missing-or-stale":
+        return "stale"
+    if mode not in FRONTEND_PREPARE_DEP_MODES:
+        return DEFAULT_FRONTEND_PREPARE_DEP_MODE
+    return mode
+
+
+def process_probe_version_value(probe: ProcessProbe | None) -> str | None:
+    if not process_probe_ok(probe):
+        return None
+    return first_output_line(probe)
+
+
+def frontend_install_platform_fingerprint() -> dict[str, str]:
+    return {
+        "system": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+        "python": platform.python_version(),
+    }
+
+
+def frontend_install_marker_mismatch_reasons(
+    project_root: Path,
+    package_json_hash: str | None,
+    package_lock_hash: str | None,
+    *,
+    node_version: str | None = None,
+    npm_version: str | None = None,
+) -> list[str]:
+    marker_path = frontend_install_marker_path(project_root)
+    node_modules_path = project_root / "frontend" / "node_modules"
     marker = load_frontend_install_marker(project_root)
+    reasons: list[str] = []
+    if not node_modules_path.is_dir():
+        reasons.append("frontend/node_modules is missing")
+    if not marker_path.is_file():
+        reasons.append("frontend install marker is missing")
+        return reasons
     if "_error" in marker:
-        return False
-    return (
-        marker.get("packageJsonSha256") == package_json_hash
-        and marker.get("packageLockSha256") == package_lock_hash
-        and bool((project_root / "frontend" / "node_modules").is_dir())
+        reasons.append(f"frontend install marker cannot be read: {marker.get('_error')}")
+        return reasons
+    if marker.get("packageJsonSha256") != package_json_hash:
+        reasons.append("frontend/package.json hash differs from install marker")
+    if marker.get("packageLockSha256") != package_lock_hash:
+        reasons.append("frontend/package-lock.json hash differs from install marker")
+    marker_platform = marker.get("platform") if isinstance(marker.get("platform"), dict) else {}
+    current_platform = frontend_install_platform_fingerprint()
+    for key in ["system", "machine"]:
+        if marker_platform.get(key) != current_platform.get(key):
+            reasons.append(f"platform {key} differs from install marker")
+    if node_version and marker.get("nodeVersion") != node_version:
+        reasons.append("Node.js version differs from install marker")
+    if npm_version and marker.get("npmVersion") != npm_version:
+        reasons.append("npm version differs from install marker")
+    return reasons
+
+
+def frontend_install_marker_matches(
+    project_root: Path,
+    package_json_hash: str | None,
+    package_lock_hash: str | None,
+    *,
+    node_version: str | None = None,
+    npm_version: str | None = None,
+) -> bool:
+    return not frontend_install_marker_mismatch_reasons(
+        project_root,
+        package_json_hash,
+        package_lock_hash,
+        node_version=node_version,
+        npm_version=npm_version,
     )
 
 
-def write_frontend_install_marker(project_root: Path, result: FrontendResult, command: list[str]) -> None:
+def write_frontend_install_marker(project_root: Path, result: FrontendResult, command: list[str], *, install_mode: str) -> None:
     marker_path = frontend_install_marker_path(project_root)
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     marker = {
@@ -2771,8 +2839,14 @@ def write_frontend_install_marker(project_root: Path, result: FrontendResult, co
         "generatedAt": iso_now(),
         "toolVersion": TOOL_VERSION,
         "command": command_as_text(command),
+        "commandList": command,
+        "installMode": install_mode,
+        "packageManager": "npm",
         "packageJsonSha256": result.package_json_hash,
         "packageLockSha256": result.package_lock_hash,
+        "nodeVersion": process_probe_version_value(result.node_version),
+        "npmVersion": process_probe_version_value(result.npm_version),
+        "platform": frontend_install_platform_fingerprint(),
     }
     write_json(marker_path, marker)
 
@@ -2781,6 +2855,21 @@ def frontend_install_command(project_root: Path) -> list[str]:
     if (project_root / "frontend" / "package-lock.json").is_file():
         return ["npm", "ci"]
     return ["npm", "install"]
+
+
+def frontend_prepare_should_install(result: FrontendResult, mode: str) -> tuple[bool, str]:
+    normalized = normalize_frontend_prepare_dep_mode(mode)
+    if normalized == "always":
+        return True, "prepare mode is always"
+    if normalized == "never":
+        return False, "prepare mode is never"
+    if normalized == "missing":
+        if not result.node_modules_exists:
+            return True, "frontend/node_modules is missing"
+        return False, "prepare mode is missing and frontend/node_modules already exists"
+    if not frontend_dependencies_current(result):
+        return True, "frontend dependencies are missing or stale"
+    return False, "frontend dependencies are current"
 
 
 def state_process_entry(project_root: Path, process_name: str) -> dict[str, Any]:
@@ -2829,10 +2918,16 @@ def build_frontend_result(project_root: Path | None, invoked_from: Path, *, mode
     result.package_json_hash = sha256_file(project_root / "frontend" / "package.json")
     result.package_lock_hash = sha256_file(project_root / "frontend" / "package-lock.json")
     result.install_marker_path = rel(frontend_install_marker_path(project_root), project_root)
-    result.install_marker_valid = frontend_install_marker_matches(project_root, result.package_json_hash, result.package_lock_hash)
     result.install_command = frontend_install_command(project_root)
     result.node_version = run_process_probe("node_version", ["node", "--version"], cwd=project_root, timeout=8)
     result.npm_version = run_process_probe("npm_version", ["npm", "--version"], cwd=project_root, timeout=8)
+    result.install_marker_valid = frontend_install_marker_matches(
+        project_root,
+        result.package_json_hash,
+        result.package_lock_hash,
+        node_version=process_probe_version_value(result.node_version),
+        npm_version=process_probe_version_value(result.npm_version),
+    )
     result.frontend_port_probe = probe_port("frontend", port, host=http_probe_host(host))
     result.frontend_root_probe = probe_http("frontend_root", result.frontend_url)
     api_health = frontend_api_health_url(result.api_base_url)
@@ -2970,6 +3065,9 @@ def render_frontend_report(result: FrontendResult) -> str:
     lines.append(f"- `frontend/node_modules`: `{result.node_modules_exists}`")
     lines.append(f"- Install marker: `{result.install_marker_path}` valid=`{result.install_marker_valid}`")
     lines.append(f"- Install command: `{command_as_text(result.install_command)}`")
+    lines.append(f"- package.json SHA-256: `{result.package_json_hash or '<missing>'}`")
+    lines.append(f"- package-lock.json SHA-256: `{result.package_lock_hash or '<missing>'}`")
+    lines.append(f"- Platform fingerprint: `{frontend_install_platform_fingerprint()}`")
     lines.append("")
     lines.append("### Scripts")
     lines.append("")
@@ -3077,12 +3175,22 @@ def print_frontend_summary(result: FrontendResult) -> None:
 def command_prepare_frontend(args: argparse.Namespace) -> int:
     invoked_from = Path.cwd()
     project_root = find_project_root(invoked_from)
+    install_mode = "always" if args.force_install else normalize_frontend_prepare_dep_mode(getattr(args, "install_mode", None))
     result = build_frontend_result(project_root, invoked_from, mode="prepare-frontend", dry_run=args.dry_run)
     report_dir: Path | None = None
     if project_root is not None and not args.no_write_report:
         report_dir = create_report_dir(project_root, "prepare-frontend")
     if project_root is not None:
         add_frontend_preflight_checks(result, project_root)
+        should_install, install_reason = frontend_prepare_should_install(result, install_mode)
+        result.actions.append(
+            FrontendAction(
+                "dependency_prepare_policy",
+                "ok",
+                f"Dependency preparation mode is `{install_mode}`.",
+                evidence=install_reason,
+            )
+        )
         if not process_probe_ok(result.node_version):
             result.classification = "missing_prerequisite"
             result.failures.append({"code": "missing_node", "message": "node is not available on PATH."})
@@ -3094,17 +3202,27 @@ def command_prepare_frontend(args: argparse.Namespace) -> int:
         elif not result.package_json_exists:
             result.classification = "frontend_package_invalid"
             result.next_actions.append("Restore frontend/package.json from the project archive before installing dependencies.")
-        elif frontend_dependencies_current(result) and not args.force_install:
+        elif not should_install and frontend_dependencies_current(result):
             result.classification = "frontend_dependencies_current"
-            result.actions.append(FrontendAction("npm_install_noop", "ok", "frontend/node_modules matches the devbootstrap install marker; install skipped."))
+            result.actions.append(FrontendAction("npm_install_noop", "ok", "frontend/node_modules matches the devbootstrap install marker; install skipped.", evidence=install_reason))
             result.next_actions.append("Frontend dependencies look current. Continue with `python tools/devbootstrap.py start-frontend`.")
+        elif not should_install:
+            result.classification = "frontend_dependencies_stale" if result.node_modules_exists else "frontend_dependencies_missing"
+            result.failures.append({"code": result.classification, "message": f"Frontend dependencies are not current and prepare mode `{install_mode}` did not permit installation."})
+            result.next_actions.append("Rerun with `--install-mode=stale` or `--force-install` to repair missing/stale frontend dependencies.")
+        elif not result.package_lock_exists and not args.allow_npm_install_without_lock:
+            result.classification = "frontend_lockfile_missing"
+            result.failures.append({"code": "frontend_lockfile_missing", "message": "frontend/package-lock.json is missing; devbootstrap will not fall back to npm install without explicit opt-in."})
+            result.next_actions.append("Restore package-lock.json, or rerun with `--allow-npm-install-without-lock` when creating/updating the lockfile is intentional.")
         elif args.dry_run:
             result.classification = "frontend_prepare_planned"
-            result.actions.append(FrontendAction("npm_install", "planned", "Would install frontend dependencies.", command_as_text(result.install_command)))
+            result.actions.append(FrontendAction("npm_install", "planned", "Would install frontend dependencies.", command_as_text(result.install_command), install_reason))
             result.next_actions.append("Run without --dry-run to install/update frontend dependencies.")
         else:
+            before_package_hash = sha256_file(project_root / "frontend" / "package.json")
+            before_lock_hash = sha256_file(project_root / "frontend" / "package-lock.json")
             log_path = report_dir / "npm-install.log" if report_dir is not None else None
-            result.actions.append(FrontendAction("npm_install", "started", "Installing frontend dependencies.", command_as_text(result.install_command)))
+            result.actions.append(FrontendAction("npm_install", "started", "Installing frontend dependencies.", command_as_text(result.install_command), install_reason))
             result.npm_install = run_frontend_command_probe(
                 "npm_install",
                 result.install_command,
@@ -3113,17 +3231,33 @@ def command_prepare_frontend(args: argparse.Namespace) -> int:
                 timeout=args.timeout_seconds,
                 log_path=log_path,
             )
-            if process_probe_ok(result.npm_install):
-                result.classification = "frontend_dependencies_ready"
-                result.node_modules_exists = (project_root / "frontend" / "node_modules").is_dir()
-                result.install_marker_valid = True
-                write_frontend_install_marker(project_root, result, result.install_command)
-                result.actions.append(FrontendAction("install_marker", "ok", "Updated frontend install marker.", evidence=result.install_marker_path))
-                result.next_actions.append("Frontend dependencies are ready. Continue with `python tools/devbootstrap.py start-frontend`.")
-            else:
+            after_package_hash = sha256_file(project_root / "frontend" / "package.json")
+            after_lock_hash = sha256_file(project_root / "frontend" / "package-lock.json")
+            if not process_probe_ok(result.npm_install):
                 result.classification = classify_frontend_failure(command_output_text(result.npm_install), "frontend_install_failed")
                 result.failures.append({"code": result.classification, "message": "Frontend dependency installation failed."})
                 result.next_actions.append("Inspect npm-install.log, fix npm/network/lockfile issues, then rerun prepare-frontend.")
+            elif before_package_hash != after_package_hash:
+                result.classification = "frontend_manifest_changed_by_install"
+                result.failures.append({"code": result.classification, "message": "npm install changed frontend/package.json; release-gates will not hide manifest changes."})
+                result.next_actions.append("Inspect frontend/package.json changes and commit/fix them in a separate patch before rerunning release-gates.")
+            elif before_lock_hash != after_lock_hash:
+                result.classification = "frontend_lockfile_changed_by_install"
+                result.failures.append({"code": result.classification, "message": "npm install changed frontend/package-lock.json; release-gates will not hide lockfile changes."})
+                result.next_actions.append("Inspect package-lock.json changes and commit/fix them in a separate patch before rerunning release-gates.")
+            else:
+                result.package_json_hash = after_package_hash
+                result.package_lock_hash = after_lock_hash
+                result.node_modules_exists = (project_root / "frontend" / "node_modules").is_dir()
+                if not result.node_modules_exists:
+                    result.classification = "frontend_dependencies_missing"
+                    result.failures.append({"code": result.classification, "message": "npm command succeeded but frontend/node_modules is still missing."})
+                else:
+                    result.install_marker_valid = True
+                    write_frontend_install_marker(project_root, result, result.install_command, install_mode=install_mode)
+                    result.actions.append(FrontendAction("install_marker", "ok", "Updated frontend install marker.", evidence=result.install_marker_path))
+                    result.classification = "frontend_dependencies_ready"
+                    result.next_actions.append("Frontend dependencies are ready. Continue with `python tools/devbootstrap.py start-frontend`.")
     if project_root is not None and report_dir is not None:
         write_frontend_reports(project_root, result, "prepare-frontend", report_dir)
     print_frontend_summary(result)
@@ -3131,6 +3265,7 @@ def command_prepare_frontend(args: argparse.Namespace) -> int:
         print("\nJSON:")
         print(json.dumps(as_jsonable(result), ensure_ascii=False, indent=2))
     return 1 if result.failures and not args.dry_run else 0
+
 
 
 def run_frontend_command_probe(
@@ -3142,7 +3277,7 @@ def run_frontend_command_probe(
     timeout: int,
     log_path: Path | None = None,
 ) -> ProcessProbe:
-    probe = run_process_probe(name, command, cwd=cwd, timeout=timeout)
+    probe = run_process_probe(name, command, cwd=cwd, timeout=timeout, env_extra={"PYTHONDONTWRITEBYTECODE": "1"})
     if log_path is not None:
         lines = [
             f"$ {command_as_text(command)}",
@@ -3158,6 +3293,7 @@ def run_frontend_command_probe(
         ]
         log_path.write_text("\n".join(lines), encoding="utf-8")
     return probe
+
 
 
 def launch_frontend_process(project_root: Path, report_dir: Path, host: str, port: int) -> tuple[subprocess.Popen[Any], Path, list[str]]:
@@ -3226,8 +3362,12 @@ def classify_frontend_failure(text: str, default: str) -> str:
         return "frontend_script_missing"
     if "cannot find module" in lower or "module not found" in lower:
         return "frontend_dependency_missing"
+    if any(token in lower for token in ["econnreset", "etimedout", "eai_again", "enotfound", "socket timeout", "network timeout"]):
+        return "dependency_network_unavailable"
     if "npm err!" in lower and "network" in lower:
-        return "frontend_npm_network_failed"
+        return "dependency_network_unavailable"
+    if "npm ci" in lower and any(fragment in lower for fragment in ["package-lock", "lock file", "missing from", "can only install"]):
+        return "frontend_lockfile_mismatch"
     if "eresolve" in lower or "unable to resolve dependency tree" in lower:
         return "frontend_dependency_conflict"
     if "enoent" in lower and "package.json" in lower:
@@ -4407,6 +4547,10 @@ def classify_gate_output(name: str, stdout: str, stderr: str, error: str | None,
         return "ok", "ok", "gate completed"
     if "playwright" in lower and ("browser" in lower or "install" in lower or "executable doesn't exist" in lower or "please run" in lower):
         return "infra_failed", "browser_smoke_prerequisite", "Playwright browser prerequisite appears to be missing"
+    if name in {"frontend_prepare_dependencies", "playwright_install", "backend_dependency_warmup"} and any(token in lower for token in ["econnreset", "etimedout", "eai_again", "enotfound", "socket timeout", "network timeout", "failed to download"]):
+        return "infra_failed", "dependency_network_unavailable", "dependency network/cache prerequisite is unavailable"
+    if name == "frontend_prepare_dependencies" and "npm ci" in lower and any(fragment in lower for fragment in ["package-lock", "lock file", "missing from", "can only install"]):
+        return "infra_failed", "frontend_lockfile_mismatch", "frontend lockfile is out of sync with package.json"
     if "command not found" in lower or "not found on path" in lower or "no such file or directory" in lower:
         return "infra_failed", "missing_prerequisite", "required command or file is unavailable"
     if "connection refused" in lower or "networkerror" in lower or "failed to fetch" in lower:
@@ -5168,8 +5312,19 @@ def release_gate_frontend_dependency_status(project_root: Path) -> tuple[bool, s
     marker_path = frontend_install_marker_path(project_root)
     package_json_hash = sha256_file(package_json_path)
     package_lock_hash = sha256_file(package_lock_path)
+    node_probe = run_process_probe("node_version", ["node", "--version"], cwd=project_root, timeout=8)
+    npm_probe = run_process_probe("npm_version", ["npm", "--version"], cwd=project_root, timeout=8)
+    node_version = process_probe_version_value(node_probe)
+    npm_version = process_probe_version_value(npm_probe)
     marker = load_frontend_install_marker(project_root)
-    marker_valid = frontend_install_marker_matches(project_root, package_json_hash, package_lock_hash)
+    marker_reasons = frontend_install_marker_mismatch_reasons(
+        project_root,
+        package_json_hash,
+        package_lock_hash,
+        node_version=node_version,
+        npm_version=npm_version,
+    )
+    marker_valid = not marker_reasons
     marker_error = marker.get("_error") if isinstance(marker, dict) else None
     details: dict[str, Any] = {
         "packageError": package_error,
@@ -5179,31 +5334,36 @@ def release_gate_frontend_dependency_status(project_root: Path) -> tuple[bool, s
         "installMarkerPath": rel(marker_path, project_root),
         "installMarkerExists": marker_path.is_file(),
         "installMarkerValid": marker_valid,
+        "installMarkerMismatchReasons": marker_reasons,
         "installMarkerError": marker_error,
         "packageJsonSha256": package_json_hash,
         "packageLockSha256": package_lock_hash,
         "markerPackageJsonSha256": marker.get("packageJsonSha256") if isinstance(marker, dict) else None,
         "markerPackageLockSha256": marker.get("packageLockSha256") if isinstance(marker, dict) else None,
+        "markerNodeVersion": marker.get("nodeVersion") if isinstance(marker, dict) else None,
+        "markerNpmVersion": marker.get("npmVersion") if isinstance(marker, dict) else None,
+        "nodeVersion": node_version,
+        "npmVersion": npm_version,
+        "platform": frontend_install_platform_fingerprint(),
+        "markerPlatform": marker.get("platform") if isinstance(marker, dict) else None,
         "installCommand": release_gate_command_display(frontend_install_command(project_root)),
     }
     findings: list[str] = []
     if package_error:
         findings.append(package_error)
+    if not process_probe_ok(node_probe):
+        findings.append("node is not available on PATH")
+    if not process_probe_ok(npm_probe):
+        findings.append("npm is not available on PATH")
     if not package_lock_path.is_file():
         findings.append("frontend/package-lock.json is missing")
-    if not node_modules_path.is_dir():
-        findings.append("frontend/node_modules is missing")
-    elif not marker_valid:
-        findings.append("frontend install marker is missing or stale for package.json/package-lock.json")
+    findings.extend(marker_reasons)
 
-    # Keep package_data in scope intentionally through read_frontend_package: invalid JSON is
-    # reported as a dependency preflight failure before npm/vite/vitest can emit noisy cascades.
     _ = package_data
     if findings:
-        reason = "; ".join(findings) + "; run `python tools/devbootstrap.py prepare-frontend --force-install` before release-gates."
+        reason = "; ".join(findings) + "; run `python tools/devbootstrap.py release-gates --prepare-deps` or `python tools/devbootstrap.py prepare-frontend --install-mode=stale` before frontend gates."
         return False, reason, details
     return True, None, details
-
 
 def release_gate_frontend_dependency_skip_spec(
     *,
@@ -5709,8 +5869,8 @@ def build_release_gate_specs(
             GateSpec(
                 name="playwright_install",
                 cwd="frontend",
-                command=["npx", "playwright", "install"],
-                description="Install Playwright browser binaries because --install-playwright-browsers was provided.",
+                command=["npx", "playwright", "install", "chromium"],
+                description="Install Playwright Chromium browser binaries because --install-playwright-browsers was provided.",
                 timeout_seconds=900,
                 details=browser_details,
             )
@@ -5892,8 +6052,11 @@ def release_gates_overall_status(gates: list[GateResult], *, dry_run: bool) -> t
 
 def release_gates_next_action_for_code(code: str) -> str | None:
     actions = {
-        "frontend_dependencies_missing": "Run `python tools/devbootstrap.py release-gates --prepare-frontend --install-playwright-browsers` to let release-gates install missing/stale frontend dependencies before frontend gates, or run `python tools/devbootstrap.py prepare-frontend --force-install` first.",
-        "browser_smoke_prerequisite": "Install Playwright browser prerequisites by rerunning with `--install-playwright-browsers` or by running `cd frontend && npx playwright install`.",
+        "frontend_dependencies_missing": "Run `python tools/devbootstrap.py release-gates --prepare-deps` to let release-gates install missing/stale frontend dependencies before frontend gates, or run `python tools/devbootstrap.py prepare-frontend --install-mode=stale` first.",
+        "frontend_dependencies_stale": "Run `python tools/devbootstrap.py release-gates --prepare-deps` or `python tools/devbootstrap.py prepare-frontend --install-mode=stale` to refresh the frontend install marker after package/lockfile/runtime changes.",
+        "frontend_lockfile_mismatch": "Fix frontend/package-lock.json in a separate patch, then rerun release-gates; release-gates will not silently update lockfiles.",
+        "dependency_network_unavailable": "Restore network/package-cache access and rerun dependency preparation; this is an infrastructure failure, not a product test failure.",
+        "browser_smoke_prerequisite": "Install Playwright browser prerequisites by rerunning with `--install-playwright-browsers` or by running `cd frontend && npx playwright install chromium`.",
         "db_test_prerequisite_missing": "Prepare a write-safe test DB, export `TEST_DATABASE_URL`, or rerun with `python tools/devbootstrap.py release-gates --managed-test-db`; see `docs/dev-bootstrap/release-gates-test-database.md`.",
         "managed_test_db_source_missing": "Set backend `DATABASE__URL`/`DATABASE_URL` or copy `backend/.env.example` to `backend/.env`, then rerun `release-gates --managed-test-db`.",
         "managed_test_db_source_invalid": "Fix backend `DATABASE__URL`/`DATABASE_URL`; managed test DB needs a complete PostgreSQL URL with host, port, database and user.",
@@ -6192,13 +6355,26 @@ def command_release_gates(args: argparse.Namespace) -> int:
         if managed_state.database_url and managed_state.status in {"ok", "planned"}:
             managed_test_db_url = managed_state.database_url
 
-    if args.prepare_frontend:
+    if args.prepare_deps is not None:
+        prepare_deps_mode = normalize_frontend_prepare_dep_mode(args.prepare_deps)
+    elif args.prepare_frontend:
+        prepare_deps_mode = DEFAULT_FRONTEND_PREPARE_DEP_MODE
+    else:
+        prepare_deps_mode = "never"
+    if prepare_deps_mode != "never":
         prepare_spec = GateSpec(
             name="frontend_prepare_dependencies",
             cwd=".",
-            command=[sys.executable, "tools/devbootstrap.py", "prepare-frontend", "--no-write-report"],
-            description="Install or verify frontend dependencies before building release-gates frontend specs.",
+            command=[
+                sys.executable,
+                "tools/devbootstrap.py",
+                "prepare-frontend",
+                f"--install-mode={prepare_deps_mode}",
+                "--no-write-report",
+            ],
+            description="Install or verify frontend npm dependencies before building release-gates frontend specs.",
             timeout_seconds=TIMEOUT_POLICY["npm_install"],
+            details={"prepareDepsMode": prepare_deps_mode, "compatPrepareFrontendFlag": bool(args.prepare_frontend)},
         )
         effective_timeout = min(args.timeout_seconds, prepare_spec.timeout_seconds) if args.timeout_seconds > 0 else prepare_spec.timeout_seconds
         result.gates.append(
@@ -6207,6 +6383,27 @@ def command_release_gates(args: argparse.Namespace) -> int:
                 logs_dir=logs_dir,
                 index=next_gate_index,
                 spec=prepare_spec,
+                timeout_seconds=effective_timeout,
+                dry_run=args.dry_run,
+            )
+        )
+        next_gate_index += 1
+
+        backend_warmup_spec = GateSpec(
+            name="backend_dependency_warmup",
+            cwd="backend",
+            command=["cargo", "test", "--no-run"],
+            description="Warm backend Cargo dependencies/build artifacts to separate dependency or compile failures from test failures.",
+            timeout_seconds=900,
+            details={"prepareDepsMode": prepare_deps_mode},
+        )
+        effective_timeout = min(args.timeout_seconds, backend_warmup_spec.timeout_seconds) if args.timeout_seconds > 0 else backend_warmup_spec.timeout_seconds
+        result.gates.append(
+            run_gate_process_step(
+                project_root=project_root,
+                logs_dir=logs_dir,
+                index=next_gate_index,
+                spec=backend_warmup_spec,
                 timeout_seconds=effective_timeout,
                 dry_run=args.dry_run,
             )
@@ -7179,8 +7376,32 @@ def case_self_check_release_gates_frontend_dependency_preflight() -> str:
         spec = by_name[name]
         assert spec.skip_status == "infra_failed", name
         assert spec.skip_classification == "frontend_dependencies_missing", name
-        assert "prepare-frontend --force-install" in (spec.skip_reason or ""), name
+        assert "--prepare-deps" in (spec.skip_reason or ""), name
     return "release-gates frontend dependency preflight checked"
+
+
+def case_self_check_frontend_prepare_modes() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-frontend-modes-") as tmp:
+        root = Path(tmp)
+        frontend = root / "frontend"
+        frontend.mkdir(parents=True)
+        result = FrontendResult(
+            generated_at=iso_now(),
+            tool_version=TOOL_VERSION,
+            project_root=str(root),
+            invoked_from=str(root),
+            mode="prepare-frontend",
+            package_json_exists=True,
+            package_lock_exists=True,
+            node_modules_exists=False,
+            install_marker_valid=False,
+        )
+        assert frontend_prepare_should_install(result, "missing")[0] is True
+        result.node_modules_exists = True
+        assert frontend_prepare_should_install(result, "missing")[0] is False
+        assert frontend_prepare_should_install(result, "stale")[0] is True
+        assert normalize_frontend_prepare_dep_mode("missing-or-stale") == "stale"
+    return "frontend dependency preparation modes checked"
 
 
 def case_self_check_release_gates_targeted_next_actions() -> str:
@@ -7214,7 +7435,7 @@ def case_self_check_release_gates_targeted_next_actions() -> str:
     finalize_release_gates_result(result)
     joined = "\n".join(result.next_actions)
     assert result.overall_status == "infra_failed"
-    assert "--prepare-frontend" in joined
+    assert "--prepare-deps" in joined
     assert "TEST_DATABASE_URL" in joined
     assert "release-gates-test-database.md" in joined
     return "targeted release-gates next actions checked"
@@ -7271,6 +7492,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "managed_test_db_url_derivation", case_self_check_managed_test_db_url_derivation)
     self_check_case(result, "managed_test_db_specs", case_self_check_managed_test_db_specs)
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
+    self_check_case(result, "frontend_prepare_modes", case_self_check_frontend_prepare_modes)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
     if result.failures:
@@ -7391,7 +7613,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare_frontend = subparsers.add_parser("prepare-frontend", help="Install or verify frontend npm dependencies with a devbootstrap marker.")
     prepare_frontend.add_argument("--dry-run", action="store_true", help="Show whether npm ci/install would run without changing node_modules.")
-    prepare_frontend.add_argument("--force-install", action="store_true", help="Run npm ci/install even when the install marker looks current.")
+    prepare_frontend.add_argument("--force-install", action="store_true", help="Compatibility alias for --install-mode=always.")
+    prepare_frontend.add_argument("--install-mode", choices=["never", "missing", "stale", "missing-or-stale", "always"], default=DEFAULT_FRONTEND_PREPARE_DEP_MODE, help="Dependency preparation policy: never, missing, stale/missing-or-stale, or always.")
+    prepare_frontend.add_argument("--allow-npm-install-without-lock", action="store_true", help="Allow fallback to npm install when frontend/package-lock.json is absent; disabled by default for reproducibility.")
     prepare_frontend.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["npm_install"], help="Timeout for npm ci/install.")
     prepare_frontend.add_argument("--no-write-report", action="store_true", help="Do not create .dev-bootstrap report files.")
     prepare_frontend.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
@@ -7452,8 +7676,9 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--keep-test-db", choices=["on-failure", "always", "never"], help="Compatibility alias for --test-db-retention: on-failure, always or never.")
     release_gates.add_argument("--start-db-if-needed", action="store_true", help="With --managed-test-db, start the project docker compose PostgreSQL service if the configured PostgreSQL port is closed.")
     release_gates.add_argument("--dump-test-db-on-failure", action="store_true", help="With --managed-test-db, try pg_dump into the run directory when release-gates fail and the DB is retained.")
-    release_gates.add_argument("--prepare-frontend", action="store_true", help="Run prepare-frontend inside the release-gates bundle before frontend build/test/browser gates are planned.")
-    release_gates.add_argument("--install-playwright-browsers", action="store_true", help="Run npx playwright install when browser binaries are missing before browser smoke.")
+    release_gates.add_argument("--prepare-frontend", action="store_true", help="Compatibility alias for --prepare-deps=stale.")
+    release_gates.add_argument("--prepare-deps", nargs="?", const=DEFAULT_FRONTEND_PREPARE_DEP_MODE, choices=["never", "missing", "stale", "missing-or-stale", "always"], help="Prepare frontend/backend dependencies before release gates. Bare --prepare-deps uses stale/missing-or-stale mode.")
+    release_gates.add_argument("--install-playwright-browsers", action="store_true", help="Run npx playwright install chromium when browser binaries are missing before browser smoke.")
     release_gates.add_argument("--include-real-backend-browser", action="store_true", help="Run the dedicated write-capable real-backend Playwright path when its spec and prerequisites exist.")
     release_gates.add_argument("--real-backend-browser-spec", default="e2e/smoke/real-backend.smoke.spec.ts", help="Frontend-relative Playwright spec path for the real-backend browser gate.")
     release_gates.add_argument("--include-clean-machine", action="store_true", help="Run the optional clean-machine quickstart gate in a temporary project copy.")
