@@ -19,6 +19,8 @@
 - `sync/` — glossary, протокол синхронизации и каноническая conflict policy.
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
+- `dev-bootstrap/release-gates-followup/` — пакет предложений по усилению release-gates после прогона `20260524_200616_release-gates`: managed test DB, dependency preparation, isolated runtime, clean-machine sandbox, profiles/consent и remediation bundle.
+- `product/release-gates-project-code-followup-plan-2026-05-25.md` — план доработок backend/frontend code surface и тестов по результатам того же release-gates прогона.
 - `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy. План v2 для одной команды release-gates и микроархива диагностик зафиксирован в `dev-bootstrap/devbootstrap-v2-release-gates-plan.md`; Phase 1–7 этого runner уже реализованы как scaffold, backend/frontend gates, real-backend browser gate, docs gates, optional clean-machine gate и self-check fixtures.
 
 ## Зафиксированные принципы
