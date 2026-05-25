@@ -2,6 +2,35 @@
 
 `devbootstrap release-gates` deliberately treats DB-writing checks as unsafe unless a write-safe database target is explicit. This keeps regular dev data from being modified by backend smoke, DB integration tests, or the real-backend browser path.
 
+
+## Managed ephemeral database
+
+The recommended one-command path is now:
+
+```bash
+python tools/devbootstrap.py release-gates --managed-test-db
+```
+
+With this flag, `release-gates` derives a PostgreSQL maintenance connection from `DATABASE__URL` / `DATABASE_URL`, creates an isolated database named like `p2pkanban_rg_<toolVersion>_<timestamp>_<id>`, and overrides `DATABASE__URL`, `DATABASE_URL` and `TEST_DATABASE_URL` for DB-writing gates. The Python smoke and opt-in real-backend browser gate are run only after devbootstrap starts its own backend process against that managed DB; an already occupied backend port is treated as unsafe and is not reused.
+
+Retention is controlled by one compact policy:
+
+```bash
+python tools/devbootstrap.py release-gates --managed-test-db --test-db-retention=drop-always
+python tools/devbootstrap.py release-gates --managed-test-db --test-db-retention=keep-on-failure
+python tools/devbootstrap.py release-gates --managed-test-db --test-db-retention=keep-always
+```
+
+`keep-on-failure` is the default: successful runs drop the database, failed runs keep it and print a masked cleanup command in `managed-test-db.json`, `release-gates.md` and the gate logs. The compatibility alias `--keep-test-db=never|on-failure|always` maps to the same policy.
+
+If the configured PostgreSQL port is closed and you intentionally want devbootstrap to start the project compose service first, add:
+
+```bash
+python tools/devbootstrap.py release-gates --managed-test-db --start-db-if-needed
+```
+
+For failed runs where the DB is retained, `--dump-test-db-on-failure` attempts a `pg_dump --format=custom` into the run directory when `pg_dump` is available. Reports and bundles store masked database URLs only.
+
 ## Recommended local database
 
 Use a separate PostgreSQL database named `p2p_planner_test` for release checks.

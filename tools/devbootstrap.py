@@ -4282,6 +4282,39 @@ class GateResult:
 
 
 @dataclass
+class ManagedTestDatabaseState:
+    enabled: bool
+    retention: str
+    run_id: str
+    status: str = "disabled"
+    classification: str = "disabled"
+    message: str = "managed test database is disabled"
+    backend: str = "native-psql"
+    created_at: str | None = None
+    source: str | None = None
+    database_name: str | None = None
+    database_url: str | None = None
+    masked_database_url: str | None = None
+    maintenance_url: str | None = None
+    masked_maintenance_url: str | None = None
+    metadata_path: str | None = None
+    cleanup_command: str | None = None
+    create_command: list[str] = field(default_factory=list)
+    drop_command: list[str] = field(default_factory=list)
+    dump_command: list[str] = field(default_factory=list)
+    dump_path: str | None = None
+    retained: bool | None = None
+    failure_code: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ReleaseGatesManagedBackend:
+    process: subprocess.Popen[Any]
+    log_path: Path
+
+
+@dataclass
 class ReleaseGatesResult:
     generated_at: str
     tool_version: str
@@ -4292,6 +4325,7 @@ class ReleaseGatesResult:
     timeout_seconds: int
     report_dir: str | None = None
     archive_path: str | None = None
+    managed_test_db: ManagedTestDatabaseState | None = None
     overall_status: str = "unknown"
     classification: str = "unknown"
     gates: list[GateResult] = field(default_factory=list)
@@ -4519,6 +4553,524 @@ def run_gate_process_step(
         details=spec.details,
     )
 
+
+
+def postgres_quote_identifier(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def release_gate_safe_managed_db_name(tool_version: str, run_id_value: str) -> str:
+    version = re.sub(r"[^a-zA-Z0-9]+", "_", tool_version).strip("_").lower() or "tool"
+    timestamp = now_utc().strftime("%Y%m%d_%H%M%S")
+    digest = hashlib.sha256(f"{run_id_value}|{timestamp}|{os.getpid()}".encode("utf-8")).hexdigest()[:8]
+    name = f"p2pkanban_rg_{version}_{timestamp}_{digest}"
+    return re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_")[:63]
+
+
+def release_gate_database_url_source(project_root: Path) -> tuple[str | None, str | None]:
+    for key in ["DATABASE__URL", "DATABASE_URL"]:
+        value = os.environ.get(key)
+        if value:
+            return value, f"environment {key}"
+    backend_values = backend_effective_env(project_root)
+    for key in ["DATABASE__URL", "DATABASE_URL"]:
+        value = backend_values.get(key)
+        if value:
+            return value, f"backend effective env {key}"
+    return None, None
+
+
+def replace_database_name_in_url(value: str, database_name: str) -> str:
+    parsed = urllib.parse.urlsplit(value)
+    path = "/" + urllib.parse.quote(database_name, safe="")
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+
+def release_gate_managed_db_env(database_url: str) -> dict[str, str]:
+    return {
+        "DATABASE__URL": database_url,
+        "DATABASE_URL": database_url,
+        "TEST_DATABASE_URL": database_url,
+    }
+
+
+def release_gate_managed_db_cleanup_command(maintenance_url: str, database_name: str) -> str:
+    env = psql_env_from_database_url(maintenance_url)
+    visible_env = []
+    for key in ["PGHOST", "PGPORT", "PGUSER", "PGDATABASE"]:
+        if env.get(key):
+            visible_env.append(f"{key}={env[key]}")
+    quoted = postgres_quote_identifier(database_name)
+    sql = f"DROP DATABASE IF EXISTS {quoted};"
+    return " ".join([*visible_env, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-c", repr(sql)]).strip()
+
+
+
+def managed_test_db_public_payload(state: ManagedTestDatabaseState) -> dict[str, Any]:
+    payload = as_jsonable(state)
+    # Raw PostgreSQL URLs may contain passwords. Reports and patchable bundles should only
+    # expose masked URLs; the live in-memory state keeps raw URLs only for subprocess env.
+    payload["database_url"] = state.masked_database_url
+    payload["maintenance_url"] = state.masked_maintenance_url
+    details = payload.get("details")
+    if isinstance(details, dict):
+        for key in ["databaseUrl", "maintenanceUrl"]:
+            if key in details and isinstance(details[key], str):
+                details[key] = mask_database_url(details[key])
+    return payload
+
+
+def classify_managed_db_psql_failure(probe: ProcessProbe, db_url: str | None) -> str:
+    text = sanitize_postgres_output("\n".join(part for part in [probe.stderr, probe.stdout, probe.error or ""] if part), db_url).lower()
+    if not probe.available:
+        return "postgres_client_missing"
+    if "permission denied to create database" in text or "must be member" in text or "permission denied" in text:
+        return "postgres_createdb_permission_denied"
+    if "password authentication failed" in text or "authentication failed" in text or ("role" in text and "does not exist" in text):
+        return "postgres_auth_failed"
+    if "could not connect" in text or "connection refused" in text or "no such file" in text:
+        return "postgres_unavailable"
+    if "timeout" in text:
+        return "postgres_connect_timeout"
+    if "already exists" in text:
+        return "managed_test_db_name_collision"
+    return "managed_test_db_psql_failed"
+
+
+def build_release_gates_managed_test_database(
+    project_root: Path,
+    run_dir: Path,
+    *,
+    run_id_value: str,
+    retention: str,
+    dry_run: bool,
+    start_db_if_needed: bool,
+) -> ManagedTestDatabaseState:
+    state = ManagedTestDatabaseState(enabled=True, retention=retention, run_id=run_id_value, created_at=iso_now())
+    metadata_path = run_dir / "managed-test-db.json"
+    state.metadata_path = rel(metadata_path, project_root)
+
+    source_url, source = release_gate_database_url_source(project_root)
+    state.source = source
+    if not source_url:
+        state.status = "infra_failed"
+        state.classification = "managed_test_db_source_missing"
+        state.message = "DATABASE__URL/DATABASE_URL is absent; cannot derive PostgreSQL connection target for managed test DB."
+        return state
+
+    source_probe = parse_database_url_probe(source_url)
+    state.details["sourceUrl"] = source_probe.masked_url
+    state.details["sourceWarnings"] = source_probe.warnings
+    if source_probe.warnings or source_probe.scheme not in {"postgres", "postgresql"}:
+        state.status = "infra_failed"
+        state.classification = "managed_test_db_source_invalid"
+        state.message = "DATABASE__URL/DATABASE_URL is not a complete PostgreSQL URL."
+        return state
+
+    database_name = release_gate_safe_managed_db_name(TOOL_VERSION, run_id_value)
+    database_url = replace_database_name_in_url(source_url, database_name)
+    maintenance_url = replace_database_name_in_url(source_url, "postgres")
+    state.database_name = database_name
+    state.database_url = database_url
+    state.masked_database_url = mask_database_url(database_url)
+    state.maintenance_url = maintenance_url
+    state.masked_maintenance_url = mask_database_url(maintenance_url)
+    state.cleanup_command = release_gate_managed_db_cleanup_command(maintenance_url, database_name)
+    create_sql = f"CREATE DATABASE {postgres_quote_identifier(database_name)};"
+    state.create_command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-Atc", create_sql]
+    drop_sql = f"DROP DATABASE IF EXISTS {postgres_quote_identifier(database_name)};"
+    state.drop_command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-Atc", drop_sql]
+
+    if dry_run:
+        state.status = "planned"
+        state.classification = "dry_run"
+        state.message = "would create managed PostgreSQL test database"
+        write_json(metadata_path, managed_test_db_public_payload(state))
+        return state
+
+    if start_db_if_needed:
+        db_port = source_probe.port or DEFAULT_PORTS["postgres"]
+        db_host = source_probe.host or "127.0.0.1"
+        if not probe_port("managed_test_db_postgres_port", db_port, host=db_host).open:
+            pg_result = build_postgres_result(project_root, Path.cwd(), mode="start-db")
+            apply_start_db(pg_result, project_root, timeout_seconds=TIMEOUT_POLICY["postgres_ready"])
+            state.details["startDbIfNeeded"] = as_jsonable(pg_result.actions)
+
+    if shutil.which("psql") is None:
+        state.status = "infra_failed"
+        state.classification = "postgres_client_missing"
+        state.message = "psql is not available on PATH; managed test DB cannot be created safely."
+        write_json(metadata_path, managed_test_db_public_payload(state))
+        return state
+
+    ready_probe = probe_pg_isready(maintenance_url, project_root)
+    state.details["pgIsReady"] = as_jsonable(ready_probe)
+    if not process_probe_ok(ready_probe):
+        state.status = "infra_failed"
+        state.classification = classify_managed_db_psql_failure(ready_probe, maintenance_url)
+        state.message = "PostgreSQL maintenance target is not reachable."
+        write_json(metadata_path, managed_test_db_public_payload(state))
+        return state
+
+    env_extra = psql_env_from_database_url(maintenance_url)
+    create_probe = run_process_probe("managed_test_db_create", state.create_command, cwd=project_root, timeout=30, env_extra=env_extra)
+    create_probe.stdout = sanitize_postgres_output(create_probe.stdout, maintenance_url)
+    create_probe.stderr = sanitize_postgres_output(create_probe.stderr, maintenance_url)
+    state.details["createProbe"] = as_jsonable(create_probe)
+    if not process_probe_ok(create_probe):
+        state.status = "infra_failed"
+        state.classification = classify_managed_db_psql_failure(create_probe, maintenance_url)
+        state.message = "Failed to create managed PostgreSQL test database."
+        write_json(metadata_path, managed_test_db_public_payload(state))
+        return state
+
+    state.status = "ok"
+    state.classification = "managed_test_db_created"
+    state.message = "managed PostgreSQL test database created"
+    write_json(metadata_path, managed_test_db_public_payload(state))
+    return state
+
+
+def release_gates_managed_db_prepare_result(project_root: Path, logs_dir: Path, index: int, state: ManagedTestDatabaseState) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, "managed_test_db_prepare")
+    lines = [
+        "# managed_test_db_prepare",
+        f"status: {state.status}",
+        f"classification: {state.classification}",
+        f"retention: {state.retention}",
+        f"database: {state.database_name or '<none>'}",
+        f"url: {state.masked_database_url or '<none>'}",
+        f"maintenance_url: {state.masked_maintenance_url or '<none>'}",
+        f"metadata: {state.metadata_path or '<none>'}",
+        f"cleanup: {state.cleanup_command or '<none>'}",
+        f"message: {state.message}",
+        "",
+        json.dumps(managed_test_db_public_payload(state), ensure_ascii=False, indent=2),
+        "",
+    ]
+    log_path.write_text("\n".join(lines), encoding="utf-8")
+    return GateResult(
+        name="managed_test_db_prepare",
+        status=state.status,
+        classification=state.classification,
+        message=state.message,
+        cwd=".",
+        command=state.create_command,
+        required=True,
+        log_path=rel(log_path, project_root),
+        details=managed_test_db_public_payload(state),
+    )
+
+
+def start_release_gates_managed_backend(
+    project_root: Path,
+    logs_dir: Path,
+    index: int,
+    database_url: str,
+    timeout_seconds: int,
+) -> tuple[GateResult, ReleaseGatesManagedBackend | None]:
+    log_path = release_gate_log_path(logs_dir, index, "managed_backend_start")
+    host, port, _ = parse_backend_host_port(project_root)
+    health_before = probe_backend_health(host, port, timeout=0.8)
+    port_probe = probe_port("backend", port, host=http_probe_host(host), timeout=0.4)
+    details: dict[str, Any] = {
+        "maskedDatabaseUrl": mask_database_url(database_url),
+        "healthBefore": as_jsonable(health_before),
+        "portBefore": as_jsonable(port_probe),
+    }
+    if backend_health_ready(health_before) or port_probe.open:
+        message = "Backend port is already occupied; managed release-gates will not reuse or kill a foreign/live backend."
+        log_path.write_text("\n".join(["# managed_backend_start", "status: infra_failed", "classification: managed_backend_port_occupied", message, ""]), encoding="utf-8")
+        return GateResult(
+            name="managed_backend_start",
+            status="infra_failed",
+            classification="managed_backend_port_occupied",
+            message=message,
+            cwd="backend",
+            command=["cargo", "run"],
+            log_path=rel(log_path, project_root),
+            details=details,
+        ), None
+    if shutil.which("cargo") is None:
+        message = "cargo is not available on PATH; managed backend cannot be started."
+        log_path.write_text("\n".join(["# managed_backend_start", "status: infra_failed", "classification: missing_cargo", message, ""]), encoding="utf-8")
+        return GateResult(
+            name="managed_backend_start",
+            status="infra_failed",
+            classification="missing_cargo",
+            message=message,
+            cwd="backend",
+            command=["cargo", "run"],
+            log_path=rel(log_path, project_root),
+            details=details,
+        ), None
+
+    backend_dir = project_root / "backend"
+    backend_log_path = logs_dir / f"{index:02d}_managed_backend_process.log"
+    log_handle = backend_log_path.open("ab", buffering=0)
+    header = "\n".join(
+        [
+            f"== managed release-gates backend {iso_now()} ==",
+            "$ cargo run",
+            f"cwd: {rel(backend_dir, project_root)}",
+            f"DATABASE__URL: {mask_database_url(database_url)}",
+            "",
+        ]
+    ).encode("utf-8", errors="replace")
+    log_handle.write(header)
+    env = os.environ.copy()
+    env.update(release_gate_managed_db_env(database_url))
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            ["cargo", "run"],
+            cwd=str(backend_dir),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            **popen_process_group_kwargs(),
+        )
+    except OSError as exc:
+        log_handle.close()
+        message = f"Could not start managed backend: {exc}"
+        log_path.write_text("\n".join(["# managed_backend_start", "status: infra_failed", "classification: backend_start_failed", message, ""]), encoding="utf-8")
+        return GateResult(
+            name="managed_backend_start",
+            status="infra_failed",
+            classification="backend_start_failed",
+            message=message,
+            cwd="backend",
+            command=["cargo", "run"],
+            log_path=rel(log_path, project_root),
+            details=details,
+        ), None
+    finally:
+        try:
+            log_handle.close()
+        except Exception:
+            pass
+
+    ready, probes, returncode = wait_for_backend_health(process, host, port, timeout_seconds=timeout_seconds)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    details.update({"pid": process.pid, "healthAfter": as_jsonable(probes), "processReturncode": returncode, "processLog": rel(backend_log_path, project_root)})
+    if ready:
+        message = "managed backend started against the managed test database"
+        status = "ok"
+        classification = "managed_backend_started"
+        backend = ReleaseGatesManagedBackend(process=process, log_path=backend_log_path)
+    else:
+        log_tail = sanitize_backend_log(read_log_tail(backend_log_path), project_root)
+        classification = classify_backend_failure(log_tail, "backend_health_timeout" if returncode is None else "backend_start_failed")
+        message = "managed backend did not become healthy; see managed backend process log"
+        status = "infra_failed" if classification in {"postgres_unavailable", "database_missing", "postgres_auth_failed", "backend_health_timeout", "missing_prerequisite"} else "failed"
+        backend = None
+        if process.poll() is None:
+            try:
+                send_signal_to_owned_process(process.pid, signal.SIGTERM)
+                wait_until_dead(process.pid, 5)
+            except OSError:
+                pass
+    log_path.write_text(
+        "\n".join(
+            [
+                "# managed_backend_start",
+                f"status: {status}",
+                f"classification: {classification}",
+                f"duration_ms: {duration_ms}",
+                f"process_log: {rel(backend_log_path, project_root)}",
+                f"message: {message}",
+                "",
+                json.dumps(details, ensure_ascii=False, indent=2),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return GateResult(
+        name="managed_backend_start",
+        status=status,
+        classification=classification,
+        message=message,
+        cwd="backend",
+        command=["cargo", "run"],
+        returncode=returncode,
+        duration_ms=duration_ms,
+        log_path=rel(log_path, project_root),
+        details=details,
+    ), backend
+
+
+def stop_release_gates_managed_backend(project_root: Path, logs_dir: Path, index: int, backend: ReleaseGatesManagedBackend) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, "managed_backend_stop")
+    started = time.monotonic()
+    action = "stopped"
+    error = None
+    if backend.process.poll() is None:
+        try:
+            send_signal_to_owned_process(backend.process.pid, signal.SIGTERM)
+            if not wait_until_dead(backend.process.pid, TIMEOUT_POLICY["stop_grace"]):
+                send_signal_to_owned_process(backend.process.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+                if wait_until_dead(backend.process.pid, 5):
+                    action = "force_stopped"
+                else:
+                    action = "failed"
+                    error = "process still alive after force kill"
+        except OSError as exc:
+            action = "failed"
+            error = str(exc)
+    else:
+        action = "already_exited"
+    duration_ms = int((time.monotonic() - started) * 1000)
+    status = "ok" if action in {"stopped", "force_stopped", "already_exited"} else "infra_failed"
+    classification = "managed_backend_stopped" if status == "ok" else "managed_backend_stop_failed"
+    message = "managed backend stopped" if status == "ok" else "managed backend stop failed"
+    lines = [
+        "# managed_backend_stop",
+        f"status: {status}",
+        f"classification: {classification}",
+        f"pid: {backend.process.pid}",
+        f"action: {action}",
+        f"duration_ms: {duration_ms}",
+        f"process_log: {rel(backend.log_path, project_root)}",
+    ]
+    if error:
+        lines.append(f"error: {error}")
+    lines.append("")
+    log_path.write_text("\n".join(lines), encoding="utf-8")
+    return GateResult(
+        name="managed_backend_stop",
+        status=status,
+        classification=classification,
+        message=message,
+        cwd="backend",
+        command=["SIGTERM", str(backend.process.pid)],
+        duration_ms=duration_ms,
+        log_path=rel(log_path, project_root),
+        details={"pid": backend.process.pid, "action": action, "processLog": rel(backend.log_path, project_root), "error": error},
+    )
+
+
+def release_gates_skip_for_managed_backend_unavailable(project_root: Path, logs_dir: Path, index: int, spec: GateSpec, reason: str) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, spec.name)
+    message = f"Skipped because managed backend is unavailable: {reason}"
+    log_path.write_text(
+        "\n".join(
+            [
+                f"# {spec.name}",
+                "status: skipped_prerequisite",
+                "classification: managed_backend_unavailable",
+                f"cwd: {spec.cwd or '.'}",
+                f"reason: {message}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return GateResult(
+        name=spec.name,
+        status="skipped_prerequisite",
+        classification="managed_backend_unavailable",
+        message=message,
+        cwd=spec.cwd or ".",
+        command=spec.command,
+        required=spec.required,
+        log_path=rel(log_path, project_root),
+        details=spec.details,
+    )
+
+
+def finalize_release_gates_managed_test_database(
+    project_root: Path,
+    logs_dir: Path,
+    index: int,
+    state: ManagedTestDatabaseState,
+    *,
+    release_succeeded: bool,
+    dump_on_failure: bool,
+) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, "managed_test_db_retention")
+    if state.status == "planned":
+        state.retained = None
+        state.message = "would apply managed test DB retention after release-gates"
+        status = "planned"
+        classification = "dry_run"
+        message = state.message
+    elif state.status != "ok" or not state.database_name or not state.maintenance_url:
+        status = "skipped_prerequisite"
+        classification = "managed_test_db_not_created"
+        message = "managed test DB was not created; retention step skipped"
+    else:
+        should_drop = state.retention == "drop-always" or (state.retention == "keep-on-failure" and release_succeeded)
+        should_keep = not should_drop
+        if dump_on_failure and not release_succeeded:
+            dump_path = logs_dir.parent / f"{state.database_name}.dump"
+            state.dump_path = rel(dump_path, project_root)
+            state.dump_command = ["pg_dump", "--format=custom", "--file", str(dump_path), state.database_name]
+            if shutil.which("pg_dump") is not None:
+                dump_env = psql_env_from_database_url(state.database_url or "")
+                dump_probe = run_process_probe("managed_test_db_dump", state.dump_command, cwd=project_root, timeout=120, env_extra=dump_env)
+                state.details["dumpProbe"] = as_jsonable(dump_probe)
+            else:
+                state.details["dumpProbe"] = {"available": False, "error": "pg_dump not found on PATH"}
+        if should_keep:
+            state.retained = True
+            state.message = "managed test DB kept by retention policy"
+            status = "ok"
+            classification = "managed_test_db_retained"
+            message = state.message
+        else:
+            env_extra = psql_env_from_database_url(state.maintenance_url)
+            drop_probe = run_process_probe("managed_test_db_drop", state.drop_command, cwd=project_root, timeout=30, env_extra=env_extra)
+            drop_probe.stdout = sanitize_postgres_output(drop_probe.stdout, state.maintenance_url)
+            drop_probe.stderr = sanitize_postgres_output(drop_probe.stderr, state.maintenance_url)
+            state.details["dropProbe"] = as_jsonable(drop_probe)
+            if process_probe_ok(drop_probe):
+                state.retained = False
+                state.message = "managed test DB dropped by retention policy"
+                status = "ok"
+                classification = "managed_test_db_dropped"
+                message = state.message
+            else:
+                state.retained = True
+                state.failure_code = classify_managed_db_psql_failure(drop_probe, state.maintenance_url)
+                state.message = "failed to drop managed test DB; it was left for manual cleanup"
+                status = "infra_failed"
+                classification = state.failure_code or "managed_test_db_drop_failed"
+                message = state.message
+    if state.metadata_path:
+        metadata_path = project_root / state.metadata_path
+        write_json(metadata_path, managed_test_db_public_payload(state))
+    log_path.write_text(
+        "\n".join(
+            [
+                "# managed_test_db_retention",
+                f"status: {status}",
+                f"classification: {classification}",
+                f"retention: {state.retention}",
+                f"release_succeeded: {release_succeeded}",
+                f"retained: {state.retained}",
+                f"database: {state.database_name or '<none>'}",
+                f"cleanup: {state.cleanup_command or '<none>'}",
+                f"message: {message}",
+                "",
+                json.dumps(managed_test_db_public_payload(state), ensure_ascii=False, indent=2),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return GateResult(
+        name="managed_test_db_retention",
+        status=status,
+        classification=classification,
+        message=message,
+        cwd=".",
+        command=state.drop_command if state.drop_command else [],
+        required=True,
+        log_path=rel(log_path, project_root),
+        details=managed_test_db_public_payload(state),
+    )
 
 def release_gate_database_env(project_root: Path) -> tuple[dict[str, str], str | None]:
     env_extra: dict[str, str] = {}
@@ -4919,6 +5471,8 @@ def build_release_gate_specs(
     real_backend_browser_spec: str = "e2e/smoke/real-backend.smoke.spec.ts",
     include_clean_machine: bool = False,
     dry_run: bool = False,
+    managed_test_db_url: str | None = None,
+    managed_test_db_requested: bool = False,
 ) -> list[GateSpec]:
     specs: list[GateSpec] = [
         GateSpec(
@@ -4944,9 +5498,15 @@ def build_release_gate_specs(
         ),
     ]
 
-    db_env_extra, db_source = release_gate_database_env(project_root)
+    if managed_test_db_url:
+        db_env_extra = release_gate_managed_db_env(managed_test_db_url)
+        db_source = "managed ephemeral test database"
+    else:
+        db_env_extra, db_source = release_gate_database_env(project_root)
     if db_source or dry_run:
-        details = {"databaseEnvSource": db_source}
+        details = {"databaseEnvSource": db_source, "managedTestDb": bool(managed_test_db_url)}
+        if managed_test_db_url:
+            details["maskedDatabaseUrl"] = mask_database_url(managed_test_db_url)
         if dry_run and not db_source:
             details["dryRunPrerequisiteBypassed"] = True
         specs.append(
@@ -4961,23 +5521,39 @@ def build_release_gate_specs(
             )
         )
     else:
+        reason = "TEST_DATABASE_URL is absent and no DATABASE__URL/DATABASE_URL was found in backend env; DB integration tests cannot be executed safely."
+        classification = "db_test_prerequisite_missing"
+        if managed_test_db_requested:
+            reason = "--managed-test-db was requested, but managed test DB was not created; DB integration tests cannot run safely."
+            classification = "managed_test_db_unavailable"
         specs.append(
             GateSpec(
                 name="backend_cargo_test_db_ignored",
                 cwd="backend",
                 command=["cargo", "test", "--", "--include-ignored"],
                 description="Force ignored DB integration tests to run with TEST_DATABASE_URL.",
-                skip_reason="TEST_DATABASE_URL is absent and no DATABASE__URL/DATABASE_URL was found in backend env; DB integration tests cannot be executed safely.",
-                skip_classification="db_test_prerequisite_missing",
-                details={"databaseEnvSource": None},
+                skip_reason=reason,
+                skip_classification=classification,
+                details={"databaseEnvSource": None, "managedTestDbRequested": managed_test_db_requested},
             )
         )
 
-    smoke_allowed, smoke_reason = release_gate_smoke_allowed(project_root, allow_dev_db_write)
-    smoke_env = release_gate_smoke_env(project_root)
+    if managed_test_db_url:
+        smoke_allowed, smoke_reason = True, "managed ephemeral test database"
+        smoke_env = release_gate_smoke_env(project_root)
+        smoke_env.update(release_gate_managed_db_env(managed_test_db_url))
+    elif managed_test_db_requested:
+        smoke_allowed = False
+        smoke_reason = "--managed-test-db was requested, but managed test DB was not created; backend smoke cannot run safely."
+        smoke_env = release_gate_smoke_env(project_root)
+    else:
+        smoke_allowed, smoke_reason = release_gate_smoke_allowed(project_root, allow_dev_db_write)
+        smoke_env = release_gate_smoke_env(project_root)
     for smoke_name in ["backend_python_smoke_first", "backend_python_smoke_second"]:
         if smoke_allowed or dry_run:
-            details = {"smokePermission": smoke_reason}
+            details = {"smokePermission": smoke_reason, "managedTestDb": bool(managed_test_db_url)}
+            if managed_test_db_url:
+                details["maskedDatabaseUrl"] = mask_database_url(managed_test_db_url)
             if dry_run and not smoke_allowed:
                 details["dryRunPrerequisiteBypassed"] = True
             specs.append(
@@ -4999,8 +5575,8 @@ def build_release_gate_specs(
                     command=[sys.executable, "tests/smoke_core_api.py"],
                     description="Run backend black-box smoke against the live backend API; second run checks idempotency.",
                     skip_reason=smoke_reason,
-                    skip_classification="smoke_db_write_guard",
-                    details={"smokePermission": smoke_reason},
+                    skip_classification="managed_test_db_unavailable" if managed_test_db_requested else "smoke_db_write_guard",
+                    details={"smokePermission": smoke_reason, "managedTestDbRequested": managed_test_db_requested},
                 )
             )
 
@@ -5176,14 +5752,23 @@ def build_release_gate_specs(
 
     real_backend_spec = Path(real_backend_browser_spec)
     real_backend_spec_project_path = project_root / "frontend" / real_backend_spec
-    real_backend_allowed, real_backend_reason = release_gate_smoke_allowed(project_root, allow_dev_db_write)
+    if managed_test_db_url:
+        real_backend_allowed, real_backend_reason = True, "managed ephemeral test database"
+    elif managed_test_db_requested:
+        real_backend_allowed = False
+        real_backend_reason = "--managed-test-db was requested, but managed test DB was not created; real-backend browser smoke cannot run safely."
+    else:
+        real_backend_allowed, real_backend_reason = release_gate_smoke_allowed(project_root, allow_dev_db_write)
     real_backend_details = {
         "specPath": real_backend_spec.as_posix(),
         "specExists": real_backend_spec_project_path.exists(),
         "writePermission": real_backend_reason,
         "requiresNoPageRouteMocks": True,
         "mockedBrowserSmokeDoesNotSatisfyThisGate": True,
+        "managedTestDb": bool(managed_test_db_url),
     }
+    if managed_test_db_url:
+        real_backend_details["maskedDatabaseUrl"] = mask_database_url(managed_test_db_url)
     if real_backend_spec_project_path.exists() and (include_real_backend_browser or dry_run) and (real_backend_allowed or dry_run):
         if dry_run and not real_backend_allowed:
             real_backend_details["dryRunPrerequisiteBypassed"] = True
@@ -5217,7 +5802,7 @@ def build_release_gate_specs(
                 command=["npm", "run", "test:browser:real-backend"],
                 description="Dedicated real-backend Playwright path exists but cannot run without explicit write permission.",
                 skip_reason=real_backend_reason,
-                skip_classification="real_backend_browser_write_guard",
+                skip_classification="managed_test_db_unavailable" if managed_test_db_requested else "real_backend_browser_write_guard",
                 details=real_backend_details,
             )
         )
@@ -5309,7 +5894,15 @@ def release_gates_next_action_for_code(code: str) -> str | None:
     actions = {
         "frontend_dependencies_missing": "Run `python tools/devbootstrap.py release-gates --prepare-frontend --install-playwright-browsers` to let release-gates install missing/stale frontend dependencies before frontend gates, or run `python tools/devbootstrap.py prepare-frontend --force-install` first.",
         "browser_smoke_prerequisite": "Install Playwright browser prerequisites by rerunning with `--install-playwright-browsers` or by running `cd frontend && npx playwright install`.",
-        "db_test_prerequisite_missing": "Prepare a write-safe test DB, export `TEST_DATABASE_URL`, and see `docs/dev-bootstrap/release-gates-test-database.md` before rerunning DB integration gates.",
+        "db_test_prerequisite_missing": "Prepare a write-safe test DB, export `TEST_DATABASE_URL`, or rerun with `python tools/devbootstrap.py release-gates --managed-test-db`; see `docs/dev-bootstrap/release-gates-test-database.md`.",
+        "managed_test_db_source_missing": "Set backend `DATABASE__URL`/`DATABASE_URL` or copy `backend/.env.example` to `backend/.env`, then rerun `release-gates --managed-test-db`.",
+        "managed_test_db_source_invalid": "Fix backend `DATABASE__URL`/`DATABASE_URL`; managed test DB needs a complete PostgreSQL URL with host, port, database and user.",
+        "postgres_client_missing": "Install PostgreSQL client tools (`psql`, optionally `pg_dump`) or use a shell where they are on PATH before rerunning `release-gates --managed-test-db`.",
+        "postgres_createdb_permission_denied": "Use a PostgreSQL role with CREATEDB privilege or start the project compose PostgreSQL and rerun `release-gates --managed-test-db --start-db-if-needed`.",
+        "postgres_unavailable": "Start PostgreSQL first, or rerun with `--managed-test-db --start-db-if-needed` to allow devbootstrap to start the project compose PostgreSQL when the configured port is closed.",
+        "managed_test_db_unavailable": "Inspect the `managed_test_db_prepare` gate log, fix PostgreSQL capability, then rerun `release-gates --managed-test-db`.",
+        "managed_backend_port_occupied": "Stop the already running backend or change APP__PORT; managed release-gates refuses to reuse a foreign/live backend for write-capable gates.",
+        "managed_backend_unavailable": "Inspect `managed_backend_start` and the managed backend process log, then rerun after freeing the backend port and fixing startup failures.",
         "smoke_db_write_guard": "For backend Python smoke, restart the live backend against the test DB and set `TEST_DATABASE_URL`; use `--allow-dev-db-write` only when the configured dev DB is disposable.",
         "real_backend_browser_opt_in_required": "After frontend deps and write-safe DB are ready, add `--include-real-backend-browser` to run the no-mock browser path.",
         "real_backend_browser_write_guard": "Set `TEST_DATABASE_URL` and restart backend against that DB before running `--include-real-backend-browser`, or consciously pass `--allow-dev-db-write`.",
@@ -5347,6 +5940,14 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
         release_gates_add_unique_action(result.next_actions, "Configured release-gates passed; continue with later release validation or manual review.", seen_actions)
     else:
         priority = [
+            "managed_test_db_source_missing",
+            "managed_test_db_source_invalid",
+            "postgres_client_missing",
+            "postgres_createdb_permission_denied",
+            "postgres_unavailable",
+            "managed_test_db_unavailable",
+            "managed_backend_port_occupied",
+            "managed_backend_unavailable",
             "frontend_dependencies_missing",
             "browser_smoke_prerequisite",
             "db_test_prerequisite_missing",
@@ -5378,6 +5979,12 @@ def render_release_gates_summary(result: ReleaseGatesResult) -> str:
     lines.append(f"Generated: {result.generated_at}")
     lines.append(f"Dry run: {result.dry_run}")
     lines.append(f"Project root: {result.project_root or 'not found'}")
+    if result.managed_test_db and result.managed_test_db.enabled:
+        lines.append(f"Managed test DB: {result.managed_test_db.status} / {result.managed_test_db.classification}")
+        lines.append(f"Managed DB name: {result.managed_test_db.database_name or '<none>'}")
+        lines.append(f"Managed DB URL: {result.managed_test_db.masked_database_url or '<none>'}")
+        lines.append(f"Managed DB retention: {result.managed_test_db.retention}; retained={result.managed_test_db.retained}")
+        lines.append(f"Managed DB cleanup: {result.managed_test_db.cleanup_command or '<none>'}")
     lines.append(f"Report dir: {result.report_dir or '<not written>'}")
     if result.archive_path:
         lines.append(f"Archive: {result.archive_path}")
@@ -5406,6 +6013,18 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
     lines.append(f"- Dry run: `{result.dry_run}`")
     if result.archive_path:
         lines.append(f"- Archive: `{result.archive_path}`")
+    if result.managed_test_db and result.managed_test_db.enabled:
+        lines.append("")
+        lines.append("## Managed test database")
+        lines.append("")
+        lines.append(f"- Status: `{result.managed_test_db.status}`")
+        lines.append(f"- Classification: `{result.managed_test_db.classification}`")
+        lines.append(f"- Database: `{result.managed_test_db.database_name or '<none>'}`")
+        lines.append(f"- URL: `{result.managed_test_db.masked_database_url or '<none>'}`")
+        lines.append(f"- Retention: `{result.managed_test_db.retention}`")
+        lines.append(f"- Retained: `{result.managed_test_db.retained}`")
+        lines.append(f"- Metadata: `{result.managed_test_db.metadata_path or '<none>'}`")
+        lines.append(f"- Cleanup: `{result.managed_test_db.cleanup_command or '<none>'}`")
     lines.append("")
     lines.append("## Gates")
     lines.append("")
@@ -5447,6 +6066,7 @@ def release_gates_json_payload(result: ReleaseGatesResult) -> dict[str, Any]:
         "classification": result.classification,
         "reportDir": result.report_dir,
         "archivePath": result.archive_path,
+        "managedTestDb": managed_test_db_public_payload(result.managed_test_db) if result.managed_test_db else None,
         "gates": [as_jsonable(gate) for gate in result.gates],
         "findings": result.findings,
         "nextActions": result.next_actions,
@@ -5556,6 +6176,22 @@ def command_release_gates(args: argparse.Namespace) -> int:
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     next_gate_index = 1
+    managed_test_db_url: str | None = None
+    if args.managed_test_db:
+        managed_state = build_release_gates_managed_test_database(
+            project_root,
+            run_dir,
+            run_id_value=run_id_value,
+            retention=args.test_db_retention,
+            dry_run=args.dry_run,
+            start_db_if_needed=args.start_db_if_needed,
+        )
+        result.managed_test_db = managed_state
+        result.gates.append(release_gates_managed_db_prepare_result(project_root, logs_dir, next_gate_index, managed_state))
+        next_gate_index += 1
+        if managed_state.database_url and managed_state.status in {"ok", "planned"}:
+            managed_test_db_url = managed_state.database_url
+
     if args.prepare_frontend:
         prepare_spec = GateSpec(
             name="frontend_prepare_dependencies",
@@ -5585,107 +6221,79 @@ def command_release_gates(args: argparse.Namespace) -> int:
         real_backend_browser_spec=args.real_backend_browser_spec,
         include_clean_machine=args.include_clean_machine,
         dry_run=args.dry_run,
+        managed_test_db_url=managed_test_db_url,
+        managed_test_db_requested=args.managed_test_db,
     )
-    for index, spec in enumerate(specs, start=next_gate_index):
+
+    managed_backend: ReleaseGatesManagedBackend | None = None
+    managed_backend_start_failed: str | None = None
+    managed_runtime_gate_names = {"backend_python_smoke_first", "backend_python_smoke_second", "browser_real_backend_path"}
+
+    for spec in specs:
+        if args.managed_test_db and spec.name in managed_runtime_gate_names and not args.dry_run and not spec.skip_reason and not spec.not_implemented_reason:
+            if not managed_test_db_url:
+                result.gates.append(
+                    release_gates_skip_for_managed_backend_unavailable(project_root, logs_dir, next_gate_index, spec, "managed test DB was not created")
+                )
+                next_gate_index += 1
+                continue
+            if managed_backend is None and managed_backend_start_failed is None:
+                start_timeout = min(args.timeout_seconds, TIMEOUT_POLICY["backend_ready"]) if args.timeout_seconds > 0 else TIMEOUT_POLICY["backend_ready"]
+                start_gate, managed_backend = start_release_gates_managed_backend(
+                    project_root,
+                    logs_dir,
+                    next_gate_index,
+                    managed_test_db_url,
+                    start_timeout,
+                )
+                result.gates.append(start_gate)
+                next_gate_index += 1
+                if managed_backend is None:
+                    managed_backend_start_failed = start_gate.classification
+            if managed_backend_start_failed:
+                result.gates.append(
+                    release_gates_skip_for_managed_backend_unavailable(project_root, logs_dir, next_gate_index, spec, managed_backend_start_failed)
+                )
+                next_gate_index += 1
+                continue
+
         effective_timeout = min(args.timeout_seconds, spec.timeout_seconds) if args.timeout_seconds > 0 else spec.timeout_seconds
         result.gates.append(
             run_gate_process_step(
                 project_root=project_root,
                 logs_dir=logs_dir,
-                index=index,
+                index=next_gate_index,
                 spec=spec,
                 timeout_seconds=effective_timeout,
                 dry_run=args.dry_run,
             )
         )
+        next_gate_index += 1
+
+    if managed_backend is not None:
+        result.gates.append(stop_release_gates_managed_backend(project_root, logs_dir, next_gate_index, managed_backend))
+        next_gate_index += 1
+
     finalize_release_gates_result(result)
+
+    if result.managed_test_db is not None:
+        retention_gate = finalize_release_gates_managed_test_database(
+            project_root,
+            logs_dir,
+            next_gate_index,
+            result.managed_test_db,
+            release_succeeded=result.overall_status == "ok",
+            dump_on_failure=args.dump_test_db_on_failure,
+        )
+        result.gates.append(retention_gate)
+        finalize_release_gates_result(result)
+
     write_release_gates_reports(project_root, result, run_dir)
     print_release_gates_summary(result)
     if args.json:
         print("\nJSON:")
         print(json.dumps(release_gates_json_payload(result), ensure_ascii=False, indent=2))
-    if result.dry_run:
-        return 0
-    return 0 if result.overall_status == "ok" else 1
-
-
-@dataclass
-class StopTarget:
-    name: str
-    pid: int | None
-    cwd: str | None
-    command: str | None
-    log_path: str | None = None
-    run_id: str | None = None
-    alive_before: bool = False
-    alive_after: bool | None = None
-    verification_status: str = "unknown"
-    verification_evidence: str = ""
-    action: str = "pending"
-    error: str | None = None
-
-
-@dataclass
-class StopDbAction:
-    status: str
-    command: str | None = None
-    message: str = ""
-    evidence: str | None = None
-
-
-@dataclass
-class StopResult:
-    generated_at: str
-    tool_version: str
-    project_root: str | None
-    invoked_from: str
-    dry_run: bool
-    include_db: bool
-    force: bool
-    timeout_seconds: int
-    run_id: str
-    classification: str = "unknown"
-    targets: list[StopTarget] = field(default_factory=list)
-    db_action: StopDbAction | None = None
-    ports_after: list[PortProbe] = field(default_factory=list)
-    http_after: list[HttpProbe] = field(default_factory=list)
-    failures: list[dict[str, str]] = field(default_factory=list)
-    warnings: list[dict[str, str]] = field(default_factory=list)
-    next_actions: list[str] = field(default_factory=list)
-    report_dir: str | None = None
-
-
-def process_table_state(project_root: Path) -> tuple[Path, dict[str, Any], dict[str, dict[str, Any]]]:
-    state_path = project_root / BOOTSTRAP_DIR_NAME / "state.json"
-    state = read_json(state_path)
-    if "_error" in state:
-        return state_path, state, {}
-    processes_raw = state.get("processes") if isinstance(state.get("processes"), dict) else {}
-    processes: dict[str, dict[str, Any]] = {}
-    for name, entry in processes_raw.items():
-        if isinstance(name, str) and isinstance(entry, dict):
-            processes[name] = dict(entry)
-    return state_path, state, processes
-
-
-def procfs_process_details(pid: int) -> tuple[str | None, str | None, str | None]:
-    proc_dir = Path("/proc") / str(pid)
-    if not proc_dir.exists():
-        return None, None, "procfs entry not found"
-    actual_cwd: str | None = None
-    actual_cmd: str | None = None
-    errors: list[str] = []
-    try:
-        actual_cwd = str(Path(os.readlink(proc_dir / "cwd")).resolve())
-    except OSError as exc:
-        errors.append(f"cwd unavailable: {exc}")
-    try:
-        raw = (proc_dir / "cmdline").read_bytes()
-        parts = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
-        actual_cmd = " ".join(parts)
-    except OSError as exc:
-        errors.append(f"cmdline unavailable: {exc}")
-    return actual_cwd, actual_cmd, "; ".join(errors) if errors else None
+    return 1 if result.overall_status not in {"ok", "dry_run"} else 0
 
 
 def stop_target_from_entry(project_root: Path, name: str, entry: dict[str, Any]) -> StopTarget:
@@ -6508,6 +7116,43 @@ def case_self_check_release_gates_playwright_classifier() -> str:
     return "Playwright missing-browser classifier checked"
 
 
+
+def case_self_check_managed_test_db_url_derivation() -> str:
+    source = "postgres://planner:secret@127.0.0.1:15432/p2p_planner_dev?sslmode=disable"
+    managed = replace_database_name_in_url(source, "p2pkanban_rg_test")
+    maintenance = replace_database_name_in_url(source, "postgres")
+    assert managed == "postgres://planner:secret@127.0.0.1:15432/p2pkanban_rg_test?sslmode=disable"
+    assert maintenance == "postgres://planner:secret@127.0.0.1:15432/postgres?sslmode=disable"
+    env = release_gate_managed_db_env(managed)
+    assert env["DATABASE__URL"] == managed
+    assert env["DATABASE_URL"] == managed
+    assert env["TEST_DATABASE_URL"] == managed
+    assert "secret" not in mask_database_url(managed)
+    return "managed test DB URL derivation and env override checked"
+
+
+def case_self_check_managed_test_db_specs() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-managed-") as tmp:
+        root = Path(tmp)
+        (root / "backend").mkdir()
+        (root / "frontend").mkdir()
+        (root / "docs").mkdir()
+        (root / "docker-compose.dev.yml").write_text("services: {}\n", encoding="utf-8")
+        (root / "backend" / ".env.example").write_text("DATABASE__URL=postgres://u:p@127.0.0.1:5432/dev\n", encoding="utf-8")
+        (root / "frontend" / "package.json").write_text(json.dumps({"scripts": {}, "devDependencies": {}}), encoding="utf-8")
+        (root / "frontend" / "package-lock.json").write_text("{}", encoding="utf-8")
+        managed_url = "postgres://u:p@127.0.0.1:5432/p2pkanban_rg_selfcheck"
+        specs = build_release_gate_specs(root, managed_test_db_url=managed_url, managed_test_db_requested=True)
+        by_name = {spec.name: spec for spec in specs}
+    db_spec = by_name["backend_cargo_test_db_ignored"]
+    smoke_spec = by_name["backend_python_smoke_first"]
+    assert db_spec.env_extra["TEST_DATABASE_URL"] == managed_url
+    assert db_spec.env_extra["DATABASE__URL"] == managed_url
+    assert smoke_spec.env_extra["TEST_DATABASE_URL"] == managed_url
+    assert smoke_spec.details["managedTestDb"] is True
+    return "release-gates managed DB specs carry safe env overrides"
+
+
 def case_self_check_release_gates_frontend_dependency_preflight() -> str:
     with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-frontend-") as tmp:
         root = Path(tmp)
@@ -6623,6 +7268,8 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_archive_exclusions", case_self_check_release_gates_archive_exclusions)
     self_check_case(result, "release_gates_ignored_classifier", case_self_check_release_gates_ignored_classifier)
     self_check_case(result, "release_gates_playwright_classifier", case_self_check_release_gates_playwright_classifier)
+    self_check_case(result, "managed_test_db_url_derivation", case_self_check_managed_test_db_url_derivation)
+    self_check_case(result, "managed_test_db_specs", case_self_check_managed_test_db_specs)
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
@@ -6800,6 +7447,11 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["release_gate"], help="Maximum timeout for each implemented gate command.")
     release_gates.add_argument("--output-dir", help="Write the run directory to this path instead of .dev-bootstrap/runs/<run-id>.")
     release_gates.add_argument("--allow-dev-db-write", action="store_true", help="Allow backend Python smoke to write through the configured live backend API when TEST_DATABASE_URL is not present.")
+    release_gates.add_argument("--managed-test-db", action="store_true", help="Create a disposable PostgreSQL database for DB-writing release-gates and run managed gates against it.")
+    release_gates.add_argument("--test-db-retention", choices=["drop-always", "keep-on-failure", "keep-always"], default="keep-on-failure", help="Retention policy for --managed-test-db. Default keeps failed runs for investigation and drops successful runs.")
+    release_gates.add_argument("--keep-test-db", choices=["on-failure", "always", "never"], help="Compatibility alias for --test-db-retention: on-failure, always or never.")
+    release_gates.add_argument("--start-db-if-needed", action="store_true", help="With --managed-test-db, start the project docker compose PostgreSQL service if the configured PostgreSQL port is closed.")
+    release_gates.add_argument("--dump-test-db-on-failure", action="store_true", help="With --managed-test-db, try pg_dump into the run directory when release-gates fail and the DB is retained.")
     release_gates.add_argument("--prepare-frontend", action="store_true", help="Run prepare-frontend inside the release-gates bundle before frontend build/test/browser gates are planned.")
     release_gates.add_argument("--install-playwright-browsers", action="store_true", help="Run npx playwright install when browser binaries are missing before browser smoke.")
     release_gates.add_argument("--include-real-backend-browser", action="store_true", help="Run the dedicated write-capable real-backend Playwright path when its spec and prerequisites exist.")
@@ -6831,6 +7483,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "keep_test_db", None):
+        args.test_db_retention = {"on-failure": "keep-on-failure", "always": "keep-always", "never": "drop-always"}[args.keep_test_db]
     try:
         return int(args.func(args))
     except KeyboardInterrupt:
