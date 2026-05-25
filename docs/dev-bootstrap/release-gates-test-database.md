@@ -3,6 +3,31 @@
 `devbootstrap release-gates` deliberately treats DB-writing checks as unsafe unless a write-safe database target is explicit. This keeps regular dev data from being modified by backend smoke, DB integration tests, or the real-backend browser path.
 
 
+
+## Release-gates profiles and consent policy
+
+Profiles are the preferred high-level UX for the managed release-gates stack:
+
+```bash
+python tools/devbootstrap.py release-gates --profile diagnostic --dry-run
+python tools/devbootstrap.py release-gates --profile prepared-local
+python tools/devbootstrap.py release-gates --profile isolated-db
+python tools/devbootstrap.py release-gates --profile managed-runtime
+python tools/devbootstrap.py release-gates --profile full-local-release --dry-run
+```
+
+`diagnostic` is the safe baseline. `prepared-local` allows dependency/browser cache preparation. `isolated-db` creates a managed PostgreSQL test DB. `managed-runtime` combines managed DB plus owned backend/frontend processes on dynamic ports. `full-local-release` combines dependency preparation, managed DB/runtime, the real-backend browser path and a dry clean-machine sandbox.
+
+Profiles set defaults only. Explicit flags still win, including boolean opt-out forms such as:
+
+```bash
+python tools/devbootstrap.py release-gates --profile full-local-release --managed-test-db=false
+python tools/devbootstrap.py release-gates --profile prepared-local --install-playwright-browsers=false
+python tools/devbootstrap.py release-gates --profile diagnostic --include-clean-machine
+```
+
+Every run writes `release-gates-consent.md` and `release-gates-consent.json` into the run directory. The consent files show the resolved profile, explicit overrides, effective options, allowed side effects, denied side effects and planned gate families. Dry-run profile runs must not create databases, install dependencies, start processes, copy clean-machine sandboxes or perform browser downloads.
+
 ## Managed ephemeral database
 
 The recommended one-command DB path is:

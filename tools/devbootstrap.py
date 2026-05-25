@@ -4495,6 +4495,20 @@ class ManagedRuntimeState:
 
 
 @dataclass
+class ReleaseGatesProfilePlan:
+    profile: str
+    explicit_profile: bool
+    description: str
+    dry_run: bool
+    explicit_overrides: dict[str, Any] = field(default_factory=dict)
+    effective_options: dict[str, Any] = field(default_factory=dict)
+    allowed_side_effects: list[dict[str, str]] = field(default_factory=list)
+    denied_side_effects: list[dict[str, str]] = field(default_factory=list)
+    planned_gates: list[str] = field(default_factory=list)
+    consent_summary_path: str | None = None
+
+
+@dataclass
 class ReleaseGatesResult:
     generated_at: str
     tool_version: str
@@ -4505,6 +4519,7 @@ class ReleaseGatesResult:
     timeout_seconds: int
     report_dir: str | None = None
     archive_path: str | None = None
+    profile_plan: ReleaseGatesProfilePlan | None = None
     managed_test_db: ManagedTestDatabaseState | None = None
     managed_runtime: ManagedRuntimeState | None = None
     overall_status: str = "unknown"
@@ -4531,6 +4546,87 @@ CLEAN_MACHINE_PROFILES = ("dry", "deps", "runtime", "clean-machine-dry", "clean-
 CLEAN_MACHINE_RETENTION_POLICIES = ("delete-always", "keep-on-failure", "keep-always")
 DEFAULT_CLEAN_MACHINE_PROFILE = "dry"
 DEFAULT_CLEAN_MACHINE_RETENTION = "keep-on-failure"
+RELEASE_GATES_PROFILES = ("diagnostic", "prepared-local", "isolated-db", "managed-runtime", "full-local-release")
+RELEASE_GATES_DEFAULT_PROFILE = "diagnostic"
+RELEASE_GATES_PROFILE_DESCRIPTIONS = {
+    "diagnostic": "Safe read-mostly baseline: self-check, diagnose, default classifiers and docs gates without managed installs, databases or processes.",
+    "prepared-local": "Local dependency-prepared profile: allow npm/cargo/playwright cache preparation, then run frontend/backend gates that can use local prepared dependencies.",
+    "isolated-db": "Managed database profile: create an ephemeral PostgreSQL test database for DB-writing Rust/Python gates and drop/retain it by policy.",
+    "managed-runtime": "Owned runtime profile: create a managed test DB, start isolated backend/frontend processes on dynamic ports and route smoke/browser gates to them.",
+    "full-local-release": "Maximum local release signal: prepare dependencies, use managed DB/runtime, run the real-backend browser path and include a dry clean-machine sandbox.",
+}
+RELEASE_GATES_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "diagnostic": {
+        "allow_dev_db_write": False,
+        "managed_runtime": False,
+        "managed_test_db": False,
+        "test_db_retention": "keep-on-failure",
+        "start_db_if_needed": False,
+        "dump_test_db_on_failure": False,
+        "prepare_deps": "never",
+        "install_playwright_browsers": False,
+        "include_real_backend_browser": False,
+        "include_clean_machine": False,
+        "clean_machine_profile": DEFAULT_CLEAN_MACHINE_PROFILE,
+        "clean_machine_retention": DEFAULT_CLEAN_MACHINE_RETENTION,
+    },
+    "prepared-local": {
+        "allow_dev_db_write": False,
+        "managed_runtime": False,
+        "managed_test_db": False,
+        "test_db_retention": "keep-on-failure",
+        "start_db_if_needed": False,
+        "dump_test_db_on_failure": False,
+        "prepare_deps": DEFAULT_FRONTEND_PREPARE_DEP_MODE,
+        "install_playwright_browsers": True,
+        "include_real_backend_browser": False,
+        "include_clean_machine": False,
+        "clean_machine_profile": DEFAULT_CLEAN_MACHINE_PROFILE,
+        "clean_machine_retention": DEFAULT_CLEAN_MACHINE_RETENTION,
+    },
+    "isolated-db": {
+        "allow_dev_db_write": False,
+        "managed_runtime": False,
+        "managed_test_db": True,
+        "test_db_retention": "keep-on-failure",
+        "start_db_if_needed": False,
+        "dump_test_db_on_failure": True,
+        "prepare_deps": "never",
+        "install_playwright_browsers": False,
+        "include_real_backend_browser": False,
+        "include_clean_machine": False,
+        "clean_machine_profile": DEFAULT_CLEAN_MACHINE_PROFILE,
+        "clean_machine_retention": DEFAULT_CLEAN_MACHINE_RETENTION,
+    },
+    "managed-runtime": {
+        "allow_dev_db_write": False,
+        "managed_runtime": True,
+        "managed_test_db": True,
+        "test_db_retention": "keep-on-failure",
+        "start_db_if_needed": False,
+        "dump_test_db_on_failure": True,
+        "prepare_deps": "never",
+        "install_playwright_browsers": False,
+        "include_real_backend_browser": True,
+        "include_clean_machine": False,
+        "clean_machine_profile": DEFAULT_CLEAN_MACHINE_PROFILE,
+        "clean_machine_retention": DEFAULT_CLEAN_MACHINE_RETENTION,
+    },
+    "full-local-release": {
+        "allow_dev_db_write": False,
+        "managed_runtime": True,
+        "managed_test_db": True,
+        "test_db_retention": "keep-on-failure",
+        "start_db_if_needed": False,
+        "dump_test_db_on_failure": True,
+        "prepare_deps": DEFAULT_FRONTEND_PREPARE_DEP_MODE,
+        "install_playwright_browsers": True,
+        "include_real_backend_browser": True,
+        "include_clean_machine": True,
+        "clean_machine_profile": DEFAULT_CLEAN_MACHINE_PROFILE,
+        "clean_machine_retention": DEFAULT_CLEAN_MACHINE_RETENTION,
+    },
+}
 CLEAN_MACHINE_REQUIRED_PATHS = [
     "backend/Cargo.toml",
     "backend/build.rs",
@@ -5961,6 +6057,288 @@ def release_gate_check_v1_checklist(project_root: Path) -> tuple[str, str, str, 
     return "failed", "v1_remaining_checklist_release_gates_missing", message, lines, details
 
 
+
+def parse_optional_bool_arg(value: str | bool | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return True
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"expected boolean value, got: {value}")
+
+
+def release_gates_profile_defaults(profile: str | None) -> dict[str, Any]:
+    selected = profile or RELEASE_GATES_DEFAULT_PROFILE
+    if selected not in RELEASE_GATES_PROFILE_DEFAULTS:
+        selected = RELEASE_GATES_DEFAULT_PROFILE
+    return dict(RELEASE_GATES_PROFILE_DEFAULTS[selected])
+
+
+def release_gates_add_side_effect(items: list[dict[str, str]], category: str, description: str) -> None:
+    item = {"category": category, "description": description}
+    if item not in items:
+        items.append(item)
+
+
+def build_release_gates_side_effects(options: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    allowed: list[dict[str, str]] = []
+    denied: list[dict[str, str]] = []
+    prepare_deps = str(options.get("prepare_deps") or "never")
+    if prepare_deps != "never":
+        release_gates_add_side_effect(
+            allowed,
+            "write-project-cache",
+            f"prepare frontend/backend dependency caches with prepare-deps={prepare_deps}; source files and lockfiles remain read-only",
+        )
+        release_gates_add_side_effect(
+            allowed,
+            "network-download",
+            "npm/cargo may download dependency artifacts when the local cache is missing or stale",
+        )
+    if options.get("install_playwright_browsers"):
+        release_gates_add_side_effect(
+            allowed,
+            "write-project-cache",
+            "install Playwright Chromium browser binaries through npx playwright install chromium",
+        )
+        release_gates_add_side_effect(
+            allowed,
+            "network-download",
+            "Playwright may download browser binaries when they are missing",
+        )
+    if options.get("managed_test_db"):
+        release_gates_add_side_effect(
+            allowed,
+            "create-database",
+            "create one PostgreSQL test database owned by this release-gates run",
+        )
+        release_gates_add_side_effect(
+            allowed,
+            "write-database",
+            "route DB integration tests and smoke writes to the managed test database",
+        )
+        release_gates_add_side_effect(
+            allowed,
+            "delete-database",
+            "drop only the managed test database according to the configured retention policy",
+        )
+    if options.get("allow_dev_db_write"):
+        release_gates_add_side_effect(
+            allowed,
+            "write-database",
+            "explicitly allow write-capable smoke/browser gates to use the configured live/dev database",
+        )
+    if options.get("managed_runtime") or options.get("managed_test_db"):
+        release_gates_add_side_effect(
+            allowed,
+            "start-process",
+            "start backend/frontend processes owned by this release-gates run on dynamic loopback ports",
+        )
+        release_gates_add_side_effect(
+            allowed,
+            "stop-process",
+            "stop only managed runtime PIDs recorded by this release-gates run",
+        )
+    if options.get("start_db_if_needed"):
+        release_gates_add_side_effect(
+            allowed,
+            "start-process",
+            "start the project Docker Compose PostgreSQL service if the configured PostgreSQL port is closed",
+        )
+    if options.get("dump_test_db_on_failure"):
+        release_gates_add_side_effect(
+            allowed,
+            "write-project-cache",
+            "write a pg_dump artifact into the release-gates run directory when a managed DB failure is retained",
+        )
+    if options.get("include_clean_machine"):
+        release_gates_add_side_effect(
+            allowed,
+            "write-temp-sandbox",
+            "copy the project into a temporary clean-machine sandbox with generated/local state excluded",
+        )
+
+    release_gates_add_side_effect(denied, "write-project-files", "no source files, env files or lockfiles are modified by release-gates")
+    release_gates_add_side_effect(denied, "delete-database", "no database is dropped unless it was created and registered by the current managed DB run")
+    release_gates_add_side_effect(denied, "stop-process", "no foreign process is killed merely because it occupies a legacy or selected port")
+    if not options.get("allow_dev_db_write"):
+        release_gates_add_side_effect(denied, "write-database", "writes to the configured live/dev database are denied without --allow-dev-db-write")
+    if prepare_deps == "never" and not options.get("install_playwright_browsers"):
+        release_gates_add_side_effect(denied, "network-download", "dependency/browser downloads are not intentionally initiated by the selected profile")
+    release_gates_add_side_effect(denied, "write-project-files", "fallback npm install without package-lock.json remains denied")
+    return allowed, denied
+
+
+def build_release_gates_planned_gates(options: dict[str, Any]) -> list[str]:
+    gates = ["self_check", "diagnose", "backend_cargo_test_default", "docs gates"]
+    if str(options.get("prepare_deps") or "never") != "never":
+        gates.extend(["frontend_prepare_dependencies", "backend_dependency_warmup"])
+    if options.get("managed_test_db"):
+        gates.extend(["managed_test_db_prepare", "backend_cargo_test_db_ignored", "backend_python_smoke_first/second"])
+    if options.get("managed_runtime") or options.get("managed_test_db"):
+        gates.extend(["managed_runtime_plan/start/stop", "managed frontend/browser URLs"])
+    gates.extend(["frontend_build", "frontend_unit_integration", "frontend_browser_smoke"])
+    if options.get("install_playwright_browsers"):
+        gates.append("playwright_install when Chromium is missing")
+    if options.get("include_real_backend_browser"):
+        gates.append("browser_real_backend_path")
+    if options.get("include_clean_machine"):
+        gates.append(f"clean_machine_sandbox:{options.get('clean_machine_profile') or DEFAULT_CLEAN_MACHINE_PROFILE}")
+    return gates
+
+
+def resolve_release_gates_profile_args(args: argparse.Namespace) -> ReleaseGatesProfilePlan:
+    requested_profile = getattr(args, "profile", None)
+    explicit_profile = bool(requested_profile)
+    profile = requested_profile or RELEASE_GATES_DEFAULT_PROFILE
+    defaults = release_gates_profile_defaults(profile)
+    explicit_overrides: dict[str, Any] = {}
+
+    bool_options = [
+        "allow_dev_db_write",
+        "managed_runtime",
+        "managed_test_db",
+        "start_db_if_needed",
+        "dump_test_db_on_failure",
+        "install_playwright_browsers",
+        "include_real_backend_browser",
+        "include_clean_machine",
+    ]
+    effective: dict[str, Any] = {}
+    for name in bool_options:
+        raw_value = getattr(args, name, None)
+        if raw_value is None:
+            effective[name] = bool(defaults.get(name, False))
+        else:
+            effective[name] = bool(raw_value)
+            explicit_overrides[name] = bool(raw_value)
+        setattr(args, name, effective[name])
+
+    if getattr(args, "prepare_deps", None) is not None:
+        prepare_deps = normalize_frontend_prepare_dep_mode(args.prepare_deps)
+        explicit_overrides["prepare_deps"] = prepare_deps
+    elif getattr(args, "prepare_frontend", False):
+        prepare_deps = DEFAULT_FRONTEND_PREPARE_DEP_MODE
+        explicit_overrides["prepare_deps"] = prepare_deps
+        explicit_overrides["prepare_frontend"] = True
+    else:
+        prepare_deps = str(defaults.get("prepare_deps") or "never")
+    args.prepare_deps = prepare_deps
+
+    if getattr(args, "test_db_retention", None) is not None:
+        test_db_retention = str(args.test_db_retention)
+        explicit_overrides["test_db_retention"] = test_db_retention
+    else:
+        test_db_retention = str(defaults.get("test_db_retention") or "keep-on-failure")
+    args.test_db_retention = test_db_retention
+
+    if getattr(args, "clean_machine_profile", None) is not None:
+        clean_machine_profile = normalize_clean_machine_profile(str(args.clean_machine_profile))
+        explicit_overrides["clean_machine_profile"] = clean_machine_profile
+    else:
+        clean_machine_profile = normalize_clean_machine_profile(str(defaults.get("clean_machine_profile") or DEFAULT_CLEAN_MACHINE_PROFILE))
+    args.clean_machine_profile = clean_machine_profile
+
+    if getattr(args, "clean_machine_retention", None) is not None:
+        clean_machine_retention = str(args.clean_machine_retention)
+        explicit_overrides["clean_machine_retention"] = clean_machine_retention
+    else:
+        clean_machine_retention = str(defaults.get("clean_machine_retention") or DEFAULT_CLEAN_MACHINE_RETENTION)
+    args.clean_machine_retention = clean_machine_retention
+
+    effective.update(
+        {
+            "profile": profile,
+            "prepare_deps": prepare_deps,
+            "test_db_retention": test_db_retention,
+            "clean_machine_profile": clean_machine_profile,
+            "clean_machine_retention": clean_machine_retention,
+            "real_backend_browser_spec": getattr(args, "real_backend_browser_spec", "e2e/smoke/real-backend.smoke.spec.ts"),
+        }
+    )
+    allowed, denied = build_release_gates_side_effects(effective)
+    return ReleaseGatesProfilePlan(
+        profile=profile,
+        explicit_profile=explicit_profile,
+        description=RELEASE_GATES_PROFILE_DESCRIPTIONS.get(profile, RELEASE_GATES_PROFILE_DESCRIPTIONS[RELEASE_GATES_DEFAULT_PROFILE]),
+        dry_run=bool(getattr(args, "dry_run", False)),
+        explicit_overrides=explicit_overrides,
+        effective_options=effective,
+        allowed_side_effects=allowed,
+        denied_side_effects=denied,
+        planned_gates=build_release_gates_planned_gates(effective),
+    )
+
+
+def render_release_gates_profile_plan(plan: ReleaseGatesProfilePlan) -> str:
+    lines: list[str] = []
+    lines.append("# release-gates profile and consent plan")
+    lines.append("")
+    lines.append(f"- Profile: `{plan.profile}`")
+    lines.append(f"- Explicit profile: `{plan.explicit_profile}`")
+    lines.append(f"- Dry run: `{plan.dry_run}`")
+    lines.append(f"- Description: {plan.description}")
+    if plan.consent_summary_path:
+        lines.append(f"- Bundle path: `{plan.consent_summary_path}`")
+    lines.append("")
+    lines.append("## Effective options")
+    lines.append("")
+    for key in sorted(plan.effective_options):
+        value = plan.effective_options[key]
+        lines.append(f"- `{key}`: `{value}`")
+    lines.append("")
+    lines.append("## Explicit overrides")
+    lines.append("")
+    if plan.explicit_overrides:
+        for key in sorted(plan.explicit_overrides):
+            lines.append(f"- `{key}`: `{plan.explicit_overrides[key]}`")
+    else:
+        lines.append("- none")
+    lines.append("")
+    lines.append("## Allowed side effects")
+    lines.append("")
+    if plan.allowed_side_effects:
+        for item in plan.allowed_side_effects:
+            lines.append(f"- `{item['category']}` — {item['description']}")
+    else:
+        lines.append("- none")
+    lines.append("")
+    lines.append("## Denied side effects")
+    lines.append("")
+    for item in plan.denied_side_effects:
+        lines.append(f"- `{item['category']}` — {item['description']}")
+    lines.append("")
+    lines.append("## Planned gate families")
+    lines.append("")
+    for gate in plan.planned_gates:
+        lines.append(f"- `{gate}`")
+    if plan.dry_run:
+        lines.append("")
+        lines.append("Dry-run guarantee: no database is created, no dependency install is executed, no process is started and no clean-machine sandbox is copied.")
+    return "\n".join(lines) + "\n"
+
+
+def write_release_gates_profile_plan(project_root: Path, run_dir: Path, plan: ReleaseGatesProfilePlan) -> None:
+    path = run_dir / "release-gates-consent.md"
+    plan.consent_summary_path = rel(path, project_root)
+    path.write_text(render_release_gates_profile_plan(plan), encoding="utf-8")
+    write_json(run_dir / "release-gates-consent.json", as_jsonable(plan))
+
+
+def print_release_gates_profile_consent(plan: ReleaseGatesProfilePlan) -> None:
+    print(f"release-gates profile: {plan.profile} (explicit={plan.explicit_profile})")
+    if plan.consent_summary_path:
+        print(f"Consent plan: {plan.consent_summary_path}")
+    allowed = ", ".join(sorted({item["category"] for item in plan.allowed_side_effects})) or "none"
+    denied = ", ".join(sorted({item["category"] for item in plan.denied_side_effects})) or "none"
+    print(f"Allowed side effects: {allowed}")
+    print(f"Denied side effects: {denied}")
+
+
 def normalize_clean_machine_profile(value: str | None) -> str:
     normalized = (value or DEFAULT_CLEAN_MACHINE_PROFILE).strip().lower().replace("_", "-")
     if normalized.startswith("clean-machine-"):
@@ -6961,6 +7339,9 @@ def render_release_gates_summary(result: ReleaseGatesResult) -> str:
     lines.append(f"Classification: {result.classification}")
     lines.append(f"Generated: {result.generated_at}")
     lines.append(f"Dry run: {result.dry_run}")
+    if result.profile_plan:
+        lines.append(f"Profile: {result.profile_plan.profile} (explicit={result.profile_plan.explicit_profile})")
+        lines.append(f"Consent plan: {result.profile_plan.consent_summary_path or '<not written>'}")
     lines.append(f"Project root: {result.project_root or 'not found'}")
     if result.managed_test_db and result.managed_test_db.enabled:
         lines.append(f"Managed test DB: {result.managed_test_db.status} / {result.managed_test_db.classification}")
@@ -7001,6 +7382,16 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
     lines.append(f"- Dry run: `{result.dry_run}`")
     if result.archive_path:
         lines.append(f"- Archive: `{result.archive_path}`")
+    if result.profile_plan:
+        lines.append("")
+        lines.append("## Profile and consent")
+        lines.append("")
+        lines.append(f"- Profile: `{result.profile_plan.profile}`")
+        lines.append(f"- Explicit profile: `{result.profile_plan.explicit_profile}`")
+        lines.append(f"- Consent summary: `{result.profile_plan.consent_summary_path or '<none>'}`")
+        lines.append(f"- Description: {result.profile_plan.description}")
+        lines.append("- Allowed side effects: " + (", ".join(f"`{item['category']}`" for item in result.profile_plan.allowed_side_effects) if result.profile_plan.allowed_side_effects else "none"))
+        lines.append("- Denied side effects: " + ", ".join(f"`{item['category']}`" for item in result.profile_plan.denied_side_effects))
     if result.managed_test_db and result.managed_test_db.enabled:
         lines.append("")
         lines.append("## Managed test database")
@@ -7068,6 +7459,7 @@ def release_gates_json_payload(result: ReleaseGatesResult) -> dict[str, Any]:
         "classification": result.classification,
         "reportDir": result.report_dir,
         "archivePath": result.archive_path,
+        "profilePlan": as_jsonable(result.profile_plan) if result.profile_plan else None,
         "managedTestDb": managed_test_db_public_payload(result.managed_test_db) if result.managed_test_db else None,
         "managedRuntime": managed_runtime_public_payload(result.managed_runtime) if result.managed_runtime else None,
         "gates": [as_jsonable(gate) for gate in result.gates],
@@ -7123,6 +7515,9 @@ def print_release_gates_summary(result: ReleaseGatesResult) -> None:
     print(f"Overall: {result.overall_status}")
     print(f"Classification: {result.classification}")
     print(f"Dry run: {result.dry_run}")
+    if result.profile_plan:
+        print(f"Profile: {result.profile_plan.profile} (explicit={result.profile_plan.explicit_profile})")
+        print(f"Consent plan: {result.profile_plan.consent_summary_path or '<not written>'}")
     if result.managed_runtime and result.managed_runtime.enabled:
         print("\nManaged runtime:")
         print(f"  - backend: {result.managed_runtime.backend_api_base_url or '<none>'}")
@@ -7182,6 +7577,12 @@ def command_release_gates(args: argparse.Namespace) -> int:
     logs_dir = run_dir / "logs"
     run_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
+
+    profile_plan = resolve_release_gates_profile_args(args)
+    result.profile_plan = profile_plan
+    write_release_gates_profile_plan(project_root, run_dir, profile_plan)
+    if args.dry_run or profile_plan.explicit_profile:
+        print_release_gates_profile_consent(profile_plan)
 
     next_gate_index = 1
     managed_test_db_url: str | None = None
@@ -8357,6 +8758,45 @@ def case_self_check_frontend_prepare_modes() -> str:
     return "frontend dependency preparation modes checked"
 
 
+
+def case_self_check_release_gates_profiles_and_consent() -> str:
+    args = argparse.Namespace(
+        profile="full-local-release",
+        dry_run=True,
+        allow_dev_db_write=None,
+        managed_runtime=None,
+        managed_test_db=None,
+        test_db_retention=None,
+        keep_test_db=None,
+        start_db_if_needed=None,
+        dump_test_db_on_failure=None,
+        prepare_frontend=False,
+        prepare_deps=None,
+        install_playwright_browsers=None,
+        include_real_backend_browser=False,
+        real_backend_browser_spec="e2e/smoke/real-backend.smoke.spec.ts",
+        include_clean_machine=None,
+        clean_machine_profile=None,
+        clean_machine_retention=None,
+    )
+    plan = resolve_release_gates_profile_args(args)
+    assert plan.profile == "full-local-release"
+    assert args.managed_test_db is True
+    assert args.managed_runtime is True
+    assert args.prepare_deps == DEFAULT_FRONTEND_PREPARE_DEP_MODE
+    assert args.install_playwright_browsers is True
+    assert args.include_real_backend_browser is False
+    assert plan.explicit_overrides["include_real_backend_browser"] is False
+    allowed_categories = {item["category"] for item in plan.allowed_side_effects}
+    assert {"create-database", "write-database", "start-process", "network-download"}.issubset(allowed_categories)
+    rendered = render_release_gates_profile_plan(plan)
+    assert "Dry-run guarantee" in rendered
+    assert "fallback npm install" in rendered
+    assert parse_optional_bool_arg("false") is False
+    assert parse_optional_bool_arg(None) is True
+    return "release-gates profiles, explicit overrides and consent plan checked"
+
+
 def case_self_check_clean_machine_profiles() -> str:
     dry = release_gate_clean_machine_commands("dry")
     deps = release_gate_clean_machine_commands("deps")
@@ -8460,6 +8900,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
     self_check_case(result, "frontend_prepare_modes", case_self_check_frontend_prepare_modes)
     self_check_case(result, "clean_machine_profiles", case_self_check_clean_machine_profiles)
+    self_check_case(result, "release_gates_profiles_and_consent", case_self_check_release_gates_profiles_and_consent)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
     if result.failures:
@@ -8639,21 +9080,22 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--dry-run", action="store_true", help="Create a planned release-gates bundle without executing gate commands.")
     release_gates.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["release_gate"], help="Maximum timeout for each implemented gate command.")
     release_gates.add_argument("--output-dir", help="Write the run directory to this path instead of .dev-bootstrap/runs/<run-id>.")
-    release_gates.add_argument("--allow-dev-db-write", action="store_true", help="Allow backend Python smoke to write through the configured live backend API when TEST_DATABASE_URL is not present.")
-    release_gates.add_argument("--managed-runtime", action="store_true", help="Start isolated backend/frontend processes on dynamic ports for write-capable release-gates instead of using live ports.")
-    release_gates.add_argument("--managed-test-db", action="store_true", help="Create a disposable PostgreSQL database for DB-writing release-gates and run managed gates against it.")
-    release_gates.add_argument("--test-db-retention", choices=["drop-always", "keep-on-failure", "keep-always"], default="keep-on-failure", help="Retention policy for --managed-test-db. Default keeps failed runs for investigation and drops successful runs.")
+    release_gates.add_argument("--profile", choices=RELEASE_GATES_PROFILES, help="Release-gates consent/profile preset: diagnostic, prepared-local, isolated-db, managed-runtime or full-local-release.")
+    release_gates.add_argument("--allow-dev-db-write", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="Allow backend Python smoke to write through the configured live backend API when TEST_DATABASE_URL is not present. Use =false to override a profile.")
+    release_gates.add_argument("--managed-runtime", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="Start isolated backend/frontend processes on dynamic ports for write-capable release-gates instead of using live ports. Use =false to override a profile.")
+    release_gates.add_argument("--managed-test-db", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="Create a disposable PostgreSQL database for DB-writing release-gates and run managed gates against it. Use =false to override a profile.")
+    release_gates.add_argument("--test-db-retention", choices=["drop-always", "keep-on-failure", "keep-always"], default=None, help="Retention policy for --managed-test-db. Default/profile setting keeps failed runs for investigation and drops successful runs.")
     release_gates.add_argument("--keep-test-db", choices=["on-failure", "always", "never"], help="Compatibility alias for --test-db-retention: on-failure, always or never.")
-    release_gates.add_argument("--start-db-if-needed", action="store_true", help="With --managed-test-db, start the project docker compose PostgreSQL service if the configured PostgreSQL port is closed.")
-    release_gates.add_argument("--dump-test-db-on-failure", action="store_true", help="With --managed-test-db, try pg_dump into the run directory when release-gates fail and the DB is retained.")
+    release_gates.add_argument("--start-db-if-needed", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="With --managed-test-db, start the project docker compose PostgreSQL service if the configured PostgreSQL port is closed. Use =false to override a profile.")
+    release_gates.add_argument("--dump-test-db-on-failure", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="With --managed-test-db, try pg_dump into the run directory when release-gates fail and the DB is retained. Use =false to override a profile.")
     release_gates.add_argument("--prepare-frontend", action="store_true", help="Compatibility alias for --prepare-deps=stale.")
     release_gates.add_argument("--prepare-deps", nargs="?", const=DEFAULT_FRONTEND_PREPARE_DEP_MODE, choices=["never", "missing", "stale", "missing-or-stale", "always"], help="Prepare frontend/backend dependencies before release gates. Bare --prepare-deps uses stale/missing-or-stale mode.")
-    release_gates.add_argument("--install-playwright-browsers", action="store_true", help="Run npx playwright install chromium when browser binaries are missing before browser smoke.")
-    release_gates.add_argument("--include-real-backend-browser", action="store_true", help="Run the dedicated write-capable real-backend Playwright path when its spec and prerequisites exist.")
+    release_gates.add_argument("--install-playwright-browsers", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="Run npx playwright install chromium when browser binaries are missing before browser smoke. Use =false to override a profile.")
+    release_gates.add_argument("--include-real-backend-browser", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="Run the dedicated write-capable real-backend Playwright path when its spec and prerequisites exist. Use =false to override a profile.")
     release_gates.add_argument("--real-backend-browser-spec", default="e2e/smoke/real-backend.smoke.spec.ts", help="Frontend-relative Playwright spec path for the real-backend browser gate.")
-    release_gates.add_argument("--include-clean-machine", action="store_true", help="Run the optional clean-machine sandbox gate in a temporary project copy.")
-    release_gates.add_argument("--clean-machine-profile", choices=CLEAN_MACHINE_PROFILES, default=DEFAULT_CLEAN_MACHINE_PROFILE, help="Clean-machine sandbox strictness: dry, deps or runtime. The clean-machine-* aliases are accepted too.")
-    release_gates.add_argument("--clean-machine-retention", choices=CLEAN_MACHINE_RETENTION_POLICIES, default=DEFAULT_CLEAN_MACHINE_RETENTION, help="Whether to delete or keep the clean-machine sandbox after the gate.")
+    release_gates.add_argument("--include-clean-machine", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="Run the optional clean-machine sandbox gate in a temporary project copy. Use =false to override a profile.")
+    release_gates.add_argument("--clean-machine-profile", choices=CLEAN_MACHINE_PROFILES, default=None, help="Clean-machine sandbox strictness: dry, deps or runtime. The clean-machine-* aliases are accepted too.")
+    release_gates.add_argument("--clean-machine-retention", choices=CLEAN_MACHINE_RETENTION_POLICIES, default=None, help="Whether to delete or keep the clean-machine sandbox after the gate.")
     release_gates.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     release_gates.set_defaults(func=command_release_gates)
 
