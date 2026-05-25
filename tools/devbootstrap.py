@@ -4323,10 +4323,13 @@ def command_up(args: argparse.Namespace) -> int:
             command.insert(1, "--dry-run")
         pipeline.append(("check_backend", command, args.cargo_check_timeout_seconds + 30))
 
-    command = ["start-backend", "--no-write-report", "--json", "--timeout-seconds", str(args.backend_timeout_seconds)]
-    if args.dry_run:
-        command.insert(1, "--dry-run")
-    pipeline.append(("start_backend", command, args.backend_timeout_seconds + 30))
+    if args.skip_backend_start:
+        pipeline.append(("start_backend", ["__skip__", "--skip-backend-start was provided"], 0))
+    else:
+        command = ["start-backend", "--no-write-report", "--json", "--timeout-seconds", str(args.backend_timeout_seconds)]
+        if args.dry_run:
+            command.insert(1, "--dry-run")
+        pipeline.append(("start_backend", command, args.backend_timeout_seconds + 30))
 
     if args.skip_install:
         pipeline.append(("prepare_frontend", ["__skip__", "--skip-install was provided"], 0))
@@ -4336,10 +4339,13 @@ def command_up(args: argparse.Namespace) -> int:
             command.insert(1, "--dry-run")
         pipeline.append(("prepare_frontend", command, args.npm_timeout_seconds + 30))
 
-    command = ["start-frontend", "--no-write-report", "--json", "--timeout-seconds", str(args.frontend_timeout_seconds)]
-    if args.dry_run:
-        command.insert(1, "--dry-run")
-    pipeline.append(("start_frontend", command, args.frontend_timeout_seconds + 30))
+    if args.skip_frontend_start:
+        pipeline.append(("start_frontend", ["__skip__", "--skip-frontend-start was provided"], 0))
+    else:
+        command = ["start-frontend", "--no-write-report", "--json", "--timeout-seconds", str(args.frontend_timeout_seconds)]
+        if args.dry_run:
+            command.insert(1, "--dry-run")
+        pipeline.append(("start_frontend", command, args.frontend_timeout_seconds + 30))
 
     keep_going = True
     for step_name, command, step_timeout in pipeline:
@@ -4521,6 +4527,20 @@ RELEASE_GATES_ARCHIVE_EXCLUDED_PARTS = {
 }
 RELEASE_GATES_ARCHIVE_EXCLUDED_NAMES = {".env"}
 RELEASE_GATES_ARCHIVE_EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".sqlite", ".sqlite3", ".db", ".tsbuildinfo")
+CLEAN_MACHINE_PROFILES = ("dry", "deps", "runtime", "clean-machine-dry", "clean-machine-deps", "clean-machine-runtime")
+CLEAN_MACHINE_RETENTION_POLICIES = ("delete-always", "keep-on-failure", "keep-always")
+DEFAULT_CLEAN_MACHINE_PROFILE = "dry"
+DEFAULT_CLEAN_MACHINE_RETENTION = "keep-on-failure"
+CLEAN_MACHINE_REQUIRED_PATHS = [
+    "backend/Cargo.toml",
+    "backend/build.rs",
+    "backend/migrations",
+    "frontend/package.json",
+    "frontend/package-lock.json",
+    "docker-compose.dev.yml",
+    "README.md",
+    "tools/devbootstrap.py",
+]
 
 
 def release_gate_command_display(command: list[str]) -> str:
@@ -5941,10 +5961,19 @@ def release_gate_check_v1_checklist(project_root: Path) -> tuple[str, str, str, 
     return "failed", "v1_remaining_checklist_release_gates_missing", message, lines, details
 
 
-def release_gate_clean_machine_ignore(directory: str, names: list[str]) -> set[str]:
-    excluded_names = {
+def normalize_clean_machine_profile(value: str | None) -> str:
+    normalized = (value or DEFAULT_CLEAN_MACHINE_PROFILE).strip().lower().replace("_", "-")
+    if normalized.startswith("clean-machine-"):
+        normalized = normalized.removeprefix("clean-machine-")
+    if normalized not in {"dry", "deps", "runtime"}:
+        raise ValueError(f"unknown clean-machine profile: {value}")
+    return normalized
+
+
+def release_gate_clean_machine_excluded_names() -> set[str]:
+    return {
         ".git",
-        ".dev-bootstrap",
+        BOOTSTRAP_DIR_NAME,
         ".venv",
         "node_modules",
         "target",
@@ -5954,75 +5983,344 @@ def release_gate_clean_machine_ignore(directory: str, names: list[str]) -> set[s
         "__pycache__",
         ".pytest_cache",
     }
-    ignored: set[str] = set()
-    directory_path = Path(directory)
-    for name in names:
-        path = directory_path / name
-        if name in excluded_names:
-            ignored.add(name)
-            continue
-        if name in {".env", ".env.local"}:
-            ignored.add(name)
-            continue
-        if name.endswith((".pyc", ".pyo", ".sqlite", ".sqlite3", ".db", ".tsbuildinfo")):
-            ignored.add(name)
-            continue
-        if directory_path.name == "release" and name.endswith((".zip", ".exe")):
-            ignored.add(name)
-    return ignored
+
+
+def release_gate_clean_machine_ignore_factory(project_root: Path, exclusions: list[str]):
+    excluded_names = release_gate_clean_machine_excluded_names()
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        ignored: set[str] = set()
+        directory_path = Path(directory)
+        try:
+            directory_relative = directory_path.relative_to(project_root).as_posix()
+        except ValueError:
+            directory_relative = "."
+        for name in names:
+            path = directory_path / name
+            relative = name if directory_relative == "." else f"{directory_relative}/{name}"
+            reason: str | None = None
+            if name in excluded_names:
+                reason = "generated/local state directory"
+            elif name in {".env", ".env.local"} or (name.startswith(".env.") and name != ".env.example"):
+                reason = "local environment file"
+            elif name.endswith(RELEASE_GATES_ARCHIVE_EXCLUDED_SUFFIXES):
+                reason = "generated artifact suffix"
+            elif directory_path.name == "release" and name.endswith((".zip", ".exe")):
+                reason = "large release payload"
+            if reason:
+                ignored.add(name)
+                exclusions.append(f"{relative} — {reason}")
+        return ignored
+
+    return ignore
+
+
+def release_gate_clean_machine_ignore(directory: str, names: list[str]) -> set[str]:
+    # Backward-compatible ignore callback for older internal callers.
+    return release_gate_clean_machine_ignore_factory(Path(directory), [])(directory, names)
+
+
+def clean_machine_file_list(clean_root: Path) -> list[str]:
+    files: list[str] = []
+    for path in sorted(clean_root.rglob("*")):
+        if path.is_file():
+            files.append(path.relative_to(clean_root).as_posix())
+    return files
+
+
+def clean_machine_required_path_results(clean_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    checks: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for relative in CLEAN_MACHINE_REQUIRED_PATHS:
+        path = clean_root / relative
+        exists = path.exists()
+        kind = "directory" if path.is_dir() else "file" if path.is_file() else "missing"
+        checks.append({"path": relative, "exists": exists, "kind": kind})
+        if not exists:
+            missing.append(relative)
+    return checks, missing
+
+
+def release_gate_clean_machine_commands(profile: str) -> list[list[str]]:
+    normalized = normalize_clean_machine_profile(profile)
+    commands = [
+        [sys.executable, "tools/devbootstrap.py", "self-check", "--no-write-report"],
+        [sys.executable, "tools/devbootstrap.py", "diagnose", "--no-write-report"],
+        [sys.executable, "tools/devbootstrap.py", "plan", "--no-write-report"],
+        [sys.executable, "tools/devbootstrap.py", "prepare-env", "--no-write-report"],
+        [
+            sys.executable,
+            "tools/devbootstrap.py",
+            "up",
+            "--dry-run",
+            "--skip-db-start",
+            "--skip-cargo-check",
+            "--skip-install",
+            "--skip-backend-start",
+            "--skip-frontend-start",
+            "--smoke-level",
+            "none",
+            "--step-timeout-seconds",
+            "30",
+            "--db-timeout-seconds",
+            "5",
+            "--cargo-check-timeout-seconds",
+            "5",
+            "--backend-timeout-seconds",
+            "5",
+            "--npm-timeout-seconds",
+            "5",
+            "--frontend-timeout-seconds",
+            "5",
+            "--smoke-timeout-seconds",
+            "5",
+        ],
+    ]
+    if normalized in {"deps", "runtime"}:
+        commands.extend(
+            [
+                [sys.executable, "tools/devbootstrap.py", "prepare-frontend", "--install-mode=stale", "--no-write-report"],
+                ["cargo", "test", "--no-run"],
+            ]
+        )
+    if normalized == "runtime":
+        commands.append(
+            [
+                sys.executable,
+                "tools/devbootstrap.py",
+                "release-gates",
+                "--managed-test-db",
+                "--managed-runtime",
+                "--prepare-deps",
+                "--test-db-retention=drop-always",
+            ]
+        )
+    return commands
+
+
+def run_clean_machine_command(
+    *,
+    clean_root: Path,
+    command: list[str],
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    cwd = clean_root / "backend" if command[:3] == ["cargo", "test", "--no-run"] else clean_root
+    started = time.monotonic()
+    probe = run_process_probe(
+        "clean_machine_sandbox",
+        command,
+        cwd=cwd,
+        timeout=timeout_seconds,
+        env_extra={"PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    duration_ms = int((time.monotonic() - started) * 1000)
+    stdout = release_gate_sanitize_output(clean_root, probe.stdout or "")
+    stderr = release_gate_sanitize_output(clean_root, probe.stderr or probe.error or "")
+    status, classification, message = classify_gate_output("clean_machine_sandbox", stdout, stderr, probe.error, probe.returncode)
+    if not probe.available:
+        status, classification, message = "infra_failed", "missing_prerequisite", f"required command is unavailable: {command[0]}"
+    return {
+        "command": command,
+        "cwd": rel(cwd, clean_root),
+        "returncode": probe.returncode,
+        "durationMs": duration_ms,
+        "status": status,
+        "classification": classification,
+        "message": message,
+        "stdout": stdout,
+        "stderr": stderr,
+        "error": probe.error,
+    }
+
+
+def write_clean_machine_bundle(
+    *,
+    project_root: Path,
+    clean_logs_dir: Path,
+    payload: dict[str, Any],
+    commands: list[dict[str, Any]],
+    file_list: list[str],
+    exclusions: list[str],
+) -> None:
+    clean_logs_dir.mkdir(parents=True, exist_ok=True)
+    write_json(clean_logs_dir / "clean-machine.json", payload)
+    (clean_logs_dir / "file-list.txt").write_text("\n".join(file_list) + ("\n" if file_list else ""), encoding="utf-8")
+    (clean_logs_dir / "exclusions.txt").write_text("\n".join(exclusions) + ("\n" if exclusions else ""), encoding="utf-8")
+    command_lines: list[str] = []
+    for item in commands:
+        command_lines.extend(
+            [
+                f"$ {release_gate_command_display(item['command'])}",
+                f"cwd: {item['cwd']}",
+                f"exit: {item['returncode'] if item['returncode'] is not None else item.get('error') or '<none>'}",
+                f"duration_ms: {item['durationMs']}",
+                f"status: {item['status']}",
+                f"classification: {item['classification']}",
+                "stdout:",
+                item.get("stdout") or "<empty>",
+                "stderr:",
+                item.get("stderr") or "<empty>",
+                "",
+            ]
+        )
+    (clean_logs_dir / "commands.log").write_text("\n".join(command_lines), encoding="utf-8")
+    report_lines = [
+        "# clean-machine sandbox gate",
+        "",
+        f"- Status: `{payload['status']}`",
+        f"- Classification: `{payload['classification']}`",
+        f"- Profile: `{payload['profile']}`",
+        f"- Sandbox: `{payload['sandboxPath']}`",
+        f"- Retention: `{payload['retention']}`",
+        f"- Kept: `{payload['kept']}`",
+        f"- Cleanup: `{payload['cleanupCommand'] or '<none>'}`",
+        f"- File count: `{len(file_list)}`",
+        f"- Exclusions: `{len(exclusions)}`",
+        "",
+        "## Required files",
+        "",
+    ]
+    for item in payload.get("requiredFiles", []):
+        report_lines.append(f"- {'OK' if item['exists'] else 'MISSING'} `{item['path']}` ({item['kind']})")
+    report_lines.extend(["", "## Commands", ""])
+    for item in commands:
+        report_lines.append(f"- `{release_gate_command_display(item['command'])}` — `{item['status']}` / `{item['classification']}`")
+    report_lines.extend(["", "See also `commands.log`, `file-list.txt`, `exclusions.txt` and `clean-machine.json`.", ""])
+    (clean_logs_dir / "report.md").write_text("\n".join(report_lines), encoding="utf-8")
+
+
+def run_release_gate_clean_machine_sandbox_step(
+    *,
+    project_root: Path,
+    logs_dir: Path,
+    index: int,
+    spec: GateSpec,
+    timeout_seconds: int,
+) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, spec.name)
+    clean_logs_dir = logs_dir / "clean-machine"
+    profile = normalize_clean_machine_profile(str(spec.details.get("cleanMachineProfile") or DEFAULT_CLEAN_MACHINE_PROFILE))
+    retention = str(spec.details.get("cleanMachineRetention") or DEFAULT_CLEAN_MACHINE_RETENTION)
+    if retention not in CLEAN_MACHINE_RETENTION_POLICIES:
+        retention = DEFAULT_CLEAN_MACHINE_RETENTION
+    started = time.monotonic()
+    sandbox_parent = Path(tempfile.mkdtemp(prefix=f"devbootstrap-clean-machine-{spec.details.get('runId', 'run')}-"))
+    clean_root = sandbox_parent / project_root.name
+    exclusions: list[str] = []
+    commands: list[dict[str, Any]] = []
+    file_list: list[str] = []
+    status = "ok"
+    classification = "ok"
+    message = "clean-machine sandbox completed"
+    kept = False
+    cleanup_command = f"rm -rf {sandbox_parent}"
+    required_results: list[dict[str, Any]] = []
+    missing_required: list[str] = []
+    try:
+        shutil.copytree(project_root, clean_root, ignore=release_gate_clean_machine_ignore_factory(project_root, exclusions))
+        file_list = clean_machine_file_list(clean_root)
+        required_results, missing_required = clean_machine_required_path_results(clean_root)
+        if missing_required:
+            status = "failed"
+            classification = "clean_machine_required_files_missing"
+            message = "clean-machine sandbox is missing required files: " + ", ".join(missing_required)
+        else:
+            for command in release_gate_clean_machine_commands(profile):
+                item = run_clean_machine_command(clean_root=clean_root, command=command, timeout_seconds=timeout_seconds)
+                commands.append(item)
+                if item["status"] != "ok":
+                    status = item["status"]
+                    classification = item["classification"]
+                    message = item["message"]
+                    break
+    except Exception as exc:
+        status = "failed"
+        classification = "clean_machine_sandbox_error"
+        message = f"clean-machine sandbox raised {exc.__class__.__name__}: {exc}"
+    finally:
+        kept = retention == "keep-always" or (retention == "keep-on-failure" and status != "ok")
+        if not kept:
+            shutil.rmtree(sandbox_parent, ignore_errors=True)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    payload = {
+        "status": status,
+        "classification": classification,
+        "message": message,
+        "profile": profile,
+        "retention": retention,
+        "sandboxPath": str(sandbox_parent),
+        "projectCopy": str(clean_root),
+        "kept": kept,
+        "cleanupCommand": cleanup_command if kept else None,
+        "durationMs": duration_ms,
+        "requiredFiles": required_results,
+        "missingRequiredFiles": missing_required,
+        "commands": [
+            {key: value for key, value in item.items() if key not in {"stdout", "stderr"}}
+            for item in commands
+        ],
+        "bundleFiles": {
+            "report": rel(clean_logs_dir / "report.md", project_root),
+            "json": rel(clean_logs_dir / "clean-machine.json", project_root),
+            "fileList": rel(clean_logs_dir / "file-list.txt", project_root),
+            "exclusions": rel(clean_logs_dir / "exclusions.txt", project_root),
+            "commandsLog": rel(clean_logs_dir / "commands.log", project_root),
+        },
+    }
+    write_clean_machine_bundle(
+        project_root=project_root,
+        clean_logs_dir=clean_logs_dir,
+        payload=payload,
+        commands=commands,
+        file_list=file_list,
+        exclusions=exclusions,
+    )
+    log_path.write_text(
+        "\n".join(
+            [
+                f"# {spec.name}",
+                f"internal_check: {spec.internal_check}",
+                f"cwd: {spec.cwd or '.'}",
+                f"duration_ms: {duration_ms}",
+                f"status: {status}",
+                f"classification: {classification}",
+                f"profile: {profile}",
+                f"sandbox: {sandbox_parent}",
+                f"kept: {kept}",
+                f"cleanup: {cleanup_command if kept else '<deleted>'}",
+                f"report: {rel(clean_logs_dir / 'report.md', project_root)}",
+                f"json: {rel(clean_logs_dir / 'clean-machine.json', project_root)}",
+                f"commands_log: {rel(clean_logs_dir / 'commands.log', project_root)}",
+                "",
+                message,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    details = dict(spec.details)
+    details.update(payload)
+    return GateResult(
+        name=spec.name,
+        status=status,
+        classification=classification,
+        message=message,
+        cwd=spec.cwd or ".",
+        command=spec.command,
+        required=spec.required,
+        duration_ms=duration_ms,
+        log_path=rel(log_path, project_root),
+        details=details,
+    )
 
 
 def release_gate_run_clean_machine_quickstart(project_root: Path, timeout_seconds: int) -> tuple[str, str, str, list[str], dict[str, Any]]:
-    evidence: list[str] = ["# clean-machine quickstart gate"]
-    details: dict[str, Any] = {"commands": []}
-    with tempfile.TemporaryDirectory(prefix="devbootstrap-clean-machine-") as tmp:
-        tmp_path = Path(tmp)
-        clean_root = tmp_path / project_root.name
-        shutil.copytree(project_root, clean_root, ignore=release_gate_clean_machine_ignore)
-        commands = [
-            [sys.executable, "tools/devbootstrap.py", "self-check", "--no-write-report"],
-            [sys.executable, "tools/devbootstrap.py", "diagnose", "--no-write-report"],
-            [sys.executable, "tools/devbootstrap.py", "plan", "--no-write-report"],
-            [sys.executable, "tools/devbootstrap.py", "prepare-env", "--no-write-report"],
-            [sys.executable, "tools/devbootstrap.py", "up", "--dry-run", "--smoke-level", "quick"],
-        ]
-        env_extra = {"PYTHONDONTWRITEBYTECODE": "1"}
-        for command in commands:
-            command_text = release_gate_command_display(command)
-            evidence.append(f"$ {command_text}")
-            started = time.monotonic()
-            probe = run_process_probe("clean_machine_quickstart", command, cwd=clean_root, timeout=timeout_seconds, env_extra=env_extra)
-            duration_ms = int((time.monotonic() - started) * 1000)
-            stdout = release_gate_sanitize_output(clean_root, probe.stdout or "")
-            stderr = release_gate_sanitize_output(clean_root, probe.stderr or probe.error or "")
-            status, classification, message = classify_gate_output("clean_machine_quickstart", stdout, stderr, probe.error, probe.returncode)
-            if not probe.available:
-                status, classification, message = "infra_failed", "missing_prerequisite", f"required command is unavailable: {command[0]}"
-            details["commands"].append(
-                {
-                    "command": command,
-                    "returncode": probe.returncode,
-                    "durationMs": duration_ms,
-                    "status": status,
-                    "classification": classification,
-                }
-            )
-            evidence.extend(
-                [
-                    f"exit: {probe.returncode if probe.returncode is not None else probe.error or '<none>'}",
-                    f"duration_ms: {duration_ms}",
-                    f"status: {status}",
-                    f"classification: {classification}",
-                    "stdout:",
-                    stdout or "<empty>",
-                    "stderr:",
-                    stderr or "<empty>",
-                    "",
-                ]
-            )
-            if status not in {"ok"}:
-                return status, classification, message, evidence, details
-    return "ok", "ok", "clean-machine safe quickstart sequence completed", evidence, details
+    # Compatibility shim for older internal check names. The full implementation is
+    # run_release_gate_clean_machine_sandbox_step(), which can write the structured
+    # logs/clean-machine bundle.
+    evidence = ["# clean-machine quickstart gate", "superseded by clean_machine_sandbox"]
+    details = {"profile": DEFAULT_CLEAN_MACHINE_PROFILE}
+    return "ok", "ok", "clean-machine quickstart compatibility shim", evidence, details
 
 
 def run_release_gate_internal_check(project_root: Path, spec: GateSpec, timeout_seconds: int) -> tuple[str, str, str, list[str], dict[str, Any]]:
@@ -6045,6 +6343,14 @@ def run_release_gate_internal_step(
     spec: GateSpec,
     timeout_seconds: int,
 ) -> GateResult:
+    if spec.internal_check == "clean_machine_sandbox":
+        return run_release_gate_clean_machine_sandbox_step(
+            project_root=project_root,
+            logs_dir=logs_dir,
+            index=index,
+            spec=spec,
+            timeout_seconds=timeout_seconds,
+        )
     log_path = release_gate_log_path(logs_dir, index, spec.name)
     started = time.monotonic()
     try:
@@ -6096,6 +6402,8 @@ def build_release_gate_specs(
     include_real_backend_browser: bool = False,
     real_backend_browser_spec: str = "e2e/smoke/real-backend.smoke.spec.ts",
     include_clean_machine: bool = False,
+    clean_machine_profile: str = DEFAULT_CLEAN_MACHINE_PROFILE,
+    clean_machine_retention: str = DEFAULT_CLEAN_MACHINE_RETENTION,
     dry_run: bool = False,
     managed_test_db_url: str | None = None,
     managed_test_db_requested: bool = False,
@@ -6503,28 +6811,34 @@ def build_release_gate_specs(
         ]
     )
 
+    normalized_clean_machine_profile = normalize_clean_machine_profile(clean_machine_profile)
     if include_clean_machine:
         specs.append(
             GateSpec(
-                name="clean_machine_quickstart",
+                name="clean_machine_sandbox",
                 cwd=".",
                 command=[],
-                description="Run an optional clean-machine safe quickstart sequence in a temporary project copy.",
-                timeout_seconds=900,
-                internal_check="clean_machine_quickstart",
+                description="Run a clean-machine sandbox copy with generated/local state excluded and a profile-specific quickstart path.",
+                timeout_seconds=1800 if normalized_clean_machine_profile == "runtime" else 1200 if normalized_clean_machine_profile == "deps" else 900,
+                internal_check="clean_machine_sandbox",
+                details={
+                    "cleanMachineProfile": normalized_clean_machine_profile,
+                    "cleanMachineRetention": clean_machine_retention,
+                },
             )
         )
     else:
         specs.append(
             GateSpec(
-                name="clean_machine_quickstart",
+                name="clean_machine_sandbox",
                 cwd=".",
                 command=[],
-                description="Optional clean-machine quickstart gate.",
+                description="Optional clean-machine sandbox gate.",
                 required=False,
                 skip_status="skipped_optional",
                 skip_classification="clean_machine_optional_not_requested",
-                skip_reason="Clean-machine quickstart is optional; pass --include-clean-machine to run it in a temporary project copy.",
+                skip_reason="Clean-machine sandbox is optional; pass --include-clean-machine to run it in a temporary project copy.",
+                details={"cleanMachineProfile": normalized_clean_machine_profile},
             )
         )
     return specs
@@ -6978,6 +7292,8 @@ def command_release_gates(args: argparse.Namespace) -> int:
         include_real_backend_browser=args.include_real_backend_browser,
         real_backend_browser_spec=args.real_backend_browser_spec,
         include_clean_machine=args.include_clean_machine,
+        clean_machine_profile=args.clean_machine_profile,
+        clean_machine_retention=args.clean_machine_retention,
         dry_run=args.dry_run,
         managed_test_db_url=managed_test_db_url,
         managed_test_db_requested=args.managed_test_db,
@@ -6987,6 +7303,10 @@ def command_release_gates(args: argparse.Namespace) -> int:
         managed_frontend_host=managed_runtime_state.frontend_host if managed_runtime_state else None,
         managed_frontend_port=managed_runtime_state.frontend_port if managed_runtime_state else None,
     )
+
+    for spec in specs:
+        if spec.internal_check == "clean_machine_sandbox":
+            spec.details.setdefault("runId", run_id_value)
 
     managed_backend: ReleaseGatesManagedRuntimeProcess | None = None
     managed_frontend: ReleaseGatesManagedRuntimeProcess | None = None
@@ -8037,6 +8357,18 @@ def case_self_check_frontend_prepare_modes() -> str:
     return "frontend dependency preparation modes checked"
 
 
+def case_self_check_clean_machine_profiles() -> str:
+    dry = release_gate_clean_machine_commands("dry")
+    deps = release_gate_clean_machine_commands("deps")
+    runtime = release_gate_clean_machine_commands("runtime")
+    assert any(command[:3] == [sys.executable, "tools/devbootstrap.py", "up"] and "--dry-run" in command for command in dry)
+    assert not any(command[:3] == ["cargo", "test", "--no-run"] for command in dry)
+    assert any(command[:3] == ["cargo", "test", "--no-run"] for command in deps)
+    assert any("release-gates" in command and "--managed-runtime" in command for command in runtime)
+    assert normalize_clean_machine_profile("clean-machine-dry") == "dry"
+    return "clean-machine sandbox profiles and command plan checked"
+
+
 def case_self_check_release_gates_targeted_next_actions() -> str:
     result = ReleaseGatesResult(
         generated_at="2026-05-24T00:00:00+00:00",
@@ -8127,6 +8459,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "managed_runtime_specs", case_self_check_managed_runtime_specs)
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
     self_check_case(result, "frontend_prepare_modes", case_self_check_frontend_prepare_modes)
+    self_check_case(result, "clean_machine_profiles", case_self_check_clean_machine_profiles)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
     if result.failures:
@@ -8278,6 +8611,8 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--skip-install", action="store_true", help="Skip frontend dependency installation/preparation.")
     up.add_argument("--skip-cargo-check", action="store_true", help="Skip cargo metadata/check before backend start.")
     up.add_argument("--skip-db-start", action="store_true", help="Skip compose-assisted PostgreSQL start.")
+    up.add_argument("--skip-backend-start", action="store_true", help="Skip backend process start; useful for clean-machine dry planning.")
+    up.add_argument("--skip-frontend-start", action="store_true", help="Skip frontend process start; useful for clean-machine dry planning.")
     up.add_argument("--smoke-level", choices=["quick", "standard", "full", "none"], default="quick", help="Smoke level after startup. Phase 7 implements quick, standard and full smoke gates.")
     up.add_argument("--yes", action="store_true", help="Allow non-destructive automatic steps; this never permits DB reset or killing foreign processes.")
     up.add_argument("--step-timeout-seconds", type=int, default=TIMEOUT_POLICY["up_step"], help="Timeout for short diagnose/plan/prepare-env steps.")
@@ -8316,7 +8651,9 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--install-playwright-browsers", action="store_true", help="Run npx playwright install chromium when browser binaries are missing before browser smoke.")
     release_gates.add_argument("--include-real-backend-browser", action="store_true", help="Run the dedicated write-capable real-backend Playwright path when its spec and prerequisites exist.")
     release_gates.add_argument("--real-backend-browser-spec", default="e2e/smoke/real-backend.smoke.spec.ts", help="Frontend-relative Playwright spec path for the real-backend browser gate.")
-    release_gates.add_argument("--include-clean-machine", action="store_true", help="Run the optional clean-machine quickstart gate in a temporary project copy.")
+    release_gates.add_argument("--include-clean-machine", action="store_true", help="Run the optional clean-machine sandbox gate in a temporary project copy.")
+    release_gates.add_argument("--clean-machine-profile", choices=CLEAN_MACHINE_PROFILES, default=DEFAULT_CLEAN_MACHINE_PROFILE, help="Clean-machine sandbox strictness: dry, deps or runtime. The clean-machine-* aliases are accepted too.")
+    release_gates.add_argument("--clean-machine-retention", choices=CLEAN_MACHINE_RETENTION_POLICIES, default=DEFAULT_CLEAN_MACHINE_RETENTION, help="Whether to delete or keep the clean-machine sandbox after the gate.")
     release_gates.add_argument("--json", action="store_true", help="Also print machine-readable JSON to stdout.")
     release_gates.set_defaults(func=command_release_gates)
 

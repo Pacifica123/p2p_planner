@@ -112,7 +112,38 @@ python tools/devbootstrap.py release-gates \
   --prepare-deps \
   --install-playwright-browsers \
   --include-real-backend-browser \
-  --include-clean-machine
+  --include-clean-machine \
+  --clean-machine-profile=dry
+```
+
+## Clean-machine sandbox gate
+
+`--include-clean-machine` now runs a structured sandbox gate instead of a one-off quickstart log. Devbootstrap copies the current project to a temporary directory like `/tmp/devbootstrap-clean-machine-<run-id>-*/kanban`, excluding generated or local state: `.git`, `.dev-bootstrap`, `.venv`, `node_modules`, `target`, `dist`, `build`, `coverage`, `__pycache__`, `.pytest_cache`, local env files, bytecode and large release payloads. The copy keeps committed example files such as `backend/.env.example` and `frontend/.env.example`, then checks required startup files before running commands inside the sandbox.
+
+Profiles:
+
+| Profile | What it does | Cost |
+|---|---|---|
+| `dry` / `clean-machine-dry` | Required files, `self-check`, `diagnose`, `plan`, safe `prepare-env`, and `up --dry-run` with heavy steps skipped. | Low |
+| `deps` / `clean-machine-deps` | Everything from `dry`, plus `prepare-frontend --install-mode=stale` and backend `cargo test --no-run` from the sandbox. | Medium |
+| `runtime` / `clean-machine-runtime` | Everything from `deps`, plus a nested managed `release-gates --managed-test-db --managed-runtime --prepare-deps` run inside the sandbox. | High |
+
+Retention defaults to `keep-on-failure` so a failed sandbox can be inspected and a successful sandbox is deleted. Use `--clean-machine-retention=delete-always` for CI-like cleanup or `--clean-machine-retention=keep-always` when you intentionally want to inspect the copied project. When the sandbox is kept, the report prints the cleanup command.
+
+The main release-gates bundle includes:
+
+```text
+logs/clean-machine/report.md
+logs/clean-machine/clean-machine.json
+logs/clean-machine/file-list.txt
+logs/clean-machine/exclusions.txt
+logs/clean-machine/commands.log
+```
+
+Example cheap release-review run:
+
+```bash
+python tools/devbootstrap.py release-gates --include-clean-machine --clean-machine-profile=dry
 ```
 
 `--prepare-deps` is the managed dependency preparation umbrella. Bare `--prepare-deps` means `stale` / `missing-or-stale`: release-gates first runs `prepare-frontend --install-mode=stale --no-write-report`, then a backend `cargo test --no-run` warmup, and only after that plans frontend build/test/browser gates using the refreshed marker. The compatibility flag `--prepare-frontend` maps to the same stale mode.
