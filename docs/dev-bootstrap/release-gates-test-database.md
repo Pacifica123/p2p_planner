@@ -5,13 +5,19 @@
 
 ## Managed ephemeral database
 
-The recommended one-command path is now:
+The recommended one-command DB path is:
 
 ```bash
 python tools/devbootstrap.py release-gates --managed-test-db
 ```
 
-With this flag, `release-gates` derives a PostgreSQL maintenance connection from `DATABASE__URL` / `DATABASE_URL`, creates an isolated database named like `p2pkanban_rg_<toolVersion>_<timestamp>_<id>`, and overrides `DATABASE__URL`, `DATABASE_URL` and `TEST_DATABASE_URL` for DB-writing gates. The Python smoke and opt-in real-backend browser gate are run only after devbootstrap starts its own backend process against that managed DB; an already occupied backend port is treated as unsafe and is not reused.
+`--managed-test-db` automatically uses the same isolated runtime for write-capable gates. You can also pass `--managed-runtime` explicitly, especially when using an external `TEST_DATABASE_URL`:
+
+```bash
+python tools/devbootstrap.py release-gates --managed-test-db --managed-runtime
+```
+
+With `--managed-test-db`, `release-gates` derives a PostgreSQL maintenance connection from `DATABASE__URL` / `DATABASE_URL`, creates an isolated database named like `p2pkanban_rg_<toolVersion>_<timestamp>_<id>`, overrides `DATABASE__URL`, `DATABASE_URL` and `TEST_DATABASE_URL` for DB-writing gates, and routes write-capable smoke through an isolated managed runtime. With explicit `--managed-runtime`, Python smoke and browser gates are run only after devbootstrap starts its own backend/frontend processes from the current workspace on dynamic ports; occupied selected ports are treated as unsafe and are not reused.
 
 Retention is controlled by one compact policy:
 
@@ -30,6 +36,26 @@ python tools/devbootstrap.py release-gates --managed-test-db --start-db-if-neede
 ```
 
 For failed runs where the DB is retained, `--dump-test-db-on-failure` attempts a `pg_dump --format=custom` into the run directory when `pg_dump` is available. Reports and bundles store masked database URLs only.
+
+## Managed isolated runtime
+
+`--managed-runtime` makes release-gates stop trusting whatever happens to be listening on the legacy `18080` / `5173` ports. It chooses free loopback ports, starts backend with `APP__HOST`, `APP__PORT` and the selected test database env, starts Vite with `VITE_API_BASE_URL` pointing at that managed backend, then passes the same URLs into Python smoke and Playwright.
+
+Runtime ownership is explicit: devbootstrap stores only its own PID/command/cwd/log paths in the release-gates bundle and stops only those processes during teardown. It never kills a process merely because it occupies a port.
+
+Managed runtime bundle files:
+
+```text
+logs/runtime-backend.log or logs/*_managed_backend_process.log
+logs/runtime-frontend.log or logs/*_managed_frontend_process.log
+logs/runtime-state.json
+logs/runtime-env-diff.md
+logs/managed-urls.env
+```
+
+`runtime-state.json` records selected ports, managed URLs, masked database target, PIDs, process logs and final runtime status. `runtime-env-diff.md` lists only the env overrides added by devbootstrap and masks DB/secrets.
+
+`--managed-runtime` needs a safe DB target for the managed backend. The preferred source is `--managed-test-db`; alternatively set `TEST_DATABASE_URL`. `--allow-dev-db-write` can be used only when writing to the configured dev DB is intentional.
 
 ## Recommended local database
 
@@ -82,6 +108,7 @@ A fuller release review can then run:
 ```bash
 python tools/devbootstrap.py release-gates \
   --managed-test-db \
+  --managed-runtime \
   --prepare-deps \
   --install-playwright-browsers \
   --include-real-backend-browser \

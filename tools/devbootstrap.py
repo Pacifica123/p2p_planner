@@ -4449,9 +4449,43 @@ class ManagedTestDatabaseState:
 
 
 @dataclass
-class ReleaseGatesManagedBackend:
+class ReleaseGatesManagedRuntimeProcess:
+    name: str
     process: subprocess.Popen[Any]
     log_path: Path
+    command: list[str]
+    cwd: Path
+    host: str
+    port: int
+    url: str
+
+
+@dataclass
+class ManagedRuntimeState:
+    enabled: bool
+    run_id: str
+    status: str = "disabled"
+    classification: str = "disabled"
+    message: str = "managed runtime is disabled"
+    backend_host: str = "127.0.0.1"
+    backend_port: int | None = None
+    frontend_host: str = "127.0.0.1"
+    frontend_port: int | None = None
+    backend_api_base_url: str | None = None
+    backend_health_url: str | None = None
+    frontend_url: str | None = None
+    database_source: str | None = None
+    masked_database_url: str | None = None
+    started_at: str | None = None
+    stopped_at: str | None = None
+    backend_pid: int | None = None
+    frontend_pid: int | None = None
+    runtime_state_path: str | None = None
+    env_diff_path: str | None = None
+    managed_urls_path: str | None = None
+    backend_log_path: str | None = None
+    frontend_log_path: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -4466,6 +4500,7 @@ class ReleaseGatesResult:
     report_dir: str | None = None
     archive_path: str | None = None
     managed_test_db: ManagedTestDatabaseState | None = None
+    managed_runtime: ManagedRuntimeState | None = None
     overall_status: str = "unknown"
     classification: str = "unknown"
     gates: list[GateResult] = field(default_factory=list)
@@ -4906,24 +4941,220 @@ def release_gates_managed_db_prepare_result(project_root: Path, logs_dir: Path, 
     )
 
 
+
+def managed_runtime_public_payload(state: ManagedRuntimeState) -> dict[str, Any]:
+    payload = as_jsonable(state)
+    # Managed runtime never exposes raw database URLs. Only the masked copy is stored.
+    if isinstance(payload.get("details"), dict):
+        details = payload["details"]
+        for key, value in list(details.items()):
+            if isinstance(value, str) and value.startswith(("postgres://", "postgresql://")):
+                details[key] = mask_database_url(value)
+    return payload
+
+
+def find_available_tcp_port(host: str = "127.0.0.1") -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+
+
+def build_managed_runtime_state(project_root: Path, run_dir: Path, run_id_value: str) -> ManagedRuntimeState:
+    backend_host = "127.0.0.1"
+    frontend_host = "127.0.0.1"
+    backend_port = find_available_tcp_port(backend_host)
+    frontend_port = find_available_tcp_port(frontend_host)
+    if frontend_port == backend_port:
+        frontend_port = find_available_tcp_port(frontend_host)
+    state = ManagedRuntimeState(
+        enabled=True,
+        run_id=run_id_value,
+        status="planned",
+        classification="managed_runtime_planned",
+        message="managed backend/frontend runtime is planned",
+        backend_host=backend_host,
+        backend_port=backend_port,
+        frontend_host=frontend_host,
+        frontend_port=frontend_port,
+        backend_api_base_url=f"http://{backend_host}:{backend_port}/api/v1",
+        backend_health_url=f"http://{backend_host}:{backend_port}/api/v1/health",
+        frontend_url=f"http://{frontend_host}:{frontend_port}/",
+        runtime_state_path=rel(run_dir / "logs" / "runtime-state.json", project_root),
+        env_diff_path=rel(run_dir / "logs" / "runtime-env-diff.md", project_root),
+        managed_urls_path=rel(run_dir / "logs" / "managed-urls.env", project_root),
+    )
+    return state
+
+
+def release_gate_managed_runtime_database_url(
+    project_root: Path,
+    *,
+    managed_test_db_url: str | None,
+    allow_dev_db_write: bool,
+) -> tuple[str | None, str]:
+    if managed_test_db_url:
+        return managed_test_db_url, "managed ephemeral test database"
+    test_db_url, test_db_source = release_gate_explicit_test_database_url(project_root)
+    if test_db_url:
+        return test_db_url, test_db_source or "TEST_DATABASE_URL"
+    if allow_dev_db_write:
+        source_url, source = release_gate_database_url_source(project_root)
+        if source_url:
+            return source_url, source or "configured backend database"
+    return None, "managed runtime needs --managed-test-db, TEST_DATABASE_URL, or explicit --allow-dev-db-write"
+
+
+def release_gate_managed_browser_env(state: ManagedRuntimeState) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if state.backend_api_base_url:
+        env["VITE_API_BASE_URL"] = state.backend_api_base_url.rstrip("/")
+    if state.frontend_url:
+        env["PLAYWRIGHT_BASE_URL"] = state.frontend_url.rstrip("/")
+        env["PLAYWRIGHT_WEB_SERVER_URL"] = state.frontend_url.rstrip("/")
+    if state.frontend_host:
+        env["PLAYWRIGHT_FRONTEND_HOST"] = state.frontend_host
+    if state.frontend_port:
+        env["PLAYWRIGHT_FRONTEND_PORT"] = str(state.frontend_port)
+    return env
+
+
+def write_release_gates_runtime_files(
+    project_root: Path,
+    logs_dir: Path,
+    state: ManagedRuntimeState,
+    *,
+    backend_env_diff: dict[str, str] | None = None,
+    frontend_env_diff: dict[str, str] | None = None,
+) -> None:
+    state.runtime_state_path = rel(logs_dir / "runtime-state.json", project_root)
+    state.env_diff_path = rel(logs_dir / "runtime-env-diff.md", project_root)
+    state.managed_urls_path = rel(logs_dir / "managed-urls.env", project_root)
+    write_json(logs_dir / "runtime-state.json", managed_runtime_public_payload(state))
+
+    url_lines = [
+        f"MANAGED_BACKEND_API_BASE_URL={state.backend_api_base_url or ''}",
+        f"MANAGED_BACKEND_HEALTH_URL={state.backend_health_url or ''}",
+        f"MANAGED_FRONTEND_URL={state.frontend_url or ''}",
+    ]
+    (logs_dir / "managed-urls.env").write_text("\n".join(url_lines) + "\n", encoding="utf-8")
+
+    lines = ["# Managed runtime environment diff", ""]
+    for title, values in [("Backend", backend_env_diff or {}), ("Frontend", frontend_env_diff or {})]:
+        lines.append(f"## {title}")
+        lines.append("")
+        if not values:
+            lines.append("- <none>")
+        else:
+            for key in sorted(values):
+                value = values[key]
+                if is_secret_key(key) or key in {"DATABASE__URL", "DATABASE_URL", "TEST_DATABASE_URL"}:
+                    value = mask_value(key, value)
+                    if key in {"DATABASE__URL", "DATABASE_URL", "TEST_DATABASE_URL"}:
+                        value = mask_database_url(values[key])
+                lines.append(f"- `{key}` = `{value}`")
+        lines.append("")
+    (logs_dir / "runtime-env-diff.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def release_gates_managed_runtime_plan_result(project_root: Path, logs_dir: Path, index: int, state: ManagedRuntimeState) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, "managed_runtime_plan")
+    state.status = "planned"
+    state.classification = "dry_run"
+    state.message = "would start isolated backend/frontend runtime on dynamic ports"
+    write_release_gates_runtime_files(project_root, logs_dir, state)
+    log_path.write_text(
+        "\n".join(
+            [
+                "# managed_runtime_plan",
+                "status: planned",
+                "classification: dry_run",
+                f"backend_api_base_url: {state.backend_api_base_url}",
+                f"frontend_url: {state.frontend_url}",
+                f"runtime_state: {state.runtime_state_path}",
+                "",
+                json.dumps(managed_runtime_public_payload(state), ensure_ascii=False, indent=2),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return GateResult(
+        name="managed_runtime_plan",
+        status="planned",
+        classification="dry_run",
+        message=state.message,
+        cwd=".",
+        command=[sys.executable, "tools/devbootstrap.py", "release-gates", "--managed-runtime"],
+        log_path=rel(log_path, project_root),
+        details=managed_runtime_public_payload(state),
+    )
+
+
+def release_gates_managed_runtime_db_unavailable_result(
+    project_root: Path,
+    logs_dir: Path,
+    index: int,
+    state: ManagedRuntimeState,
+    reason: str,
+) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, "managed_runtime_db")
+    state.status = "infra_failed"
+    state.classification = "managed_runtime_db_unavailable"
+    state.message = reason
+    write_release_gates_runtime_files(project_root, logs_dir, state)
+    log_path.write_text(
+        "\n".join(
+            [
+                "# managed_runtime_db",
+                "status: infra_failed",
+                "classification: managed_runtime_db_unavailable",
+                f"reason: {reason}",
+                f"runtime_state: {state.runtime_state_path}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return GateResult(
+        name="managed_runtime_db",
+        status="infra_failed",
+        classification="managed_runtime_db_unavailable",
+        message=reason,
+        cwd=".",
+        command=[],
+        required=True,
+        log_path=rel(log_path, project_root),
+        details=managed_runtime_public_payload(state),
+    )
+
 def start_release_gates_managed_backend(
     project_root: Path,
     logs_dir: Path,
     index: int,
+    state: ManagedRuntimeState,
     database_url: str,
     timeout_seconds: int,
-) -> tuple[GateResult, ReleaseGatesManagedBackend | None]:
+) -> tuple[GateResult, ReleaseGatesManagedRuntimeProcess | None]:
     log_path = release_gate_log_path(logs_dir, index, "managed_backend_start")
-    host, port, _ = parse_backend_host_port(project_root)
+    host = state.backend_host
+    port = state.backend_port or DEFAULT_PORTS["backend"]
     health_before = probe_backend_health(host, port, timeout=0.8)
-    port_probe = probe_port("backend", port, host=http_probe_host(host), timeout=0.4)
+    port_probe = probe_port("managed_backend", port, host=http_probe_host(host), timeout=0.4)
     details: dict[str, Any] = {
         "maskedDatabaseUrl": mask_database_url(database_url),
+        "host": host,
+        "port": port,
+        "apiBaseUrl": state.backend_api_base_url,
         "healthBefore": as_jsonable(health_before),
         "portBefore": as_jsonable(port_probe),
     }
     if backend_health_ready(health_before) or port_probe.open:
-        message = "Backend port is already occupied; managed release-gates will not reuse or kill a foreign/live backend."
+        message = "Selected managed backend port is already occupied; release-gates will not reuse or kill a foreign/live backend."
+        state.status = "infra_failed"
+        state.classification = "managed_backend_port_occupied"
+        state.message = message
+        write_release_gates_runtime_files(project_root, logs_dir, state)
         log_path.write_text("\n".join(["# managed_backend_start", "status: infra_failed", "classification: managed_backend_port_occupied", message, ""]), encoding="utf-8")
         return GateResult(
             name="managed_backend_start",
@@ -4937,6 +5168,10 @@ def start_release_gates_managed_backend(
         ), None
     if shutil.which("cargo") is None:
         message = "cargo is not available on PATH; managed backend cannot be started."
+        state.status = "infra_failed"
+        state.classification = "missing_cargo"
+        state.message = message
+        write_release_gates_runtime_files(project_root, logs_dir, state)
         log_path.write_text("\n".join(["# managed_backend_start", "status: infra_failed", "classification: missing_cargo", message, ""]), encoding="utf-8")
         return GateResult(
             name="managed_backend_start",
@@ -4951,23 +5186,33 @@ def start_release_gates_managed_backend(
 
     backend_dir = project_root / "backend"
     backend_log_path = logs_dir / f"{index:02d}_managed_backend_process.log"
+    command = ["cargo", "run"]
+    backend_env_diff = release_gate_managed_db_env(database_url)
+    backend_env_diff.update({"APP__HOST": host, "APP__PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1"})
+    frontend_env_diff = release_gate_managed_browser_env(state)
+    state.backend_log_path = rel(backend_log_path, project_root)
+    state.masked_database_url = mask_database_url(database_url)
+    write_release_gates_runtime_files(project_root, logs_dir, state, backend_env_diff=backend_env_diff, frontend_env_diff=frontend_env_diff)
+
     log_handle = backend_log_path.open("ab", buffering=0)
     header = "\n".join(
         [
             f"== managed release-gates backend {iso_now()} ==",
-            "$ cargo run",
+            f"$ {command_as_text(command)}",
             f"cwd: {rel(backend_dir, project_root)}",
+            f"APP__HOST: {host}",
+            f"APP__PORT: {port}",
             f"DATABASE__URL: {mask_database_url(database_url)}",
             "",
         ]
     ).encode("utf-8", errors="replace")
     log_handle.write(header)
     env = os.environ.copy()
-    env.update(release_gate_managed_db_env(database_url))
+    env.update(backend_env_diff)
     started = time.monotonic()
     try:
         process = subprocess.Popen(
-            ["cargo", "run"],
+            command,
             cwd=str(backend_dir),
             stdout=log_handle,
             stderr=subprocess.STDOUT,
@@ -4978,6 +5223,10 @@ def start_release_gates_managed_backend(
     except OSError as exc:
         log_handle.close()
         message = f"Could not start managed backend: {exc}"
+        state.status = "infra_failed"
+        state.classification = "backend_start_failed"
+        state.message = message
+        write_release_gates_runtime_files(project_root, logs_dir, state, backend_env_diff=backend_env_diff, frontend_env_diff=frontend_env_diff)
         log_path.write_text("\n".join(["# managed_backend_start", "status: infra_failed", "classification: backend_start_failed", message, ""]), encoding="utf-8")
         return GateResult(
             name="managed_backend_start",
@@ -4985,7 +5234,7 @@ def start_release_gates_managed_backend(
             classification="backend_start_failed",
             message=message,
             cwd="backend",
-            command=["cargo", "run"],
+            command=command,
             log_path=rel(log_path, project_root),
             details=details,
         ), None
@@ -4995,26 +5244,44 @@ def start_release_gates_managed_backend(
         except Exception:
             pass
 
+    state.backend_pid = process.pid
+    state.started_at = state.started_at or iso_now()
     ready, probes, returncode = wait_for_backend_health(process, host, port, timeout_seconds=timeout_seconds)
     duration_ms = int((time.monotonic() - started) * 1000)
     details.update({"pid": process.pid, "healthAfter": as_jsonable(probes), "processReturncode": returncode, "processLog": rel(backend_log_path, project_root)})
     if ready:
-        message = "managed backend started against the managed test database"
+        message = "managed backend started against the selected test database on a dynamic port"
         status = "ok"
         classification = "managed_backend_started"
-        backend = ReleaseGatesManagedBackend(process=process, log_path=backend_log_path)
+        state.status = "backend_started"
+        state.classification = classification
+        state.message = message
+        runtime_process = ReleaseGatesManagedRuntimeProcess(
+            name="backend",
+            process=process,
+            log_path=backend_log_path,
+            command=command,
+            cwd=backend_dir,
+            host=host,
+            port=port,
+            url=state.backend_api_base_url or f"http://{host}:{port}/api/v1",
+        )
     else:
         log_tail = sanitize_backend_log(read_log_tail(backend_log_path), project_root)
         classification = classify_backend_failure(log_tail, "backend_health_timeout" if returncode is None else "backend_start_failed")
         message = "managed backend did not become healthy; see managed backend process log"
         status = "infra_failed" if classification in {"postgres_unavailable", "database_missing", "postgres_auth_failed", "backend_health_timeout", "missing_prerequisite"} else "failed"
-        backend = None
+        state.status = status
+        state.classification = classification
+        state.message = message
+        runtime_process = None
         if process.poll() is None:
             try:
                 send_signal_to_owned_process(process.pid, signal.SIGTERM)
                 wait_until_dead(process.pid, 5)
             except OSError:
                 pass
+    write_release_gates_runtime_files(project_root, logs_dir, state, backend_env_diff=backend_env_diff, frontend_env_diff=frontend_env_diff)
     log_path.write_text(
         "\n".join(
             [
@@ -5037,25 +5304,224 @@ def start_release_gates_managed_backend(
         classification=classification,
         message=message,
         cwd="backend",
-        command=["cargo", "run"],
+        command=command,
         returncode=returncode,
         duration_ms=duration_ms,
         log_path=rel(log_path, project_root),
         details=details,
-    ), backend
+    ), runtime_process
+
+def managed_frontend_http_ready(probe: HttpProbe | None) -> bool:
+    return bool(probe and probe.reachable and probe.status is not None and 200 <= probe.status < 300)
 
 
-def stop_release_gates_managed_backend(project_root: Path, logs_dir: Path, index: int, backend: ReleaseGatesManagedBackend) -> GateResult:
-    log_path = release_gate_log_path(logs_dir, index, "managed_backend_stop")
+def wait_for_managed_frontend_root(process: subprocess.Popen[Any], url: str, *, timeout_seconds: int) -> tuple[bool, HttpProbe | None, int | None]:
+    deadline = time.monotonic() + timeout_seconds
+    last_probe: HttpProbe | None = None
+    while time.monotonic() < deadline:
+        returncode = process.poll()
+        last_probe = probe_http("managed_frontend_root", url, timeout=1.0)
+        if managed_frontend_http_ready(last_probe):
+            return True, last_probe, returncode
+        if returncode is not None:
+            return False, last_probe, returncode
+        time.sleep(1.0)
+    return False, last_probe, process.poll()
+
+
+def start_release_gates_managed_frontend(
+    project_root: Path,
+    logs_dir: Path,
+    index: int,
+    state: ManagedRuntimeState,
+    timeout_seconds: int,
+) -> tuple[GateResult, ReleaseGatesManagedRuntimeProcess | None]:
+    log_path = release_gate_log_path(logs_dir, index, "managed_frontend_start")
+    host = state.frontend_host
+    port = state.frontend_port or DEFAULT_PORTS["frontend"]
+    frontend_url = state.frontend_url or f"http://{host}:{port}/"
+    root_before = probe_http("managed_frontend_root", frontend_url, timeout=0.8)
+    port_probe = probe_port("managed_frontend", port, host=http_probe_host(host), timeout=0.4)
+    details: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "frontendUrl": frontend_url,
+        "apiBaseUrl": state.backend_api_base_url,
+        "rootBefore": as_jsonable(root_before),
+        "portBefore": as_jsonable(port_probe),
+    }
+    if managed_frontend_http_ready(root_before) or port_probe.open:
+        message = "Selected managed frontend port is already occupied; release-gates will not reuse or kill a foreign/live frontend."
+        state.status = "infra_failed"
+        state.classification = "managed_frontend_port_occupied"
+        state.message = message
+        write_release_gates_runtime_files(project_root, logs_dir, state)
+        log_path.write_text("\n".join(["# managed_frontend_start", "status: infra_failed", "classification: managed_frontend_port_occupied", message, ""]), encoding="utf-8")
+        return GateResult(
+            name="managed_frontend_start",
+            status="infra_failed",
+            classification="managed_frontend_port_occupied",
+            message=message,
+            cwd="frontend",
+            command=["npm", "run", "dev"],
+            log_path=rel(log_path, project_root),
+            details=details,
+        ), None
+    if shutil.which("npm") is None:
+        message = "npm is not available on PATH; managed frontend cannot be started."
+        state.status = "infra_failed"
+        state.classification = "missing_npm"
+        state.message = message
+        write_release_gates_runtime_files(project_root, logs_dir, state)
+        log_path.write_text("\n".join(["# managed_frontend_start", "status: infra_failed", "classification: missing_npm", message, ""]), encoding="utf-8")
+        return GateResult(
+            name="managed_frontend_start",
+            status="infra_failed",
+            classification="missing_npm",
+            message=message,
+            cwd="frontend",
+            command=["npm", "run", "dev"],
+            log_path=rel(log_path, project_root),
+            details=details,
+        ), None
+
+    frontend_dir = project_root / "frontend"
+    frontend_log_path = logs_dir / f"{index:02d}_managed_frontend_process.log"
+    command = ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"]
+    backend_env_diff: dict[str, str] = {}
+    frontend_env_diff = release_gate_managed_browser_env(state)
+    frontend_env_diff["PYTHONDONTWRITEBYTECODE"] = "1"
+    state.frontend_log_path = rel(frontend_log_path, project_root)
+    write_release_gates_runtime_files(project_root, logs_dir, state, backend_env_diff=backend_env_diff, frontend_env_diff=frontend_env_diff)
+
+    log_handle = frontend_log_path.open("ab", buffering=0)
+    header = "\n".join(
+        [
+            f"== managed release-gates frontend {iso_now()} ==",
+            f"$ {command_as_text(command)}",
+            f"cwd: {rel(frontend_dir, project_root)}",
+            f"VITE_API_BASE_URL: {state.backend_api_base_url or '<none>'}",
+            f"frontend_url: {frontend_url}",
+            "",
+        ]
+    ).encode("utf-8", errors="replace")
+    log_handle.write(header)
+    env = os.environ.copy()
+    env.update(frontend_env_diff)
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(frontend_dir),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            **popen_process_group_kwargs(),
+        )
+    except OSError as exc:
+        log_handle.close()
+        message = f"Could not start managed frontend: {exc}"
+        state.status = "infra_failed"
+        state.classification = "frontend_start_failed"
+        state.message = message
+        write_release_gates_runtime_files(project_root, logs_dir, state, frontend_env_diff=frontend_env_diff)
+        log_path.write_text("\n".join(["# managed_frontend_start", "status: infra_failed", "classification: frontend_start_failed", message, ""]), encoding="utf-8")
+        return GateResult(
+            name="managed_frontend_start",
+            status="infra_failed",
+            classification="frontend_start_failed",
+            message=message,
+            cwd="frontend",
+            command=command,
+            log_path=rel(log_path, project_root),
+            details=details,
+        ), None
+    finally:
+        try:
+            log_handle.close()
+        except Exception:
+            pass
+
+    state.frontend_pid = process.pid
+    state.started_at = state.started_at or iso_now()
+    ready, probe, returncode = wait_for_managed_frontend_root(process, frontend_url, timeout_seconds=timeout_seconds)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    details.update({"pid": process.pid, "rootAfter": as_jsonable(probe), "processReturncode": returncode, "processLog": rel(frontend_log_path, project_root)})
+    if ready:
+        message = "managed frontend started on a dynamic port with managed backend API base URL"
+        status = "ok"
+        classification = "managed_frontend_started"
+        state.status = "runtime_started"
+        state.classification = classification
+        state.message = message
+        runtime_process = ReleaseGatesManagedRuntimeProcess(
+            name="frontend",
+            process=process,
+            log_path=frontend_log_path,
+            command=command,
+            cwd=frontend_dir,
+            host=host,
+            port=port,
+            url=frontend_url,
+        )
+    else:
+        log_tail = sanitize_frontend_log(read_log_tail(frontend_log_path), project_root)
+        classification = classify_frontend_failure(log_tail, "frontend_health_timeout" if returncode is None else "frontend_start_failed")
+        message = "managed frontend did not become healthy; see managed frontend process log"
+        status = "infra_failed" if classification in {"frontend_health_timeout", "frontend_dependency_missing", "frontend_port_conflict", "dependency_network_unavailable", "missing_prerequisite"} else "failed"
+        state.status = status
+        state.classification = classification
+        state.message = message
+        runtime_process = None
+        if process.poll() is None:
+            try:
+                send_signal_to_owned_process(process.pid, signal.SIGTERM)
+                wait_until_dead(process.pid, 5)
+            except OSError:
+                pass
+    write_release_gates_runtime_files(project_root, logs_dir, state, frontend_env_diff=frontend_env_diff)
+    log_path.write_text(
+        "\n".join(
+            [
+                "# managed_frontend_start",
+                f"status: {status}",
+                f"classification: {classification}",
+                f"duration_ms: {duration_ms}",
+                f"process_log: {rel(frontend_log_path, project_root)}",
+                f"message: {message}",
+                "",
+                json.dumps(details, ensure_ascii=False, indent=2),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return GateResult(
+        name="managed_frontend_start",
+        status=status,
+        classification=classification,
+        message=message,
+        cwd="frontend",
+        command=command,
+        returncode=returncode,
+        duration_ms=duration_ms,
+        log_path=rel(log_path, project_root),
+        details=details,
+    ), runtime_process
+
+
+def stop_release_gates_managed_process(project_root: Path, logs_dir: Path, index: int, runtime_process: ReleaseGatesManagedRuntimeProcess) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, f"managed_{runtime_process.name}_stop")
     started = time.monotonic()
     action = "stopped"
     error = None
-    if backend.process.poll() is None:
+    if runtime_process.process.poll() is None:
         try:
-            send_signal_to_owned_process(backend.process.pid, signal.SIGTERM)
-            if not wait_until_dead(backend.process.pid, TIMEOUT_POLICY["stop_grace"]):
-                send_signal_to_owned_process(backend.process.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
-                if wait_until_dead(backend.process.pid, 5):
+            send_signal_to_owned_process(runtime_process.process.pid, signal.SIGTERM)
+            if not wait_until_dead(runtime_process.process.pid, TIMEOUT_POLICY["stop_grace"]):
+                send_signal_to_owned_process(runtime_process.process.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+                if wait_until_dead(runtime_process.process.pid, 5):
                     action = "force_stopped"
                 else:
                     action = "failed"
@@ -5067,43 +5533,43 @@ def stop_release_gates_managed_backend(project_root: Path, logs_dir: Path, index
         action = "already_exited"
     duration_ms = int((time.monotonic() - started) * 1000)
     status = "ok" if action in {"stopped", "force_stopped", "already_exited"} else "infra_failed"
-    classification = "managed_backend_stopped" if status == "ok" else "managed_backend_stop_failed"
-    message = "managed backend stopped" if status == "ok" else "managed backend stop failed"
+    classification = f"managed_{runtime_process.name}_stopped" if status == "ok" else f"managed_{runtime_process.name}_stop_failed"
+    message = f"managed {runtime_process.name} stopped" if status == "ok" else f"managed {runtime_process.name} stop failed"
     lines = [
-        "# managed_backend_stop",
+        f"# managed_{runtime_process.name}_stop",
         f"status: {status}",
         f"classification: {classification}",
-        f"pid: {backend.process.pid}",
+        f"pid: {runtime_process.process.pid}",
         f"action: {action}",
         f"duration_ms: {duration_ms}",
-        f"process_log: {rel(backend.log_path, project_root)}",
+        f"process_log: {rel(runtime_process.log_path, project_root)}",
     ]
     if error:
         lines.append(f"error: {error}")
     lines.append("")
     log_path.write_text("\n".join(lines), encoding="utf-8")
     return GateResult(
-        name="managed_backend_stop",
+        name=f"managed_{runtime_process.name}_stop",
         status=status,
         classification=classification,
         message=message,
-        cwd="backend",
-        command=["SIGTERM", str(backend.process.pid)],
+        cwd=rel(runtime_process.cwd, project_root),
+        command=["SIGTERM", str(runtime_process.process.pid)],
         duration_ms=duration_ms,
         log_path=rel(log_path, project_root),
-        details={"pid": backend.process.pid, "action": action, "processLog": rel(backend.log_path, project_root), "error": error},
+        details={"pid": runtime_process.process.pid, "action": action, "processLog": rel(runtime_process.log_path, project_root), "error": error},
     )
 
 
-def release_gates_skip_for_managed_backend_unavailable(project_root: Path, logs_dir: Path, index: int, spec: GateSpec, reason: str) -> GateResult:
+def release_gates_skip_for_managed_runtime_unavailable(project_root: Path, logs_dir: Path, index: int, spec: GateSpec, reason: str) -> GateResult:
     log_path = release_gate_log_path(logs_dir, index, spec.name)
-    message = f"Skipped because managed backend is unavailable: {reason}"
+    message = f"Skipped because managed runtime is unavailable: {reason}"
     log_path.write_text(
         "\n".join(
             [
                 f"# {spec.name}",
                 "status: skipped_prerequisite",
-                "classification: managed_backend_unavailable",
+                "classification: managed_runtime_unavailable",
                 f"cwd: {spec.cwd or '.'}",
                 f"reason: {message}",
                 "",
@@ -5114,7 +5580,7 @@ def release_gates_skip_for_managed_backend_unavailable(project_root: Path, logs_
     return GateResult(
         name=spec.name,
         status="skipped_prerequisite",
-        classification="managed_backend_unavailable",
+        classification="managed_runtime_unavailable",
         message=message,
         cwd=spec.cwd or ".",
         command=spec.command,
@@ -5633,6 +6099,11 @@ def build_release_gate_specs(
     dry_run: bool = False,
     managed_test_db_url: str | None = None,
     managed_test_db_requested: bool = False,
+    managed_runtime_requested: bool = False,
+    managed_backend_api_base_url: str | None = None,
+    managed_frontend_url: str | None = None,
+    managed_frontend_host: str | None = None,
+    managed_frontend_port: int | None = None,
 ) -> list[GateSpec]:
     specs: list[GateSpec] = [
         GateSpec(
@@ -5702,6 +6173,8 @@ def build_release_gate_specs(
         smoke_allowed, smoke_reason = True, "managed ephemeral test database"
         smoke_env = release_gate_smoke_env(project_root)
         smoke_env.update(release_gate_managed_db_env(managed_test_db_url))
+        if managed_backend_api_base_url:
+            smoke_env["BASE_URL"] = managed_backend_api_base_url.rstrip("/")
     elif managed_test_db_requested:
         smoke_allowed = False
         smoke_reason = "--managed-test-db was requested, but managed test DB was not created; backend smoke cannot run safely."
@@ -5709,11 +6182,15 @@ def build_release_gate_specs(
     else:
         smoke_allowed, smoke_reason = release_gate_smoke_allowed(project_root, allow_dev_db_write)
         smoke_env = release_gate_smoke_env(project_root)
+        if managed_backend_api_base_url:
+            smoke_env["BASE_URL"] = managed_backend_api_base_url.rstrip("/")
     for smoke_name in ["backend_python_smoke_first", "backend_python_smoke_second"]:
         if smoke_allowed or dry_run:
-            details = {"smokePermission": smoke_reason, "managedTestDb": bool(managed_test_db_url)}
+            details = {"smokePermission": smoke_reason, "managedTestDb": bool(managed_test_db_url), "managedRuntime": managed_runtime_requested}
             if managed_test_db_url:
                 details["maskedDatabaseUrl"] = mask_database_url(managed_test_db_url)
+            if managed_backend_api_base_url:
+                details["baseUrl"] = managed_backend_api_base_url.rstrip("/")
             if dry_run and not smoke_allowed:
                 details["dryRunPrerequisiteBypassed"] = True
             specs.append(
@@ -5801,7 +6278,20 @@ def build_release_gate_specs(
         "chromiumExecutablePresent": chromium_present,
         "checkedBrowserCacheRoots": chromium_evidence,
         "frontendDependencies": frontend_deps_details,
+        "managedRuntime": managed_runtime_requested,
     }
+    browser_env: dict[str, str] = {}
+    if managed_backend_api_base_url:
+        browser_env["VITE_API_BASE_URL"] = managed_backend_api_base_url.rstrip("/")
+        browser_details["apiBaseUrl"] = managed_backend_api_base_url.rstrip("/")
+    if managed_frontend_url:
+        browser_env["PLAYWRIGHT_BASE_URL"] = managed_frontend_url.rstrip("/")
+        browser_env["PLAYWRIGHT_WEB_SERVER_URL"] = managed_frontend_url.rstrip("/")
+        browser_details["frontendUrl"] = managed_frontend_url.rstrip("/")
+    if managed_frontend_host:
+        browser_env["PLAYWRIGHT_FRONTEND_HOST"] = managed_frontend_host
+    if managed_frontend_port:
+        browser_env["PLAYWRIGHT_FRONTEND_PORT"] = str(managed_frontend_port)
 
     if not frontend_deps_ready and not dry_run:
         specs.append(
@@ -5822,6 +6312,7 @@ def build_release_gate_specs(
                 command=["npm", "run", "test:browser"],
                 description="Run Playwright browser smoke.",
                 timeout_seconds=600,
+                env_extra=browser_env,
                 details=browser_details,
             )
         )
@@ -5882,6 +6373,7 @@ def build_release_gate_specs(
                 command=["npm", "run", "test:browser"],
                 description="Run Playwright browser smoke after explicit browser install attempt.",
                 timeout_seconds=600,
+                env_extra=browser_env,
                 details=browser_details,
             )
         )
@@ -5906,6 +6398,7 @@ def build_release_gate_specs(
                 command=["npm", "run", "test:browser"],
                 description="Run Playwright browser smoke.",
                 timeout_seconds=600,
+                env_extra=browser_env,
                 details=browser_details,
             )
         )
@@ -5926,7 +6419,12 @@ def build_release_gate_specs(
         "requiresNoPageRouteMocks": True,
         "mockedBrowserSmokeDoesNotSatisfyThisGate": True,
         "managedTestDb": bool(managed_test_db_url),
+        "managedRuntime": managed_runtime_requested,
     }
+    if managed_backend_api_base_url:
+        real_backend_details["apiBaseUrl"] = managed_backend_api_base_url.rstrip("/")
+    if managed_frontend_url:
+        real_backend_details["frontendUrl"] = managed_frontend_url.rstrip("/")
     if managed_test_db_url:
         real_backend_details["maskedDatabaseUrl"] = mask_database_url(managed_test_db_url)
     if real_backend_spec_project_path.exists() and (include_real_backend_browser or dry_run) and (real_backend_allowed or dry_run):
@@ -5939,6 +6437,7 @@ def build_release_gate_specs(
                 command=["npm", "run", "test:browser:real-backend"],
                 description="Run the dedicated Playwright browser path against a live backend without page.route API mocks.",
                 timeout_seconds=900,
+                env_extra=browser_env,
                 details=real_backend_details,
             )
         )
@@ -6064,8 +6563,12 @@ def release_gates_next_action_for_code(code: str) -> str | None:
         "postgres_createdb_permission_denied": "Use a PostgreSQL role with CREATEDB privilege or start the project compose PostgreSQL and rerun `release-gates --managed-test-db --start-db-if-needed`.",
         "postgres_unavailable": "Start PostgreSQL first, or rerun with `--managed-test-db --start-db-if-needed` to allow devbootstrap to start the project compose PostgreSQL when the configured port is closed.",
         "managed_test_db_unavailable": "Inspect the `managed_test_db_prepare` gate log, fix PostgreSQL capability, then rerun `release-gates --managed-test-db`.",
-        "managed_backend_port_occupied": "Stop the already running backend or change APP__PORT; managed release-gates refuses to reuse a foreign/live backend for write-capable gates.",
+        "managed_runtime_db_unavailable": "Use `--managed-test-db`, set TEST_DATABASE_URL, or explicitly pass `--allow-dev-db-write` before running `release-gates --managed-runtime`.",
+        "managed_backend_port_occupied": "Rerun release-gates; managed runtime uses dynamic ports and refuses to reuse a foreign/live backend if the selected port races.",
+        "managed_frontend_port_occupied": "Rerun release-gates; managed runtime uses dynamic ports and refuses to reuse a foreign/live frontend if the selected port races.",
+        "managed_runtime_unavailable": "Inspect managed runtime start gates and `logs/runtime-state.json`, then rerun after fixing backend/frontend startup failures.",
         "managed_backend_unavailable": "Inspect `managed_backend_start` and the managed backend process log, then rerun after freeing the backend port and fixing startup failures.",
+        "managed_frontend_started": "Managed frontend started; continue with browser gates.",
         "smoke_db_write_guard": "For backend Python smoke, restart the live backend against the test DB and set `TEST_DATABASE_URL`; use `--allow-dev-db-write` only when the configured dev DB is disposable.",
         "real_backend_browser_opt_in_required": "After frontend deps and write-safe DB are ready, add `--include-real-backend-browser` to run the no-mock browser path.",
         "real_backend_browser_write_guard": "Set `TEST_DATABASE_URL` and restart backend against that DB before running `--include-real-backend-browser`, or consciously pass `--allow-dev-db-write`.",
@@ -6109,7 +6612,10 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
             "postgres_createdb_permission_denied",
             "postgres_unavailable",
             "managed_test_db_unavailable",
+            "managed_runtime_db_unavailable",
+            "managed_runtime_unavailable",
             "managed_backend_port_occupied",
+            "managed_frontend_port_occupied",
             "managed_backend_unavailable",
             "frontend_dependencies_missing",
             "browser_smoke_prerequisite",
@@ -6148,6 +6654,11 @@ def render_release_gates_summary(result: ReleaseGatesResult) -> str:
         lines.append(f"Managed DB URL: {result.managed_test_db.masked_database_url or '<none>'}")
         lines.append(f"Managed DB retention: {result.managed_test_db.retention}; retained={result.managed_test_db.retained}")
         lines.append(f"Managed DB cleanup: {result.managed_test_db.cleanup_command or '<none>'}")
+    if result.managed_runtime and result.managed_runtime.enabled:
+        lines.append(f"Managed runtime: {result.managed_runtime.status} / {result.managed_runtime.classification}")
+        lines.append(f"Managed backend: {result.managed_runtime.backend_api_base_url or '<none>'}")
+        lines.append(f"Managed frontend: {result.managed_runtime.frontend_url or '<none>'}")
+        lines.append(f"Managed runtime state: {result.managed_runtime.runtime_state_path or '<none>'}")
     lines.append(f"Report dir: {result.report_dir or '<not written>'}")
     if result.archive_path:
         lines.append(f"Archive: {result.archive_path}")
@@ -6188,6 +6699,20 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append(f"- Retained: `{result.managed_test_db.retained}`")
         lines.append(f"- Metadata: `{result.managed_test_db.metadata_path or '<none>'}`")
         lines.append(f"- Cleanup: `{result.managed_test_db.cleanup_command or '<none>'}`")
+    if result.managed_runtime and result.managed_runtime.enabled:
+        lines.append("")
+        lines.append("## Managed runtime")
+        lines.append("")
+        lines.append(f"- Status: `{result.managed_runtime.status}`")
+        lines.append(f"- Classification: `{result.managed_runtime.classification}`")
+        lines.append(f"- Backend API: `{result.managed_runtime.backend_api_base_url or '<none>'}`")
+        lines.append(f"- Backend health: `{result.managed_runtime.backend_health_url or '<none>'}`")
+        lines.append(f"- Frontend: `{result.managed_runtime.frontend_url or '<none>'}`")
+        lines.append(f"- Backend PID: `{result.managed_runtime.backend_pid or '<none>'}`")
+        lines.append(f"- Frontend PID: `{result.managed_runtime.frontend_pid or '<none>'}`")
+        lines.append(f"- Runtime state: `{result.managed_runtime.runtime_state_path or '<none>'}`")
+        lines.append(f"- Env diff: `{result.managed_runtime.env_diff_path or '<none>'}`")
+        lines.append(f"- Managed URLs: `{result.managed_runtime.managed_urls_path or '<none>'}`")
     lines.append("")
     lines.append("## Gates")
     lines.append("")
@@ -6230,6 +6755,7 @@ def release_gates_json_payload(result: ReleaseGatesResult) -> dict[str, Any]:
         "reportDir": result.report_dir,
         "archivePath": result.archive_path,
         "managedTestDb": managed_test_db_public_payload(result.managed_test_db) if result.managed_test_db else None,
+        "managedRuntime": managed_runtime_public_payload(result.managed_runtime) if result.managed_runtime else None,
         "gates": [as_jsonable(gate) for gate in result.gates],
         "findings": result.findings,
         "nextActions": result.next_actions,
@@ -6283,6 +6809,11 @@ def print_release_gates_summary(result: ReleaseGatesResult) -> None:
     print(f"Overall: {result.overall_status}")
     print(f"Classification: {result.classification}")
     print(f"Dry run: {result.dry_run}")
+    if result.managed_runtime and result.managed_runtime.enabled:
+        print("\nManaged runtime:")
+        print(f"  - backend: {result.managed_runtime.backend_api_base_url or '<none>'}")
+        print(f"  - frontend: {result.managed_runtime.frontend_url or '<none>'}")
+        print(f"  - state: {result.managed_runtime.runtime_state_path or '<not written>'}")
     print("\nGates:")
     for gate in result.gates:
         suffix = f" — {gate.log_path}" if gate.log_path else ""
@@ -6355,6 +6886,36 @@ def command_release_gates(args: argparse.Namespace) -> int:
         if managed_state.database_url and managed_state.status in {"ok", "planned"}:
             managed_test_db_url = managed_state.database_url
 
+    effective_managed_runtime = bool(args.managed_runtime or args.managed_test_db)
+    managed_runtime_state: ManagedRuntimeState | None = None
+    managed_runtime_db_url: str | None = None
+    managed_runtime_db_reason: str | None = None
+    if effective_managed_runtime:
+        managed_runtime_state = build_managed_runtime_state(project_root, run_dir, run_id_value)
+        result.managed_runtime = managed_runtime_state
+        managed_runtime_db_url, managed_runtime_db_reason = release_gate_managed_runtime_database_url(
+            project_root,
+            managed_test_db_url=managed_test_db_url,
+            allow_dev_db_write=args.allow_dev_db_write,
+        )
+        managed_runtime_state.database_source = managed_runtime_db_reason
+        if managed_runtime_db_url:
+            managed_runtime_state.masked_database_url = mask_database_url(managed_runtime_db_url)
+        if args.dry_run:
+            result.gates.append(release_gates_managed_runtime_plan_result(project_root, logs_dir, next_gate_index, managed_runtime_state))
+            next_gate_index += 1
+        elif not managed_runtime_db_url:
+            result.gates.append(
+                release_gates_managed_runtime_db_unavailable_result(
+                    project_root,
+                    logs_dir,
+                    next_gate_index,
+                    managed_runtime_state,
+                    managed_runtime_db_reason or "managed runtime database target is unavailable",
+                )
+            )
+            next_gate_index += 1
+
     if args.prepare_deps is not None:
         prepare_deps_mode = normalize_frontend_prepare_dep_mode(args.prepare_deps)
     elif args.prepare_frontend:
@@ -6420,17 +6981,26 @@ def command_release_gates(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         managed_test_db_url=managed_test_db_url,
         managed_test_db_requested=args.managed_test_db,
+        managed_runtime_requested=effective_managed_runtime,
+        managed_backend_api_base_url=managed_runtime_state.backend_api_base_url if managed_runtime_state else None,
+        managed_frontend_url=managed_runtime_state.frontend_url if managed_runtime_state else None,
+        managed_frontend_host=managed_runtime_state.frontend_host if managed_runtime_state else None,
+        managed_frontend_port=managed_runtime_state.frontend_port if managed_runtime_state else None,
     )
 
-    managed_backend: ReleaseGatesManagedBackend | None = None
+    managed_backend: ReleaseGatesManagedRuntimeProcess | None = None
+    managed_frontend: ReleaseGatesManagedRuntimeProcess | None = None
     managed_backend_start_failed: str | None = None
-    managed_runtime_gate_names = {"backend_python_smoke_first", "backend_python_smoke_second", "browser_real_backend_path"}
+    managed_frontend_start_failed: str | None = None
+    managed_backend_gate_names = {"backend_python_smoke_first", "backend_python_smoke_second", "browser_real_backend_path", "frontend_browser_smoke"}
+    managed_frontend_gate_names = {"frontend_browser_smoke", "browser_real_backend_path"}
 
     for spec in specs:
-        if args.managed_test_db and spec.name in managed_runtime_gate_names and not args.dry_run and not spec.skip_reason and not spec.not_implemented_reason:
-            if not managed_test_db_url:
+        requires_managed_runtime = effective_managed_runtime and spec.name in managed_backend_gate_names and not args.dry_run and not spec.skip_reason and not spec.not_implemented_reason
+        if requires_managed_runtime:
+            if not managed_runtime_state or not managed_runtime_db_url:
                 result.gates.append(
-                    release_gates_skip_for_managed_backend_unavailable(project_root, logs_dir, next_gate_index, spec, "managed test DB was not created")
+                    release_gates_skip_for_managed_runtime_unavailable(project_root, logs_dir, next_gate_index, spec, managed_runtime_db_reason or "managed runtime database target is unavailable")
                 )
                 next_gate_index += 1
                 continue
@@ -6440,7 +7010,8 @@ def command_release_gates(args: argparse.Namespace) -> int:
                     project_root,
                     logs_dir,
                     next_gate_index,
-                    managed_test_db_url,
+                    managed_runtime_state,
+                    managed_runtime_db_url,
                     start_timeout,
                 )
                 result.gates.append(start_gate)
@@ -6449,7 +7020,26 @@ def command_release_gates(args: argparse.Namespace) -> int:
                     managed_backend_start_failed = start_gate.classification
             if managed_backend_start_failed:
                 result.gates.append(
-                    release_gates_skip_for_managed_backend_unavailable(project_root, logs_dir, next_gate_index, spec, managed_backend_start_failed)
+                    release_gates_skip_for_managed_runtime_unavailable(project_root, logs_dir, next_gate_index, spec, managed_backend_start_failed)
+                )
+                next_gate_index += 1
+                continue
+            if spec.name in managed_frontend_gate_names and managed_frontend is None and managed_frontend_start_failed is None:
+                frontend_timeout = min(args.timeout_seconds, TIMEOUT_POLICY["frontend_ready"]) if args.timeout_seconds > 0 else TIMEOUT_POLICY["frontend_ready"]
+                start_gate, managed_frontend = start_release_gates_managed_frontend(
+                    project_root,
+                    logs_dir,
+                    next_gate_index,
+                    managed_runtime_state,
+                    frontend_timeout,
+                )
+                result.gates.append(start_gate)
+                next_gate_index += 1
+                if managed_frontend is None:
+                    managed_frontend_start_failed = start_gate.classification
+            if spec.name in managed_frontend_gate_names and managed_frontend_start_failed:
+                result.gates.append(
+                    release_gates_skip_for_managed_runtime_unavailable(project_root, logs_dir, next_gate_index, spec, managed_frontend_start_failed)
                 )
                 next_gate_index += 1
                 continue
@@ -6467,9 +7057,20 @@ def command_release_gates(args: argparse.Namespace) -> int:
         )
         next_gate_index += 1
 
-    if managed_backend is not None:
-        result.gates.append(stop_release_gates_managed_backend(project_root, logs_dir, next_gate_index, managed_backend))
+    if managed_frontend is not None:
+        result.gates.append(stop_release_gates_managed_process(project_root, logs_dir, next_gate_index, managed_frontend))
         next_gate_index += 1
+    if managed_backend is not None:
+        result.gates.append(stop_release_gates_managed_process(project_root, logs_dir, next_gate_index, managed_backend))
+        next_gate_index += 1
+    if managed_runtime_state is not None:
+        if not args.dry_run:
+            managed_runtime_state.stopped_at = iso_now()
+            if managed_runtime_state.classification in {"managed_frontend_started", "managed_backend_started", "managed_frontend_stopped", "managed_backend_stopped"}:
+                managed_runtime_state.status = "stopped"
+                managed_runtime_state.classification = "managed_runtime_stopped"
+                managed_runtime_state.message = "managed runtime was stopped after release-gates"
+        write_release_gates_runtime_files(project_root, logs_dir, managed_runtime_state)
 
     finalize_release_gates_result(result)
 
@@ -7350,6 +7951,38 @@ def case_self_check_managed_test_db_specs() -> str:
     return "release-gates managed DB specs carry safe env overrides"
 
 
+def case_self_check_managed_runtime_specs() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-runtime-") as tmp:
+        root = Path(tmp)
+        (root / "backend").mkdir()
+        (root / "frontend").mkdir()
+        (root / "docs").mkdir()
+        (root / "docker-compose.dev.yml").write_text("services: {}\n", encoding="utf-8")
+        (root / "backend" / ".env.example").write_text("DATABASE__URL=postgres://u:p@127.0.0.1:5432/dev\n", encoding="utf-8")
+        (root / "frontend" / "package.json").write_text(json.dumps({"scripts": {"test:browser": "playwright test"}, "devDependencies": {"@playwright/test": "1.55.0"}}), encoding="utf-8")
+        (root / "frontend" / "package-lock.json").write_text("{}", encoding="utf-8")
+        api_base = "http://127.0.0.1:39001/api/v1"
+        frontend_url = "http://127.0.0.1:39002/"
+        specs = build_release_gate_specs(
+            root,
+            allow_dev_db_write=True,
+            managed_runtime_requested=True,
+            managed_backend_api_base_url=api_base,
+            managed_frontend_url=frontend_url,
+            managed_frontend_host="127.0.0.1",
+            managed_frontend_port=39002,
+            dry_run=True,
+        )
+        by_name = {spec.name: spec for spec in specs}
+    smoke_spec = by_name["backend_python_smoke_first"]
+    browser_spec = by_name["frontend_browser_smoke"]
+    assert smoke_spec.env_extra["BASE_URL"] == api_base
+    assert browser_spec.env_extra["VITE_API_BASE_URL"] == api_base
+    assert browser_spec.env_extra["PLAYWRIGHT_BASE_URL"] == frontend_url.rstrip("/")
+    assert browser_spec.env_extra["PLAYWRIGHT_FRONTEND_PORT"] == "39002"
+    return "release-gates managed runtime specs carry dynamic URL env overrides"
+
+
 def case_self_check_release_gates_frontend_dependency_preflight() -> str:
     with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-frontend-") as tmp:
         root = Path(tmp)
@@ -7491,6 +8124,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_playwright_classifier", case_self_check_release_gates_playwright_classifier)
     self_check_case(result, "managed_test_db_url_derivation", case_self_check_managed_test_db_url_derivation)
     self_check_case(result, "managed_test_db_specs", case_self_check_managed_test_db_specs)
+    self_check_case(result, "managed_runtime_specs", case_self_check_managed_runtime_specs)
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
     self_check_case(result, "frontend_prepare_modes", case_self_check_frontend_prepare_modes)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
@@ -7671,6 +8305,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--timeout-seconds", type=int, default=TIMEOUT_POLICY["release_gate"], help="Maximum timeout for each implemented gate command.")
     release_gates.add_argument("--output-dir", help="Write the run directory to this path instead of .dev-bootstrap/runs/<run-id>.")
     release_gates.add_argument("--allow-dev-db-write", action="store_true", help="Allow backend Python smoke to write through the configured live backend API when TEST_DATABASE_URL is not present.")
+    release_gates.add_argument("--managed-runtime", action="store_true", help="Start isolated backend/frontend processes on dynamic ports for write-capable release-gates instead of using live ports.")
     release_gates.add_argument("--managed-test-db", action="store_true", help="Create a disposable PostgreSQL database for DB-writing release-gates and run managed gates against it.")
     release_gates.add_argument("--test-db-retention", choices=["drop-always", "keep-on-failure", "keep-always"], default="keep-on-failure", help="Retention policy for --managed-test-db. Default keeps failed runs for investigation and drops successful runs.")
     release_gates.add_argument("--keep-test-db", choices=["on-failure", "always", "never"], help="Compatibility alias for --test-db-retention: on-failure, always or never.")
