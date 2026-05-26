@@ -45,11 +45,15 @@ test('real backend core kanban path uses API without mocks', async ({ page }) =>
   await expect(page.getByRole('heading', { name: boardName })).toBeVisible();
   await page.getByLabel('Название колонки').fill(columnName);
   await page.getByRole('button', { name: '＋ Колонка' }).click();
-  await expect(page.getByText(columnName)).toBeVisible();
 
-  await page.getByPlaceholder('Новая карточка').fill(cardName);
-  await page.getByRole('button', { name: 'Добавить карточку' }).click();
-  await expect(page.getByText(cardName).first()).toBeVisible();
+  const createdColumn = page
+    .locator('.column-card')
+    .filter({ has: page.getByRole('heading', { name: columnName }) });
+  await expect(createdColumn.getByRole('heading', { name: columnName })).toBeVisible();
+
+  await createdColumn.getByPlaceholder('Новая карточка').fill(cardName);
+  await createdColumn.getByRole('button', { name: 'Добавить карточку' }).click();
+  await expect(createdColumn.locator('.card-tile').filter({ hasText: cardName })).toBeVisible();
 
   await expect.poll(() => pageErrors).toEqual([]);
   expect(apiRequests.some((entry) => entry.includes('/api/v1/auth/sign-up'))).toBeTruthy();
