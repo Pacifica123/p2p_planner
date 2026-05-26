@@ -5111,10 +5111,24 @@ def build_release_gates_managed_test_database(
     admin_user = test_db_admin_user or (source_probe.username if admin_credentials_overridden else None)
 
     database_name = release_gate_safe_managed_db_name(TOOL_VERSION, run_id_value)
-    database_url = replace_database_name_in_url(source_url, database_name)
     if admin_credentials_overridden:
+        # Use the explicit maintenance/admin identity as the runtime identity too.
+        # Host/port/query still come from DATABASE__URL, but that URL may contain
+        # a stale password for a dev role that cannot authenticate on this machine.
+        # Without this, CREATE DATABASE can succeed while sqlx tests and the
+        # managed backend fail immediately on authentication.
+        database_url = database_url_with_credentials(source_url, database_name=database_name, username=admin_user, password=admin_password_value)
+        runtime_user = admin_user or source_probe.username
+        runtime_password_source = admin_password_source or ("source-url" if source_probe.has_password else "none")
+        runtime_credentials_source = "admin-credentials"
+        owner_user = runtime_user
         maintenance_url = database_url_with_credentials(source_url, database_name=maintenance_database, username=admin_user, password=admin_password_value)
     else:
+        database_url = replace_database_name_in_url(source_url, database_name)
+        runtime_user = source_probe.username
+        runtime_password_source = "source-url" if source_probe.has_password else "none"
+        runtime_credentials_source = "source-url"
+        owner_user = source_probe.username
         maintenance_url = replace_database_name_in_url(source_url, maintenance_database)
     state.details["maintenanceDatabase"] = maintenance_database
     state.details["adminCredentials"] = {
@@ -5122,13 +5136,18 @@ def build_release_gates_managed_test_database(
         "user": admin_user or source_probe.username,
         "passwordSource": admin_password_source or ("source-url" if source_probe.has_password else "none"),
     }
+    state.details["runtimeCredentials"] = {
+        "source": runtime_credentials_source,
+        "user": runtime_user,
+        "passwordSource": runtime_password_source,
+    }
     state.database_name = database_name
     state.database_url = database_url
     state.masked_database_url = mask_database_url(database_url)
     state.maintenance_url = maintenance_url
     state.masked_maintenance_url = mask_database_url(maintenance_url)
     state.cleanup_command = release_gate_managed_db_cleanup_command(maintenance_url, database_name)
-    owner_clause = f" OWNER {postgres_quote_identifier(source_probe.username)}" if source_probe.username else ""
+    owner_clause = f" OWNER {postgres_quote_identifier(owner_user)}" if owner_user else ""
     create_sql = f"CREATE DATABASE {postgres_quote_identifier(database_name)}{owner_clause};"
     state.create_command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-Atc", create_sql]
     drop_sql = f"DROP DATABASE IF EXISTS {postgres_quote_identifier(database_name)};"
@@ -5174,6 +5193,24 @@ def build_release_gates_managed_test_database(
         state.status = "infra_failed"
         state.classification = classify_managed_db_psql_failure(create_probe, maintenance_url)
         state.message = "Failed to create managed PostgreSQL test database."
+        write_json(metadata_path, managed_test_db_public_payload(state))
+        return state
+
+    runtime_connect_command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-Atc", "SELECT 1;"]
+    runtime_probe = run_process_probe("managed_test_db_runtime_connect", runtime_connect_command, cwd=project_root, timeout=30, env_extra=psql_env_from_database_url(database_url))
+    runtime_probe.stdout = sanitize_postgres_output(runtime_probe.stdout, database_url)
+    runtime_probe.stderr = sanitize_postgres_output(runtime_probe.stderr, database_url)
+    state.details["runtimeConnectProbe"] = as_jsonable(runtime_probe)
+    if not process_probe_ok(runtime_probe):
+        drop_probe = run_process_probe("managed_test_db_drop_after_runtime_connect_failure", state.drop_command, cwd=project_root, timeout=30, env_extra=env_extra)
+        drop_probe.stdout = sanitize_postgres_output(drop_probe.stdout, maintenance_url)
+        drop_probe.stderr = sanitize_postgres_output(drop_probe.stderr, maintenance_url)
+        state.details["dropAfterRuntimeConnectFailureProbe"] = as_jsonable(drop_probe)
+        state.retained = not process_probe_ok(drop_probe)
+        state.status = "infra_failed"
+        state.failure_code = classify_managed_db_psql_failure(runtime_probe, database_url)
+        state.classification = "managed_test_db_runtime_connection_failed"
+        state.message = "Managed PostgreSQL test database was created, but runtime credentials cannot connect to it."
         write_json(metadata_path, managed_test_db_public_payload(state))
         return state
 
@@ -5977,7 +6014,7 @@ def finalize_release_gates_managed_test_database(
             state.dump_path = rel(dump_path, project_root)
             state.dump_command = ["pg_dump", "--format=custom", "--file", str(dump_path), state.database_name]
             if shutil.which("pg_dump") is not None:
-                dump_env = psql_env_from_database_url(state.database_url or "")
+                dump_env = psql_env_from_database_url(state.maintenance_url or state.database_url or "")
                 dump_probe = run_process_probe("managed_test_db_dump", state.dump_command, cwd=project_root, timeout=120, env_extra=dump_env)
                 state.details["dumpProbe"] = as_jsonable(dump_probe)
             else:
@@ -9499,9 +9536,11 @@ def case_self_check_managed_test_db_url_derivation() -> str:
     source = "postgres://planner:secret@127.0.0.1:15432/p2p_planner_dev?sslmode=disable"
     managed = replace_database_name_in_url(source, "p2pkanban_rg_test")
     maintenance = replace_database_name_in_url(source, "postgres")
+    admin_runtime = database_url_with_credentials(source, database_name="p2pkanban_rg_test", username="postgres", password="admin secret")
     admin_maintenance = database_url_with_credentials(source, database_name="postgres", username="postgres", password="admin secret")
     assert managed == "postgres://planner:secret@127.0.0.1:15432/p2pkanban_rg_test?sslmode=disable"
     assert maintenance == "postgres://planner:secret@127.0.0.1:15432/postgres?sslmode=disable"
+    assert admin_runtime == "postgres://postgres:admin%20secret@127.0.0.1:15432/p2pkanban_rg_test?sslmode=disable"
     assert admin_maintenance == "postgres://postgres:admin%20secret@127.0.0.1:15432/postgres?sslmode=disable"
     env = release_gate_managed_db_env(managed)
     assert env["DATABASE__URL"] == managed
@@ -10006,7 +10045,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--test-db-retention", choices=["drop-always", "keep-on-failure", "keep-always"], default=None, help="Retention policy for --managed-test-db. Default/profile setting keeps failed runs for investigation and drops successful runs.")
     release_gates.add_argument("--keep-test-db", choices=["on-failure", "always", "never"], help="Compatibility alias for --test-db-retention: on-failure, always or never.")
     release_gates.add_argument("--start-db-if-needed", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="With --managed-test-db, start the project docker compose PostgreSQL service if the configured PostgreSQL port is closed. Use =false to override a profile.")
-    release_gates.add_argument("--test-db-admin-user", help="Optional PostgreSQL maintenance/admin role used to create/drop the managed test DB. The backend still connects as the user from DATABASE__URL/DATABASE_URL.")
+    release_gates.add_argument("--test-db-admin-user", help="Optional PostgreSQL maintenance/admin role used to create/drop the managed test DB. When supplied, managed runtime also uses these known-good credentials for DATABASE__URL/TEST_DATABASE_URL.")
     release_gates.add_argument("--test-db-admin-password", help="Password for --test-db-admin-user. Prefer --test-db-admin-password-env to avoid exposing secrets in shell history/process listings.")
     release_gates.add_argument("--test-db-admin-password-env", help="Environment variable containing the password for --test-db-admin-user.")
     release_gates.add_argument("--test-db-maintenance-db", default="postgres", help="Maintenance database used for CREATE/DROP DATABASE when --managed-test-db is enabled. Default: postgres.")

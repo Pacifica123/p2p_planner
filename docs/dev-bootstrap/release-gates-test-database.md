@@ -62,7 +62,7 @@ python tools/devbootstrap.py release-gates --managed-test-db
 python tools/devbootstrap.py release-gates --managed-test-db --managed-runtime
 ```
 
-With `--managed-test-db`, `release-gates` derives host/port and the backend DB owner from `DATABASE__URL` / `DATABASE_URL`, creates an isolated database named like `p2pkanban_rg_<toolVersion>_<timestamp>_<id>`, overrides `DATABASE__URL`, `DATABASE_URL` and `TEST_DATABASE_URL` for DB-writing gates, and routes write-capable smoke through an isolated managed runtime. By default the same DB user is used for the maintenance connection. When that user cannot create databases, pass an explicit maintenance/admin role with `--test-db-admin-user` plus either `--test-db-admin-password-env` or `--test-db-admin-password`; create/drop then uses the maintenance role, while the created database is owned by the backend user from the source URL. With explicit `--managed-runtime`, Python smoke and browser gates are run only after devbootstrap starts its own backend/frontend processes from the current workspace on dynamic ports; occupied selected ports are treated as unsafe and are not reused.
+With `--managed-test-db`, `release-gates` derives host/port defaults from `DATABASE__URL` / `DATABASE_URL`, creates an isolated database named like `p2pkanban_rg_<toolVersion>_<timestamp>_<id>`, overrides `DATABASE__URL`, `DATABASE_URL` and `TEST_DATABASE_URL` for DB-writing gates, and routes write-capable smoke through an isolated managed runtime. By default the source DB user is used for both maintenance and runtime connections. When that user cannot create databases or its password is not the credential you want to test with, pass an explicit maintenance/admin role with `--test-db-admin-user` plus either `--test-db-admin-password-env` or `--test-db-admin-password`; create/drop then uses that role, and the managed runtime DB URL also uses the same known-good credentials instead of falling back to a stale source URL password. With explicit `--managed-runtime`, Python smoke and browser gates are run only after devbootstrap starts its own backend/frontend processes from the current workspace on dynamic ports; occupied selected ports are treated as unsafe and are not reused.
 
 Example with a password kept outside shell history/process listings:
 
@@ -83,6 +83,8 @@ python tools/devbootstrap.py release-gates `
   --test-db-admin-user postgres `
   --test-db-admin-password-env P2P_TEST_DB_ADMIN_PASSWORD
 ```
+
+> Note: when explicit admin credentials are supplied, the generated managed DB URL intentionally uses those same credentials. This keeps the one-command local release path practical on machines where `DATABASE__URL` points at an old dev user/password but a separate local PostgreSQL admin role is available for creating disposable databases.
 
 For installations where the maintenance database is not named `postgres`, use `--test-db-maintenance-db <name>`.
 
