@@ -5340,6 +5340,46 @@ def release_gate_managed_browser_env(state: ManagedRuntimeState) -> dict[str, st
     return env
 
 
+def release_gate_managed_backend_cors_env(project_root: Path, state: ManagedRuntimeState) -> dict[str, str]:
+    """Return backend CORS overrides for an owned managed frontend on a dynamic port.
+
+    The local managed runtime intentionally starts Vite on an arbitrary free port.
+    The backend default allowlist only covers the usual Vite ports, so the
+    real-backend browser gate can be blocked by CORS even though backend,
+    frontend and Playwright are all healthy.  This override is scoped to the
+    managed backend process only and never writes project env files.
+    """
+
+    frontend_origin = parse_url_origin((state.frontend_url or "").rstrip("/"))
+    if not frontend_origin:
+        return {}
+
+    configured = split_csv(backend_effective_env(project_root).get("HTTP__CORS_ALLOWED_ORIGINS", ""))
+    origins: list[str] = []
+
+    def add_origin(value: str | None) -> None:
+        normalized = (value or "").strip().rstrip("/")
+        if normalized and normalized not in origins:
+            origins.append(normalized)
+
+    for origin in configured:
+        add_origin(origin)
+    add_origin(frontend_origin)
+
+    try:
+        parsed = urllib.parse.urlsplit(frontend_origin)
+    except Exception:
+        parsed = None
+    if parsed and parsed.scheme and parsed.hostname:
+        port = f":{parsed.port}" if parsed.port is not None else ""
+        if parsed.hostname == "127.0.0.1":
+            add_origin(f"{parsed.scheme}://localhost{port}")
+        elif parsed.hostname == "localhost":
+            add_origin(f"{parsed.scheme}://127.0.0.1{port}")
+
+    return {"HTTP__CORS_ALLOWED_ORIGINS": ",".join(origins)}
+
+
 def write_release_gates_runtime_files(
     project_root: Path,
     logs_dir: Path,
@@ -5510,6 +5550,7 @@ def start_release_gates_managed_backend(
     command = ["cargo", "run"]
     execution_command = command_for_subprocess(command)
     backend_env_diff = release_gate_managed_db_env(database_url)
+    backend_env_diff.update(release_gate_managed_backend_cors_env(project_root, state))
     backend_env_diff.update({"APP__HOST": host, "APP__PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1"})
     frontend_env_diff = release_gate_managed_browser_env(state)
     state.backend_log_path = rel(backend_log_path, project_root)
@@ -5526,6 +5567,7 @@ def start_release_gates_managed_backend(
             f"APP__HOST: {host}",
             f"APP__PORT: {port}",
             f"DATABASE__URL: {mask_database_url(database_url)}",
+            f"HTTP__CORS_ALLOWED_ORIGINS: {backend_env_diff.get('HTTP__CORS_ALLOWED_ORIGINS', '<unchanged>')}",
             "",
         ]
     ).encode("utf-8", errors="replace")
@@ -9632,6 +9674,25 @@ def case_self_check_managed_runtime_specs() -> str:
     return "release-gates managed runtime specs carry dynamic URL env overrides"
 
 
+def case_self_check_managed_runtime_dynamic_cors_origin() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-cors-") as tmp:
+        root = Path(tmp)
+        (root / "backend").mkdir()
+        (root / "backend" / ".env.example").write_text(
+            "HTTP__CORS_ALLOWED_ORIGINS=http://127.0.0.1:5173,http://localhost:5173\n",
+            encoding="utf-8",
+        )
+        state = build_managed_runtime_state(root, root / ".dev-bootstrap" / "runs" / "selfcheck", "selfcheck")
+        state.frontend_url = "http://127.0.0.1:39002/"
+        cors_env = release_gate_managed_backend_cors_env(root, state)
+    origins = split_csv(cors_env["HTTP__CORS_ALLOWED_ORIGINS"])
+    assert "http://127.0.0.1:5173" in origins, origins
+    assert "http://localhost:5173" in origins, origins
+    assert "http://127.0.0.1:39002" in origins, origins
+    assert "http://localhost:39002" in origins, origins
+    return "managed runtime backend CORS includes the dynamic frontend origin"
+
+
 def case_self_check_release_gates_frontend_dependency_preflight() -> str:
     with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-frontend-") as tmp:
         root = Path(tmp)
@@ -9883,6 +9944,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "managed_test_db_url_derivation", case_self_check_managed_test_db_url_derivation)
     self_check_case(result, "managed_test_db_specs", case_self_check_managed_test_db_specs)
     self_check_case(result, "managed_runtime_specs", case_self_check_managed_runtime_specs)
+    self_check_case(result, "managed_runtime_dynamic_cors_origin", case_self_check_managed_runtime_dynamic_cors_origin)
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
     self_check_case(result, "frontend_prepare_modes", case_self_check_frontend_prepare_modes)
     self_check_case(result, "clean_machine_profiles", case_self_check_clean_machine_profiles)
