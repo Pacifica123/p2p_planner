@@ -1,5 +1,5 @@
 import type { PropsWithChildren } from 'react';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { clearAccessToken } from '@/shared/api/client';
 import { refreshSession, signIn, signOut, signOutAll, signUp } from '@/features/auth/api/auth';
@@ -34,6 +34,7 @@ export function AuthSessionProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const authActionGenerationRef = useRef(0);
 
   const clearLocalSession = () => {
     clearAccessToken();
@@ -54,14 +55,15 @@ export function AuthSessionProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     let cancelled = false;
+    const bootstrapGeneration = authActionGenerationRef.current;
 
     void refreshSession()
       .then((response) => {
-        if (cancelled) return;
+        if (cancelled || authActionGenerationRef.current !== bootstrapGeneration) return;
         applyAuthResponse(response);
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && authActionGenerationRef.current === bootstrapGeneration) {
           clearLocalSession();
         }
       });
@@ -80,14 +82,35 @@ export function AuthSessionProvider({ children }: PropsWithChildren) {
       sessionId,
       deviceId,
       signInWithPassword: async (input) => {
-        const response = await signIn(input);
-        applyAuthResponse(response);
+        const actionGeneration = ++authActionGenerationRef.current;
+        try {
+          const response = await signIn(input);
+          if (authActionGenerationRef.current === actionGeneration) {
+            applyAuthResponse(response);
+          }
+        } catch (error) {
+          if (authActionGenerationRef.current === actionGeneration) {
+            clearLocalSession();
+          }
+          throw error;
+        }
       },
       signUpWithPassword: async (input) => {
-        const response = await signUp(input);
-        applyAuthResponse(response);
+        const actionGeneration = ++authActionGenerationRef.current;
+        try {
+          const response = await signUp(input);
+          if (authActionGenerationRef.current === actionGeneration) {
+            applyAuthResponse(response);
+          }
+        } catch (error) {
+          if (authActionGenerationRef.current === actionGeneration) {
+            clearLocalSession();
+          }
+          throw error;
+        }
       },
       signOutCurrent: async () => {
+        ++authActionGenerationRef.current;
         try {
           await signOut();
         } finally {
@@ -95,6 +118,7 @@ export function AuthSessionProvider({ children }: PropsWithChildren) {
         }
       },
       signOutEverywhere: async () => {
+        ++authActionGenerationRef.current;
         try {
           await signOutAll();
         } finally {
@@ -102,8 +126,18 @@ export function AuthSessionProvider({ children }: PropsWithChildren) {
         }
       },
       refreshCurrentSession: async () => {
-        const response = await refreshSession();
-        applyAuthResponse(response);
+        const actionGeneration = ++authActionGenerationRef.current;
+        try {
+          const response = await refreshSession();
+          if (authActionGenerationRef.current === actionGeneration) {
+            applyAuthResponse(response);
+          }
+        } catch (error) {
+          if (authActionGenerationRef.current === actionGeneration) {
+            clearLocalSession();
+          }
+          throw error;
+        }
       },
     }),
     [deviceId, sessionId, status, user],

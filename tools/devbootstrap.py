@@ -3707,6 +3707,16 @@ def run_smoke_process_step(
     )
 
 
+def playwright_browser_prerequisite_missing_in_output(lower_output: str) -> bool:
+    return (
+        "executable doesn't exist" in lower_output
+        or "browser executable" in lower_output and "missing" in lower_output
+        or "please run" in lower_output and "playwright install" in lower_output
+        or "looks like playwright test or playwright was just installed or updated" in lower_output
+        or "browserType.launch".lower() in lower_output and "playwright install" in lower_output
+    )
+
+
 def classify_smoke_process_failure(name: str, output: str) -> str:
     lower = output.lower()
     if "command not found" in lower or "not found on path" in lower:
@@ -3715,7 +3725,7 @@ def classify_smoke_process_failure(name: str, output: str) -> str:
         return "runtime_unreachable"
     if "unauthorized" in lower or "authentication is required" in lower:
         return "auth_flow_failed"
-    if "playwright" in lower and ("browser" in lower or "install" in lower):
+    if "playwright" in lower and playwright_browser_prerequisite_missing_in_output(lower):
         return "browser_smoke_prerequisite"
     if "failed" in lower or "error" in lower:
         return f"{name}_failed"
@@ -4805,7 +4815,7 @@ def classify_gate_output(name: str, stdout: str, stderr: str, error: str | None,
         return "ok", "ok", "gate completed"
     if name == "frontend_prepare_dependencies" and npm_missing_in_output(lower):
         return "infra_failed", "frontend_dependencies_missing", "npm is unavailable or could not be launched for frontend dependency preparation"
-    if "playwright" in lower and ("browser" in lower or "install" in lower or "executable doesn't exist" in lower or "please run" in lower):
+    if "playwright" in lower and playwright_browser_prerequisite_missing_in_output(lower):
         return "infra_failed", "browser_smoke_prerequisite", "Playwright browser prerequisite appears to be missing"
     if name in {"frontend_prepare_dependencies", "playwright_install", "backend_dependency_warmup"} and any(token in lower for token in ["econnreset", "etimedout", "eai_again", "enotfound", "socket timeout", "network timeout", "failed to download"]):
         return "infra_failed", "dependency_network_unavailable", "dependency network/cache prerequisite is unavailable"
@@ -9451,6 +9461,24 @@ def case_self_check_release_gates_playwright_classifier() -> str:
     return "Playwright missing-browser classifier checked"
 
 
+def case_self_check_release_gates_playwright_assertion_classifier() -> str:
+    stdout = """
+> playwright test e2e/smoke/real-backend.smoke.spec.ts
+
+Running 1 test using 1 worker
+  ✘  1 e2e/smoke/real-backend.smoke.spec.ts › real backend core kanban path uses API without mocks
+
+Error: expect(locator).toBeVisible() failed
+Locator: getByRole('heading', { name: 'Workspace list / switcher' })
+Expected: visible
+"""
+    status, classification, message = classify_gate_output("browser_real_backend_path", stdout, "", None, 1)
+    assert status == "failed"
+    assert classification == "browser_real_backend_path_failed"
+    assert "gate failed" in message
+    return "Playwright assertion classifier checked"
+
+
 def case_self_check_release_gates_frontend_classifier_priority() -> str:
     missing_npm_log = """FAIL npm_version: npm availability check. — command not found
 frontend/package-lock.json presence check; npm ci is preferred when it exists.
@@ -9847,6 +9875,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_archive_exclusions", case_self_check_release_gates_archive_exclusions)
     self_check_case(result, "release_gates_ignored_classifier", case_self_check_release_gates_ignored_classifier)
     self_check_case(result, "release_gates_playwright_classifier", case_self_check_release_gates_playwright_classifier)
+    self_check_case(result, "release_gates_playwright_assertion_classifier", case_self_check_release_gates_playwright_assertion_classifier)
     self_check_case(result, "release_gates_frontend_classifier_priority", case_self_check_release_gates_frontend_classifier_priority)
     self_check_case(result, "windows_command_resolution", case_self_check_windows_command_resolution)
     self_check_case(result, "frontend_prepare_blocker_converts_downstream_skip", case_self_check_frontend_prepare_blocker_converts_downstream_skip)
