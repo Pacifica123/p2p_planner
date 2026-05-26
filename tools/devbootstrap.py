@@ -358,12 +358,13 @@ def command_for_subprocess(command: list[str], *, resolved_path: str | None = No
     resolved_command = [resolved, *command[1:]]
     if effective_platform == "nt" and resolved.lower().endswith((".cmd", ".bat")):
         # Batch launchers such as npm.CMD are not regular executables on Windows.
-        # Passing one quoted command string through `cmd /s /c` is fragile when the
-        # launcher lives under `C:\Program Files\...`; cmd may preserve the outer
-        # quotes and try to execute a literal `"C:\...\npm.CMD"`.  Use `call` with
-        # argv-style arguments instead, so Python performs Windows command-line
-        # quoting once and cmd receives: cmd.exe /d /c call "...\npm.CMD" args...
-        return ["cmd.exe", "/d", "/c", "call", resolved, *command[1:]]
+        # Build a single command string after /c so cmd.exe receives the quoted
+        # launcher path as part of the command to execute.  Keeping `call` inside
+        # that command string avoids the fragile token form where diagnostics show
+        # `call C:\Program Files\...` and some shells/wrappers mis-handle the
+        # path with spaces when starting long-lived dev servers.
+        cmdline = "call " + subprocess.list2cmdline([resolved, *command[1:]])
+        return ["cmd.exe", "/d", "/s", "/c", cmdline]
     return resolved_command
 
 
@@ -1505,7 +1506,9 @@ def first_output_line(probe: ProcessProbe | None) -> str:
 
 
 def command_as_text(command: list[str] | None) -> str:
-    return " ".join(command or [])
+    if not command:
+        return ""
+    return subprocess.list2cmdline([str(part) for part in command])
 
 
 def effective_env_values_for(project_root: Path, name: str) -> dict[str, str]:
@@ -9545,8 +9548,12 @@ def case_self_check_windows_command_resolution() -> str:
         resolved_path=r"C:\Program Files\nodejs\npm.CMD",
         platform_name="nt",
     )
-    assert command[:4] == ["cmd.exe", "/d", "/c", "call"], command
-    assert command[4].endswith("npm.CMD") and command[5:] == ["--version"], command
+    assert command[:4] == ["cmd.exe", "/d", "/s", "/c"], command
+    assert command[4].startswith("call "), command
+    assert r'"C:\Program Files\nodejs\npm.CMD"' in command[4], command
+    assert command[4].endswith("--version"), command
+    display = command_as_text(command)
+    assert r'"call \"C:\Program Files\nodejs\npm.CMD\" --version"' in display, display
     direct = command_for_subprocess(["node", "--version"], resolved_path=r"C:\Program Files\nodejs\node.exe", platform_name="nt")
     assert direct[0].endswith("node.exe"), direct
     return "Windows .cmd command resolution checked"
