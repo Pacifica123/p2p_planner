@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import locale
 import os
 import platform
 import re
@@ -323,7 +324,51 @@ def safe_decode(data: bytes | str | None) -> str:
         return ""
     if isinstance(data, str):
         return data
+    encodings = ["utf-8"]
+    preferred = locale.getpreferredencoding(False)
+    if preferred and preferred.lower() not in {encoding.lower() for encoding in encodings}:
+        encodings.append(preferred)
+    if os.name == "nt" and "cp1251" not in {encoding.lower() for encoding in encodings}:
+        encodings.append("cp1251")
+    for encoding in encodings:
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
     return data.decode("utf-8", errors="replace")
+
+
+def resolve_executable_path(executable: str) -> str | None:
+    if not executable:
+        return None
+    if executable == sys.executable:
+        return executable
+    if os.path.isabs(executable) or os.sep in executable or (os.altsep and os.altsep in executable):
+        return executable if Path(executable).exists() else None
+    return shutil.which(executable)
+
+
+def command_for_subprocess(command: list[str], *, resolved_path: str | None = None, platform_name: str | None = None) -> list[str]:
+    if not command:
+        return command
+    effective_platform = platform_name or os.name
+    resolved = resolved_path if resolved_path is not None else resolve_executable_path(command[0])
+    if not resolved:
+        return command
+    resolved_command = [resolved, *command[1:]]
+    if effective_platform == "nt" and resolved.lower().endswith((".cmd", ".bat")):
+        return ["cmd.exe", "/d", "/s", "/c", subprocess.list2cmdline(resolved_command)]
+    return resolved_command
+
+
+def command_resolution_details(command: list[str]) -> dict[str, Any]:
+    resolved = resolve_executable_path(command[0]) if command else None
+    execution_command = command_for_subprocess(command, resolved_path=resolved)
+    return {
+        "displayCommand": command_as_text(command),
+        "resolvedExecutable": resolved,
+        "executionCommand": command_as_text(execution_command),
+    }
 
 
 def print_header(title: str) -> None:
@@ -393,7 +438,7 @@ def command_display(command: list[str]) -> str:
 def run_probe_command(command: list[str], *, timeout: int = TIMEOUT_POLICY["probe_command"]) -> tuple[bool, str | None]:
     try:
         completed = subprocess.run(
-            command,
+            command_for_subprocess(command),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
@@ -1402,14 +1447,15 @@ def run_process_probe(
     env_extra: dict[str, str] | None = None,
 ) -> ProcessProbe:
     executable = command[0]
-    if shutil.which(executable) is None and executable != sys.executable:
+    if resolve_executable_path(executable) is None:
         return ProcessProbe(name=name, command=command, available=False, error="not found on PATH")
+    execution_command = command_for_subprocess(command)
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
     try:
         completed = subprocess.run(
-            command,
+            execution_command,
             cwd=str(cwd) if cwd else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2498,12 +2544,22 @@ def command_check_backend(args: argparse.Namespace) -> int:
 def launch_backend_process(project_root: Path, report_dir: Path) -> tuple[subprocess.Popen[Any], Path]:
     backend_dir = project_root / "backend"
     log_path = report_dir / "backend.log"
+    command = ["cargo", "run"]
+    execution_command = command_for_subprocess(command)
     log_handle = log_path.open("ab", buffering=0)
-    header = f"\n== devbootstrap start-backend {iso_now()} ==\n$ cargo run\ncwd: {rel(backend_dir, project_root)}\n\n".encode("utf-8", errors="replace")
+    header = "\n".join(
+        [
+            f"== devbootstrap start-backend {iso_now()} ==",
+            f"$ {command_as_text(command)}",
+            f"resolved: {command_as_text(execution_command)}",
+            f"cwd: {rel(backend_dir, project_root)}",
+            "",
+        ]
+    ).encode("utf-8", errors="replace")
     log_handle.write(header)
     try:
         process = subprocess.Popen(
-            ["cargo", "run"],
+            execution_command,
             cwd=str(backend_dir),
             stdout=log_handle,
             stderr=subprocess.STDOUT,
@@ -3300,12 +3356,21 @@ def launch_frontend_process(project_root: Path, report_dir: Path, host: str, por
     frontend_dir = project_root / "frontend"
     log_path = report_dir / "frontend.log"
     command = ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"]
+    execution_command = command_for_subprocess(command)
     with log_path.open("ab") as log_file:
-        header = f"\n== devbootstrap start-frontend {iso_now()} ==\n$ {command_as_text(command)}\ncwd: {rel(frontend_dir, project_root)}\n\n".encode("utf-8", errors="replace")
+        header = "\n".join(
+            [
+                f"== devbootstrap start-frontend {iso_now()} ==",
+                f"$ {command_as_text(command)}",
+                f"resolved: {command_as_text(execution_command)}",
+                f"cwd: {rel(frontend_dir, project_root)}",
+                "",
+            ]
+        ).encode("utf-8", errors="replace")
         log_file.write(header)
         log_file.flush()
         process = subprocess.Popen(
-            command,
+            execution_command,
             cwd=str(frontend_dir),
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -3354,8 +3419,41 @@ def sanitize_frontend_log(text: str, project_root: Path | None = None) -> str:
     return "\n".join(cleaned.strip().splitlines()[-60:])
 
 
+def npm_missing_in_output(lower: str) -> bool:
+    return any(
+        fragment in lower
+        for fragment in [
+            "fail npm_version",
+            "missing_npm",
+            "npm is not available",
+            "required command is unavailable: npm",
+            "command not found",
+            "not found on path",
+            "no such file or directory",
+            "[winerror 2]",
+            "не удается найти указанный файл",
+        ]
+    )
+
+
+def npm_lockfile_mismatch_in_output(lower: str) -> bool:
+    return any(
+        fragment in lower
+        for fragment in [
+            "npm err! code eusage",
+            "npm ci can only install packages when your package.json and package-lock.json are in sync",
+            "missing:",
+            "invalid:",
+            "from lock file",
+            "lock file's",
+        ]
+    ) and any(fragment in lower for fragment in ["npm err!", "npm ci", "package-lock", "lock file"])
+
+
 def classify_frontend_failure(text: str, default: str) -> str:
     lower = text.lower()
+    if npm_missing_in_output(lower):
+        return "frontend_dependencies_missing"
     if "eaddrinuse" in lower or "address already in use" in lower:
         return "frontend_port_conflict"
     if "missing script" in lower or "script not found" in lower:
@@ -3366,7 +3464,7 @@ def classify_frontend_failure(text: str, default: str) -> str:
         return "dependency_network_unavailable"
     if "npm err!" in lower and "network" in lower:
         return "dependency_network_unavailable"
-    if "npm ci" in lower and any(fragment in lower for fragment in ["package-lock", "lock file", "missing from", "can only install"]):
+    if npm_lockfile_mismatch_in_output(lower):
         return "frontend_lockfile_mismatch"
     if "eresolve" in lower or "unable to resolve dependency tree" in lower:
         return "frontend_dependency_conflict"
@@ -4671,7 +4769,9 @@ def release_gate_sanitize_output(project_root: Path | None, text: str) -> str:
                 try:
                     parsed = urllib.parse.urlsplit(value)
                     if parsed.password:
-                        cleaned = cleaned.replace(urllib.parse.unquote(parsed.password), "***")
+                        password = urllib.parse.unquote(parsed.password)
+                        if len(password) >= 8 and password.lower() not in {"postgres", "password", "planner"}:
+                            cleaned = cleaned.replace(password, "***")
                 except Exception:
                     pass
     cleaned = re.sub(r"(postgres(?:ql)?://[^:\s/@]+:)[^@\s]+(@)", r"\1***\2", cleaned)
@@ -4697,13 +4797,15 @@ def classify_gate_output(name: str, stdout: str, stderr: str, error: str | None,
         if "test result:" in lower and rust_test_output_has_ignored_tests(output):
             return "partial_pass", "critical_tests_ignored", "command exited 0, but one or more Rust tests were ignored"
         return "ok", "ok", "gate completed"
+    if name == "frontend_prepare_dependencies" and npm_missing_in_output(lower):
+        return "infra_failed", "frontend_dependencies_missing", "npm is unavailable or could not be launched for frontend dependency preparation"
     if "playwright" in lower and ("browser" in lower or "install" in lower or "executable doesn't exist" in lower or "please run" in lower):
         return "infra_failed", "browser_smoke_prerequisite", "Playwright browser prerequisite appears to be missing"
     if name in {"frontend_prepare_dependencies", "playwright_install", "backend_dependency_warmup"} and any(token in lower for token in ["econnreset", "etimedout", "eai_again", "enotfound", "socket timeout", "network timeout", "failed to download"]):
         return "infra_failed", "dependency_network_unavailable", "dependency network/cache prerequisite is unavailable"
-    if name == "frontend_prepare_dependencies" and "npm ci" in lower and any(fragment in lower for fragment in ["package-lock", "lock file", "missing from", "can only install"]):
+    if name == "frontend_prepare_dependencies" and npm_lockfile_mismatch_in_output(lower):
         return "infra_failed", "frontend_lockfile_mismatch", "frontend lockfile is out of sync with package.json"
-    if "command not found" in lower or "not found on path" in lower or "no such file or directory" in lower:
+    if "command not found" in lower or "not found on path" in lower or "no such file or directory" in lower or "[winerror 2]" in lower:
         return "infra_failed", "missing_prerequisite", "required command or file is unavailable"
     if "connection refused" in lower or "networkerror" in lower or "failed to fetch" in lower:
         return "infra_failed", "runtime_unreachable", "runtime prerequisite is unreachable"
@@ -5304,6 +5406,7 @@ def start_release_gates_managed_backend(
     backend_dir = project_root / "backend"
     backend_log_path = logs_dir / f"{index:02d}_managed_backend_process.log"
     command = ["cargo", "run"]
+    execution_command = command_for_subprocess(command)
     backend_env_diff = release_gate_managed_db_env(database_url)
     backend_env_diff.update({"APP__HOST": host, "APP__PORT": str(port), "PYTHONDONTWRITEBYTECODE": "1"})
     frontend_env_diff = release_gate_managed_browser_env(state)
@@ -5316,6 +5419,7 @@ def start_release_gates_managed_backend(
         [
             f"== managed release-gates backend {iso_now()} ==",
             f"$ {command_as_text(command)}",
+            f"resolved: {command_as_text(execution_command)}",
             f"cwd: {rel(backend_dir, project_root)}",
             f"APP__HOST: {host}",
             f"APP__PORT: {port}",
@@ -5329,7 +5433,7 @@ def start_release_gates_managed_backend(
     started = time.monotonic()
     try:
         process = subprocess.Popen(
-            command,
+            execution_command,
             cwd=str(backend_dir),
             stdout=log_handle,
             stderr=subprocess.STDOUT,
@@ -5393,11 +5497,7 @@ def start_release_gates_managed_backend(
         state.message = message
         runtime_process = None
         if process.poll() is None:
-            try:
-                send_signal_to_owned_process(process.pid, signal.SIGTERM)
-                wait_until_dead(process.pid, 5)
-            except OSError:
-                pass
+            stop_managed_popen(process, timeout_seconds=5)
     write_release_gates_runtime_files(project_root, logs_dir, state, backend_env_diff=backend_env_diff, frontend_env_diff=frontend_env_diff)
     log_path.write_text(
         "\n".join(
@@ -5505,6 +5605,7 @@ def start_release_gates_managed_frontend(
     frontend_dir = project_root / "frontend"
     frontend_log_path = logs_dir / f"{index:02d}_managed_frontend_process.log"
     command = ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"]
+    execution_command = command_for_subprocess(command)
     backend_env_diff: dict[str, str] = {}
     frontend_env_diff = release_gate_managed_browser_env(state)
     frontend_env_diff["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -5516,6 +5617,7 @@ def start_release_gates_managed_frontend(
         [
             f"== managed release-gates frontend {iso_now()} ==",
             f"$ {command_as_text(command)}",
+            f"resolved: {command_as_text(execution_command)}",
             f"cwd: {rel(frontend_dir, project_root)}",
             f"VITE_API_BASE_URL: {state.backend_api_base_url or '<none>'}",
             f"frontend_url: {frontend_url}",
@@ -5528,7 +5630,7 @@ def start_release_gates_managed_frontend(
     started = time.monotonic()
     try:
         process = subprocess.Popen(
-            command,
+            execution_command,
             cwd=str(frontend_dir),
             stdout=log_handle,
             stderr=subprocess.STDOUT,
@@ -5592,11 +5694,7 @@ def start_release_gates_managed_frontend(
         state.message = message
         runtime_process = None
         if process.poll() is None:
-            try:
-                send_signal_to_owned_process(process.pid, signal.SIGTERM)
-                wait_until_dead(process.pid, 5)
-            except OSError:
-                pass
+            stop_managed_popen(process, timeout_seconds=5)
     write_release_gates_runtime_files(project_root, logs_dir, state, frontend_env_diff=frontend_env_diff)
     log_path.write_text(
         "\n".join(
@@ -5628,26 +5726,82 @@ def start_release_gates_managed_frontend(
     ), runtime_process
 
 
+def wait_for_popen_exit(process: subprocess.Popen[Any], timeout_seconds: float) -> bool:
+    try:
+        process.wait(timeout=max(0.0, timeout_seconds))
+        return True
+    except subprocess.TimeoutExpired:
+        return process.poll() is not None
+
+
+def stop_managed_popen(process: subprocess.Popen[Any], *, timeout_seconds: int) -> tuple[str, str | None, list[str]]:
+    steps: list[str] = []
+    if process.poll() is not None:
+        return "already_exited", None, steps
+
+    if os.name == "nt":
+        ctrl_break = getattr(signal, "CTRL_BREAK_EVENT", None)
+        if ctrl_break is not None:
+            try:
+                process.send_signal(ctrl_break)
+                steps.append("ctrl_break")
+                if wait_for_popen_exit(process, min(3, timeout_seconds)):
+                    return "stopped", None, steps
+            except (OSError, ValueError) as exc:
+                steps.append(f"ctrl_break_failed:{exc}")
+        try:
+            process.terminate()
+            steps.append("terminate")
+            if wait_for_popen_exit(process, max(1, timeout_seconds - 3)):
+                return "stopped", None, steps
+        except OSError as exc:
+            steps.append(f"terminate_failed:{exc}")
+        taskkill_command = ["taskkill", "/PID", str(process.pid), "/T", "/F"]
+        try:
+            completed = subprocess.run(
+                taskkill_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            steps.append(f"taskkill_exit:{completed.returncode}")
+            if wait_for_popen_exit(process, 5):
+                return "force_stopped", None, steps
+            error_text = safe_decode(completed.stderr or completed.stdout).strip()
+            return "failed", error_text or "process still alive after taskkill", steps
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            steps.append(f"taskkill_failed:{exc}")
+            return "failed", str(exc), steps
+
+    try:
+        send_signal_to_owned_process(process.pid, signal.SIGTERM)
+        steps.append("sigterm")
+        if wait_for_popen_exit(process, timeout_seconds):
+            return "stopped", None, steps
+    except ProcessLookupError:
+        return "already_exited", None, steps
+    except OSError as exc:
+        steps.append(f"sigterm_failed:{exc}")
+        return "failed", str(exc), steps
+
+    try:
+        send_signal_to_owned_process(process.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+        steps.append("sigkill")
+        if wait_for_popen_exit(process, 5):
+            return "force_stopped", None, steps
+    except ProcessLookupError:
+        return "already_exited", None, steps
+    except OSError as exc:
+        steps.append(f"sigkill_failed:{exc}")
+        return "failed", str(exc), steps
+    return "failed", "process still alive after force kill", steps
+
+
 def stop_release_gates_managed_process(project_root: Path, logs_dir: Path, index: int, runtime_process: ReleaseGatesManagedRuntimeProcess) -> GateResult:
     log_path = release_gate_log_path(logs_dir, index, f"managed_{runtime_process.name}_stop")
     started = time.monotonic()
-    action = "stopped"
-    error = None
-    if runtime_process.process.poll() is None:
-        try:
-            send_signal_to_owned_process(runtime_process.process.pid, signal.SIGTERM)
-            if not wait_until_dead(runtime_process.process.pid, TIMEOUT_POLICY["stop_grace"]):
-                send_signal_to_owned_process(runtime_process.process.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
-                if wait_until_dead(runtime_process.process.pid, 5):
-                    action = "force_stopped"
-                else:
-                    action = "failed"
-                    error = "process still alive after force kill"
-        except OSError as exc:
-            action = "failed"
-            error = str(exc)
-    else:
-        action = "already_exited"
+    action, error, steps = stop_managed_popen(runtime_process.process, timeout_seconds=TIMEOUT_POLICY["stop_grace"])
     duration_ms = int((time.monotonic() - started) * 1000)
     status = "ok" if action in {"stopped", "force_stopped", "already_exited"} else "infra_failed"
     classification = f"managed_{runtime_process.name}_stopped" if status == "ok" else f"managed_{runtime_process.name}_stop_failed"
@@ -5658,6 +5812,7 @@ def stop_release_gates_managed_process(project_root: Path, logs_dir: Path, index
         f"classification: {classification}",
         f"pid: {runtime_process.process.pid}",
         f"action: {action}",
+        f"steps: {', '.join(steps) if steps else '<none>'}",
         f"duration_ms: {duration_ms}",
         f"process_log: {rel(runtime_process.log_path, project_root)}",
     ]
@@ -5671,10 +5826,42 @@ def stop_release_gates_managed_process(project_root: Path, logs_dir: Path, index
         classification=classification,
         message=message,
         cwd=rel(runtime_process.cwd, project_root),
-        command=["SIGTERM", str(runtime_process.process.pid)],
+        command=["stop-managed-process", str(runtime_process.process.pid)],
         duration_ms=duration_ms,
         log_path=rel(log_path, project_root),
-        details={"pid": runtime_process.process.pid, "action": action, "processLog": rel(runtime_process.log_path, project_root), "error": error},
+        details={"pid": runtime_process.process.pid, "action": action, "steps": steps, "processLog": rel(runtime_process.log_path, project_root), "error": error},
+    )
+
+
+def release_gates_skip_for_frontend_prepare_failed(project_root: Path, logs_dir: Path, index: int, spec: GateSpec, blocker: GateResult) -> GateResult:
+    log_path = release_gate_log_path(logs_dir, index, spec.name)
+    message = f"Skipped because frontend_prepare_dependencies did not pass: {blocker.classification} — {blocker.message}"
+    log_path.write_text(
+        "\n".join(
+            [
+                f"# {spec.name}",
+                "status: skipped_prerequisite",
+                "classification: frontend_prepare_dependencies_failed",
+                f"cwd: {spec.cwd or '.'}",
+                f"reason: {message}",
+                f"blocked_by_log: {blocker.log_path or '<none>'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    details = dict(spec.details)
+    details["blockedBy"] = {"gate": blocker.name, "status": blocker.status, "classification": blocker.classification, "logPath": blocker.log_path}
+    return GateResult(
+        name=spec.name,
+        status="skipped_prerequisite",
+        classification="frontend_prepare_dependencies_failed",
+        message=message,
+        cwd=spec.cwd or ".",
+        command=spec.command,
+        required=spec.required,
+        log_path=rel(log_path, project_root),
+        details=details,
     )
 
 
@@ -5827,7 +6014,7 @@ def release_gate_explicit_test_database_url(project_root: Path) -> tuple[str | N
 
 
 def release_gate_smoke_env(project_root: Path) -> dict[str, str]:
-    env_extra = {"BASE_URL": smoke_expected_base_url(project_root).rstrip("/")}
+    env_extra = {"BASE_URL": smoke_expected_base_url(project_root).rstrip("/"), "PYTHONDONTWRITEBYTECODE": "1"}
     test_db_url, _ = release_gate_explicit_test_database_url(project_root)
     if test_db_url:
         env_extra["TEST_DATABASE_URL"] = test_db_url
@@ -6300,7 +6487,7 @@ def render_release_gates_profile_plan(plan: ReleaseGatesProfilePlan) -> str:
     else:
         lines.append("- none")
     lines.append("")
-    lines.append("## Allowed side effects")
+    lines.append("## Allowed scoped side effects")
     lines.append("")
     if plan.allowed_side_effects:
         for item in plan.allowed_side_effects:
@@ -6308,7 +6495,7 @@ def render_release_gates_profile_plan(plan: ReleaseGatesProfilePlan) -> str:
     else:
         lines.append("- none")
     lines.append("")
-    lines.append("## Denied side effects")
+    lines.append("## Denied unscoped side effects")
     lines.append("")
     for item in plan.denied_side_effects:
         lines.append(f"- `{item['category']}` — {item['description']}")
@@ -6336,8 +6523,8 @@ def print_release_gates_profile_consent(plan: ReleaseGatesProfilePlan) -> None:
         print(f"Consent plan: {plan.consent_summary_path}")
     allowed = ", ".join(sorted({item["category"] for item in plan.allowed_side_effects})) or "none"
     denied = ", ".join(sorted({item["category"] for item in plan.denied_side_effects})) or "none"
-    print(f"Allowed side effects: {allowed}")
-    print(f"Denied side effects: {denied}")
+    print(f"Allowed scoped side effects: {allowed}")
+    print(f"Denied unscoped side effects: {denied}")
 
 
 def normalize_clean_machine_profile(value: str | None) -> str:
@@ -6791,6 +6978,7 @@ def build_release_gate_specs(
     managed_frontend_url: str | None = None,
     managed_frontend_host: str | None = None,
     managed_frontend_port: int | None = None,
+    smoke_run_id: str | None = None,
 ) -> list[GateSpec]:
     specs: list[GateSpec] = [
         GateSpec(
@@ -6871,6 +7059,8 @@ def build_release_gate_specs(
         smoke_env = release_gate_smoke_env(project_root)
         if managed_backend_api_base_url:
             smoke_env["BASE_URL"] = managed_backend_api_base_url.rstrip("/")
+    if smoke_run_id:
+        smoke_env.setdefault("SMOKE_RUN_ID", smoke_run_id)
     for smoke_name in ["backend_python_smoke_first", "backend_python_smoke_second"]:
         if smoke_allowed or dry_run:
             details = {"smokePermission": smoke_reason, "managedTestDb": bool(managed_test_db_url), "managedRuntime": managed_runtime_requested}
@@ -7114,7 +7304,17 @@ def build_release_gate_specs(
         real_backend_details["frontendUrl"] = managed_frontend_url.rstrip("/")
     if managed_test_db_url:
         real_backend_details["maskedDatabaseUrl"] = mask_database_url(managed_test_db_url)
-    if real_backend_spec_project_path.exists() and (include_real_backend_browser or dry_run) and (real_backend_allowed or dry_run):
+    if not frontend_deps_ready and not dry_run:
+        specs.append(
+            release_gate_frontend_dependency_skip_spec(
+                name="browser_real_backend_path",
+                command=["npm", "run", "test:browser:real-backend"],
+                description="Run the dedicated Playwright browser path against a live backend without page.route API mocks.",
+                reason=frontend_deps_reason or "frontend dependencies are missing or stale; run `python tools/devbootstrap.py prepare-frontend --install-mode=stale` before real-backend browser gates.",
+                details=real_backend_details,
+            )
+        )
+    elif real_backend_spec_project_path.exists() and (include_real_backend_browser or dry_run) and (real_backend_allowed or dry_run):
         if dry_run and not real_backend_allowed:
             real_backend_details["dryRunPrerequisiteBypassed"] = True
         specs.append(
@@ -7223,10 +7423,26 @@ def build_release_gate_specs(
     return specs
 
 
+def release_gates_critical_ignored_covered(gates: list[GateResult]) -> bool:
+    return any(gate.name == "backend_cargo_test_db_ignored" and gate.status == "ok" for gate in gates)
+
+
+def release_gates_effective_required_statuses(gates: list[GateResult]) -> set[str]:
+    ignored_covered = release_gates_critical_ignored_covered(gates)
+    statuses: set[str] = set()
+    for gate in gates:
+        if not gate.required:
+            continue
+        if ignored_covered and gate.classification == "critical_tests_ignored":
+            continue
+        statuses.add(gate.status)
+    return statuses
+
+
 def release_gates_overall_status(gates: list[GateResult], *, dry_run: bool) -> tuple[str, str]:
     if dry_run:
         return "dry_run", "release_gates_dry_run"
-    statuses = {gate.status for gate in gates if gate.required}
+    statuses = release_gates_effective_required_statuses(gates)
     if "failed" in statuses:
         return "failed", "release_gates_failed"
     if "timeout" in statuses:
@@ -7245,7 +7461,8 @@ def release_gates_overall_status(gates: list[GateResult], *, dry_run: bool) -> t
 def release_gates_next_action_for_code(code: str) -> str | None:
     actions = {
         "missing_prerequisite": "Install the missing command shown in the gate log or use a shell where it is on PATH, then rerun release-gates.",
-        "frontend_dependencies_missing": "Run `python tools/devbootstrap.py release-gates --prepare-deps` to let release-gates install missing/stale frontend dependencies before frontend gates, or run `python tools/devbootstrap.py prepare-frontend --install-mode=stale` first.",
+        "frontend_dependencies_missing": "Run `python tools/devbootstrap.py prepare-frontend --install-mode=stale` first or rerun `python tools/devbootstrap.py release-gates --prepare-deps`; on Windows, if npm is found as npm.CMD but still fails, use this patched devbootstrap command resolver before editing package-lock.json.",
+        "frontend_prepare_dependencies_failed": "Fix the primary `frontend_prepare_dependencies` gate first, then rerun downstream frontend/browser gates.",
         "frontend_dependencies_stale": "Run `python tools/devbootstrap.py release-gates --prepare-deps` or `python tools/devbootstrap.py prepare-frontend --install-mode=stale` to refresh the frontend install marker after package/lockfile/runtime changes.",
         "frontend_lockfile_mismatch": "Fix frontend/package-lock.json in a separate patch, then rerun release-gates; release-gates will not silently update lockfiles.",
         "dependency_network_unavailable": "Restore network/package-cache access and rerun dependency preparation; this is an infrastructure failure, not a product test failure.",
@@ -7262,6 +7479,8 @@ def release_gates_next_action_for_code(code: str) -> str | None:
         "managed_frontend_port_occupied": "Rerun release-gates; managed runtime uses dynamic ports and refuses to reuse a foreign/live frontend if the selected port races.",
         "managed_runtime_unavailable": "Inspect managed runtime start gates and `logs/runtime-state.json`, then rerun after fixing backend/frontend startup failures.",
         "managed_backend_unavailable": "Inspect `managed_backend_start` and the managed backend process log, then rerun after freeing the backend port and fixing startup failures.",
+        "managed_backend_stop_failed": "Inspect the owned managed backend stop log; on Windows this should use CTRL_BREAK/terminate/taskkill only for the current run's Popen-owned process tree.",
+        "managed_frontend_stop_failed": "Inspect the owned managed frontend stop log; on Windows this should use CTRL_BREAK/terminate/taskkill only for the current run's Popen-owned process tree.",
         "managed_frontend_started": "Managed frontend started; continue with browser gates.",
         "smoke_db_write_guard": "For backend Python smoke, restart the live backend against the test DB and set `TEST_DATABASE_URL`; use `--allow-dev-db-write` only when the configured dev DB is disposable.",
         "real_backend_browser_opt_in_required": "After frontend deps and write-safe DB are ready, add `--include-real-backend-browser` to run the no-mock browser path.",
@@ -7282,7 +7501,10 @@ def release_gates_add_unique_action(actions: list[str], action: str, seen: set[s
 def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
     result.overall_status, result.classification = release_gates_overall_status(result.gates, dry_run=result.dry_run)
     result.findings.clear()
+    ignored_covered = release_gates_critical_ignored_covered(result.gates)
     for gate in result.gates:
+        if ignored_covered and gate.classification == "critical_tests_ignored":
+            continue
         if gate.status not in {"ok", "planned"}:
             severity = "warn" if (not gate.required or gate.status in {"partial_pass", "not_implemented", "skipped_prerequisite", "skipped_optional"}) else "fail"
             result.findings.append(
@@ -7311,7 +7533,10 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
             "managed_backend_port_occupied",
             "managed_frontend_port_occupied",
             "managed_backend_unavailable",
+            "managed_backend_stop_failed",
+            "managed_frontend_stop_failed",
             "frontend_dependencies_missing",
+            "frontend_prepare_dependencies_failed",
             "browser_smoke_prerequisite",
             "db_test_prerequisite_missing",
             "smoke_db_write_guard",
@@ -7329,6 +7554,12 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
                     release_gates_add_unique_action(result.next_actions, action, seen_actions)
         if result.overall_status == "incomplete":
             release_gates_add_unique_action(result.next_actions, "Resolve skipped prerequisites, run opt-in real-backend browser/clean-machine gates when needed, or implement missing release-gates before treating this as a full v1 release signal.", seen_actions)
+        if result.managed_test_db and result.managed_test_db.retained and result.managed_test_db.cleanup_command:
+            release_gates_add_unique_action(
+                result.next_actions,
+                f"Managed test DB was retained by policy; clean it up when no longer needed with `{result.managed_test_db.cleanup_command}`.",
+                seen_actions,
+            )
         if not result.next_actions:
             release_gates_add_unique_action(result.next_actions, "Inspect release-gates logs and fix the classified finding before rerunning.", seen_actions)
 
@@ -7444,10 +7675,13 @@ def release_gates_build_ledger(result: ReleaseGatesResult) -> dict[str, Any]:
     for entry in entries:
         status = str(entry["status"])
         counts[status] = counts.get(status, 0) + 1
+    ignored_covered = release_gates_critical_ignored_covered(result.gates)
     blockers = [
         entry
         for entry in entries
-        if entry["required"] and entry["status"] in {"failed", "infra_failed", "skipped_prerequisite", "partial_pass"}
+        if entry["required"]
+        and entry["status"] in {"failed", "infra_failed", "skipped_prerequisite", "partial_pass"}
+        and not (ignored_covered and entry["classification"] == "critical_tests_ignored")
     ]
     return {
         "schemaVersion": 1,
@@ -7485,10 +7719,13 @@ def release_gates_product_regressions_proven(result: ReleaseGatesResult) -> str:
     ]
     if product_failures:
         return "yes"
+    ignored_covered = release_gates_critical_ignored_covered(result.gates)
     unknown_signal = [
         gate
         for gate in result.gates
-        if gate.required and release_gates_normalized_status(gate) in {"infra_failed", "skipped_prerequisite", "partial_pass"}
+        if gate.required
+        and release_gates_normalized_status(gate) in {"infra_failed", "skipped_prerequisite", "partial_pass"}
+        and not (ignored_covered and gate.classification == "critical_tests_ignored")
     ]
     if unknown_signal:
         return "none-proven-but-incomplete"
@@ -7516,7 +7753,10 @@ def release_gates_infrastructure_blockers(result: ReleaseGatesResult) -> list[di
 def release_gates_unverified_areas(result: ReleaseGatesResult) -> list[dict[str, str]]:
     areas: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
+    ignored_covered = release_gates_critical_ignored_covered(result.gates)
     for gate in result.gates:
+        if ignored_covered and gate.classification == "critical_tests_ignored":
+            continue
         status = release_gates_normalized_status(gate)
         if status not in {"infra_failed", "skipped_prerequisite", "skipped_optional", "partial_pass", "planned"}:
             continue
@@ -7676,7 +7916,9 @@ def release_gates_rerun_commands(result: ReleaseGatesResult, blockers: list[dict
     codes = {blocker["code"] for blocker in blockers}
     if result.dry_run:
         commands.append("python tools/devbootstrap.py release-gates")
-    if any(code in codes for code in {"frontend_dependencies_missing", "frontend_dependencies_stale", "browser_smoke_prerequisite"}):
+    if any(code in codes for code in {"frontend_dependencies_missing", "frontend_dependencies_stale", "frontend_prepare_dependencies_failed"}):
+        commands.append("python tools/devbootstrap.py prepare-frontend --install-mode=stale")
+    if any(code in codes for code in {"frontend_dependencies_missing", "frontend_dependencies_stale", "frontend_prepare_dependencies_failed", "browser_smoke_prerequisite"}):
         commands.append("python tools/devbootstrap.py release-gates --prepare-deps --install-playwright-browsers")
     if any(code in codes for code in {"db_test_prerequisite_missing", "smoke_db_write_guard", "real_backend_browser_write_guard", "managed_runtime_db_unavailable"}):
         commands.append("python tools/devbootstrap.py release-gates --managed-test-db --managed-runtime")
@@ -7706,6 +7948,21 @@ def render_release_gates_next_actions_md(result: ReleaseGatesResult) -> str:
             lines.append(f"- {action}")
     else:
         lines.append("- No next actions were generated.")
+    if result.managed_test_db and result.managed_test_db.retained and result.managed_test_db.cleanup_command:
+        lines.extend(
+            [
+                "",
+                "## Retained managed test DB",
+                "",
+                "The managed test database was kept by retention policy because the run did not fully pass.",
+                "",
+                "Cleanup when it is no longer needed:",
+                "",
+                "```bash",
+                result.managed_test_db.cleanup_command,
+                "```",
+            ]
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -7802,8 +8059,8 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append(f"- Explicit profile: `{result.profile_plan.explicit_profile}`")
         lines.append(f"- Consent summary: `{result.profile_plan.consent_summary_path or '<none>'}`")
         lines.append(f"- Description: {result.profile_plan.description}")
-        lines.append("- Allowed side effects: " + (", ".join(f"`{item['category']}`" for item in result.profile_plan.allowed_side_effects) if result.profile_plan.allowed_side_effects else "none"))
-        lines.append("- Denied side effects: " + ", ".join(f"`{item['category']}`" for item in result.profile_plan.denied_side_effects))
+        lines.append("- Allowed scoped side effects: " + (", ".join(f"`{item['category']}`" for item in result.profile_plan.allowed_side_effects) if result.profile_plan.allowed_side_effects else "none"))
+        lines.append("- Denied unscoped side effects: " + ", ".join(f"`{item['category']}`" for item in result.profile_plan.denied_side_effects))
     if result.managed_test_db and result.managed_test_db.enabled:
         lines.append("")
         lines.append("## Managed test database")
@@ -8058,6 +8315,7 @@ def command_release_gates(args: argparse.Namespace) -> int:
             )
             next_gate_index += 1
 
+    frontend_prepare_blocker: GateResult | None = None
     if args.prepare_deps is not None:
         prepare_deps_mode = normalize_frontend_prepare_dep_mode(args.prepare_deps)
     elif args.prepare_frontend:
@@ -8080,16 +8338,17 @@ def command_release_gates(args: argparse.Namespace) -> int:
             details={"prepareDepsMode": prepare_deps_mode, "compatPrepareFrontendFlag": bool(args.prepare_frontend)},
         )
         effective_timeout = min(args.timeout_seconds, prepare_spec.timeout_seconds) if args.timeout_seconds > 0 else prepare_spec.timeout_seconds
-        result.gates.append(
-            run_gate_process_step(
-                project_root=project_root,
-                logs_dir=logs_dir,
-                index=next_gate_index,
-                spec=prepare_spec,
-                timeout_seconds=effective_timeout,
-                dry_run=args.dry_run,
-            )
+        prepare_gate = run_gate_process_step(
+            project_root=project_root,
+            logs_dir=logs_dir,
+            index=next_gate_index,
+            spec=prepare_spec,
+            timeout_seconds=effective_timeout,
+            dry_run=args.dry_run,
         )
+        result.gates.append(prepare_gate)
+        if prepare_gate.status not in {"ok", "planned"}:
+            frontend_prepare_blocker = prepare_gate
         next_gate_index += 1
 
         backend_warmup_spec = GateSpec(
@@ -8130,6 +8389,7 @@ def command_release_gates(args: argparse.Namespace) -> int:
         managed_frontend_url=managed_runtime_state.frontend_url if managed_runtime_state else None,
         managed_frontend_host=managed_runtime_state.frontend_host if managed_runtime_state else None,
         managed_frontend_port=managed_runtime_state.frontend_port if managed_runtime_state else None,
+        smoke_run_id=run_id_value,
     )
 
     for spec in specs:
@@ -8142,8 +8402,25 @@ def command_release_gates(args: argparse.Namespace) -> int:
     managed_frontend_start_failed: str | None = None
     managed_backend_gate_names = {"backend_python_smoke_first", "backend_python_smoke_second", "browser_real_backend_path", "frontend_browser_smoke"}
     managed_frontend_gate_names = {"frontend_browser_smoke", "browser_real_backend_path"}
+    frontend_prepare_downstream_gate_names = {
+        "frontend_build",
+        "frontend_unit_integration",
+        "frontend_browser_smoke",
+        "playwright_install",
+        "browser_real_backend_path",
+    }
 
     for spec in specs:
+        if (
+            frontend_prepare_blocker is not None
+            and spec.name in frontend_prepare_downstream_gate_names
+            and not args.dry_run
+            and not spec.skip_reason
+            and not spec.not_implemented_reason
+        ):
+            result.gates.append(release_gates_skip_for_frontend_prepare_failed(project_root, logs_dir, next_gate_index, spec, frontend_prepare_blocker))
+            next_gate_index += 1
+            continue
         requires_managed_runtime = effective_managed_runtime and spec.name in managed_backend_gate_names and not args.dry_run and not spec.skip_reason and not spec.not_implemented_reason
         if requires_managed_runtime:
             if not managed_runtime_state or not managed_runtime_db_url:
@@ -9062,6 +9339,59 @@ def case_self_check_release_gates_playwright_classifier() -> str:
     return "Playwright missing-browser classifier checked"
 
 
+def case_self_check_release_gates_frontend_classifier_priority() -> str:
+    missing_npm_log = """FAIL npm_version: npm availability check. — command not found
+frontend/package-lock.json presence check; npm ci is preferred when it exists.
+FAIL missing_npm: npm is not available on PATH.
+"""
+    status, classification, _ = classify_gate_output("frontend_prepare_dependencies", missing_npm_log, "", None, 1)
+    assert status == "infra_failed"
+    assert classification == "frontend_dependencies_missing", classification
+    lockfile_log = """npm ERR! code EUSAGE
+npm ERR! npm ci can only install packages when your package.json and package-lock.json are in sync.
+npm ERR! Missing: vite@5.4.2 from lock file
+"""
+    status, classification, _ = classify_gate_output("frontend_prepare_dependencies", lockfile_log, "", None, 1)
+    assert status == "infra_failed"
+    assert classification == "frontend_lockfile_mismatch", classification
+    return "frontend prepare classifier priority checked"
+
+
+def case_self_check_windows_command_resolution() -> str:
+    command = command_for_subprocess(
+        ["npm", "--version"],
+        resolved_path=r"C:\Program Files\nodejs\npm.CMD",
+        platform_name="nt",
+    )
+    assert command[:4] == ["cmd.exe", "/d", "/s", "/c"], command
+    assert "npm.CMD" in command[4] and "--version" in command[4], command
+    direct = command_for_subprocess(["node", "--version"], resolved_path=r"C:\Program Files\nodejs\node.exe", platform_name="nt")
+    assert direct[0].endswith("node.exe"), direct
+    return "Windows .cmd command resolution checked"
+
+
+def case_self_check_release_gates_ignored_covered_by_db_gate() -> str:
+    gates = [
+        GateResult(
+            name="backend_cargo_test_default",
+            status="partial_pass",
+            classification="critical_tests_ignored",
+            message="ignored DB tests",
+            cwd="backend",
+        ),
+        GateResult(
+            name="backend_cargo_test_db_ignored",
+            status="ok",
+            classification="ok",
+            message="include-ignored passed",
+            cwd="backend",
+        ),
+    ]
+    overall, classification = release_gates_overall_status(gates, dry_run=False)
+    assert overall == "ok", (overall, classification)
+    return "covered ignored Rust tests are not release blockers"
+
+
 
 def case_self_check_managed_test_db_url_derivation() -> str:
     source = "postgres://planner:secret@127.0.0.1:15432/p2p_planner_dev?sslmode=disable"
@@ -9374,6 +9704,9 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_archive_exclusions", case_self_check_release_gates_archive_exclusions)
     self_check_case(result, "release_gates_ignored_classifier", case_self_check_release_gates_ignored_classifier)
     self_check_case(result, "release_gates_playwright_classifier", case_self_check_release_gates_playwright_classifier)
+    self_check_case(result, "release_gates_frontend_classifier_priority", case_self_check_release_gates_frontend_classifier_priority)
+    self_check_case(result, "windows_command_resolution", case_self_check_windows_command_resolution)
+    self_check_case(result, "release_gates_ignored_covered_by_db_gate", case_self_check_release_gates_ignored_covered_by_db_gate)
     self_check_case(result, "managed_test_db_url_derivation", case_self_check_managed_test_db_url_derivation)
     self_check_case(result, "managed_test_db_specs", case_self_check_managed_test_db_specs)
     self_check_case(result, "managed_runtime_specs", case_self_check_managed_runtime_specs)

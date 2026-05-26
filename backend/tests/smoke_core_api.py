@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -9,7 +10,21 @@ from datetime import datetime, timezone
 
 BASE_URL = os.environ.get('BASE_URL', 'http://127.0.0.1:18080/api/v1').rstrip('/')
 TIMEOUT = float(os.environ.get('TIMEOUT', '10'))
-SMOKE_USER_EMAIL = os.environ.get('SMOKE_USER_EMAIL', 'smoke-user@local.test')
+
+
+def default_smoke_user_email() -> str:
+    explicit_email = os.environ.get('SMOKE_USER_EMAIL')
+    if explicit_email:
+        return explicit_email
+    run_id = os.environ.get('SMOKE_RUN_ID') or os.environ.get('DEVBOOTSTRAP_RUN_ID')
+    if run_id:
+        slug = re.sub(r'[^a-zA-Z0-9]+', '-', run_id).strip('-').lower()[:48]
+        if slug:
+            return f'smoke-user-{slug}@local.test'
+    return 'smoke-user@local.test'
+
+
+SMOKE_USER_EMAIL = default_smoke_user_email()
 SMOKE_USER_PASSWORD = os.environ.get('SMOKE_USER_PASSWORD', 'SmokePass123!')
 SMOKE_USER_DISPLAY_NAME = os.environ.get('SMOKE_USER_DISPLAY_NAME', 'Smoke Test User')
 
@@ -161,6 +176,7 @@ def sign_up_ephemeral_user(email_suffix: str):
 
 
 def main():
+    global ACCESS_TOKEN
     print(f"BASE_URL={BASE_URL}")
     print(f"SMOKE_USER_EMAIL={SMOKE_USER_EMAIL}")
 
