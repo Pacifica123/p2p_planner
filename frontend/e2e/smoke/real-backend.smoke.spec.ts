@@ -59,5 +59,6 @@ test('real backend core kanban path uses API without mocks', async ({ page }) =>
   expect(apiRequests.some((entry) => entry.includes('/api/v1/auth/sign-up'))).toBeTruthy();
   expect(apiRequests.some((entry) => entry.includes('/api/v1/workspaces'))).toBeTruthy();
   expect(apiRequests.some((entry) => entry.includes('/api/v1/boards'))).toBeTruthy();
-  expect(apiRequests.some((entry) => entry.includes('/api/v1/columns'))).toBeTruthy();
+  expect(apiRequests.some((entry) => /\/api\/v1\/boards\/[^/]+\/columns/.test(entry))).toBeTruthy();
+  expect(apiRequests.some((entry) => /\/api\/v1\/boards\/[^/]+\/cards/.test(entry))).toBeTruthy();
 });
