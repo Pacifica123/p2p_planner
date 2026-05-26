@@ -357,7 +357,13 @@ def command_for_subprocess(command: list[str], *, resolved_path: str | None = No
         return command
     resolved_command = [resolved, *command[1:]]
     if effective_platform == "nt" and resolved.lower().endswith((".cmd", ".bat")):
-        return ["cmd.exe", "/d", "/s", "/c", subprocess.list2cmdline(resolved_command)]
+        # Batch launchers such as npm.CMD are not regular executables on Windows.
+        # Passing one quoted command string through `cmd /s /c` is fragile when the
+        # launcher lives under `C:\Program Files\...`; cmd may preserve the outer
+        # quotes and try to execute a literal `"C:\...\npm.CMD"`.  Use `call` with
+        # argv-style arguments instead, so Python performs Windows command-line
+        # quoting once and cmd receives: cmd.exe /d /c call "...\npm.CMD" args...
+        return ["cmd.exe", "/d", "/c", "call", resolved, *command[1:]]
     return resolved_command
 
 
@@ -4984,6 +4990,22 @@ def replace_database_name_in_url(value: str, database_name: str) -> str:
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
+def database_url_with_credentials(value: str, *, database_name: str, username: str | None, password: str | None) -> str:
+    parsed = urllib.parse.urlsplit(value)
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    auth = ""
+    if username:
+        auth = urllib.parse.quote(username, safe="")
+        if password is not None:
+            auth += ":" + urllib.parse.quote(password, safe="")
+        auth += "@"
+    path = "/" + urllib.parse.quote(database_name, safe="")
+    return urllib.parse.urlunsplit((parsed.scheme, auth + host + port, path, parsed.query, parsed.fragment))
+
+
 def release_gate_managed_db_env(database_url: str) -> dict[str, str]:
     return {
         "DATABASE__URL": database_url,
@@ -5043,6 +5065,10 @@ def build_release_gates_managed_test_database(
     retention: str,
     dry_run: bool,
     start_db_if_needed: bool,
+    test_db_admin_user: str | None = None,
+    test_db_admin_password: str | None = None,
+    test_db_admin_password_env: str | None = None,
+    test_db_maintenance_db: str = "postgres",
 ) -> ManagedTestDatabaseState:
     state = ManagedTestDatabaseState(enabled=True, retention=retention, run_id=run_id_value, created_at=iso_now())
     metadata_path = run_dir / "managed-test-db.json"
@@ -5065,16 +5091,45 @@ def build_release_gates_managed_test_database(
         state.message = "DATABASE__URL/DATABASE_URL is not a complete PostgreSQL URL."
         return state
 
+    admin_password_value = test_db_admin_password
+    admin_password_source: str | None = "flag" if test_db_admin_password is not None else None
+    if admin_password_value is None and test_db_admin_password_env:
+        admin_password_value = os.environ.get(test_db_admin_password_env)
+        admin_password_source = f"env:{test_db_admin_password_env}" if admin_password_value is not None else f"missing-env:{test_db_admin_password_env}"
+        if admin_password_value is None and dry_run:
+            admin_password_source = f"env:{test_db_admin_password_env}:not-read-dry-run"
+        elif admin_password_value is None:
+            state.status = "infra_failed"
+            state.classification = "managed_test_db_admin_password_missing"
+            state.message = f"--test-db-admin-password-env={test_db_admin_password_env} was provided, but that environment variable is not set."
+            state.details["adminCredentials"] = {"user": test_db_admin_user, "passwordSource": admin_password_source}
+            write_json(metadata_path, managed_test_db_public_payload(state))
+            return state
+
+    maintenance_database = test_db_maintenance_db or "postgres"
+    admin_credentials_overridden = bool(test_db_admin_user or admin_password_value is not None)
+    admin_user = test_db_admin_user or (source_probe.username if admin_credentials_overridden else None)
+
     database_name = release_gate_safe_managed_db_name(TOOL_VERSION, run_id_value)
     database_url = replace_database_name_in_url(source_url, database_name)
-    maintenance_url = replace_database_name_in_url(source_url, "postgres")
+    if admin_credentials_overridden:
+        maintenance_url = database_url_with_credentials(source_url, database_name=maintenance_database, username=admin_user, password=admin_password_value)
+    else:
+        maintenance_url = replace_database_name_in_url(source_url, maintenance_database)
+    state.details["maintenanceDatabase"] = maintenance_database
+    state.details["adminCredentials"] = {
+        "overridden": admin_credentials_overridden,
+        "user": admin_user or source_probe.username,
+        "passwordSource": admin_password_source or ("source-url" if source_probe.has_password else "none"),
+    }
     state.database_name = database_name
     state.database_url = database_url
     state.masked_database_url = mask_database_url(database_url)
     state.maintenance_url = maintenance_url
     state.masked_maintenance_url = mask_database_url(maintenance_url)
     state.cleanup_command = release_gate_managed_db_cleanup_command(maintenance_url, database_name)
-    create_sql = f"CREATE DATABASE {postgres_quote_identifier(database_name)};"
+    owner_clause = f" OWNER {postgres_quote_identifier(source_probe.username)}" if source_probe.username else ""
+    create_sql = f"CREATE DATABASE {postgres_quote_identifier(database_name)}{owner_clause};"
     state.create_command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-Atc", create_sql]
     drop_sql = f"DROP DATABASE IF EXISTS {postgres_quote_identifier(database_name)};"
     state.drop_command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-Atc", drop_sql]
@@ -6438,11 +6493,26 @@ def resolve_release_gates_profile_args(args: argparse.Namespace) -> ReleaseGates
         clean_machine_retention = str(defaults.get("clean_machine_retention") or DEFAULT_CLEAN_MACHINE_RETENTION)
     args.clean_machine_retention = clean_machine_retention
 
+    test_db_maintenance_db = str(getattr(args, "test_db_maintenance_db", None) or "postgres")
+    args.test_db_maintenance_db = test_db_maintenance_db
+    if test_db_maintenance_db != "postgres":
+        explicit_overrides["test_db_maintenance_db"] = test_db_maintenance_db
+    if getattr(args, "test_db_admin_user", None):
+        explicit_overrides["test_db_admin_user"] = str(args.test_db_admin_user)
+    if getattr(args, "test_db_admin_password_env", None):
+        explicit_overrides["test_db_admin_password_env"] = str(args.test_db_admin_password_env)
+    if getattr(args, "test_db_admin_password", None) is not None:
+        explicit_overrides["test_db_admin_password"] = "<provided>"
+
     effective.update(
         {
             "profile": profile,
             "prepare_deps": prepare_deps,
             "test_db_retention": test_db_retention,
+            "test_db_maintenance_db": test_db_maintenance_db,
+            "test_db_admin_user": getattr(args, "test_db_admin_user", None) or "<source-url-user>",
+            "test_db_admin_password": "<provided>" if getattr(args, "test_db_admin_password", None) is not None else "<not-provided>",
+            "test_db_admin_password_env": getattr(args, "test_db_admin_password_env", None) or "<not-provided>",
             "clean_machine_profile": clean_machine_profile,
             "clean_machine_retention": clean_machine_retention,
             "real_backend_browser_spec": getattr(args, "real_backend_browser_spec", "e2e/smoke/real-backend.smoke.spec.ts"),
@@ -7471,7 +7541,9 @@ def release_gates_next_action_for_code(code: str) -> str | None:
         "managed_test_db_source_missing": "Set backend `DATABASE__URL`/`DATABASE_URL` or copy `backend/.env.example` to `backend/.env`, then rerun `release-gates --managed-test-db`.",
         "managed_test_db_source_invalid": "Fix backend `DATABASE__URL`/`DATABASE_URL`; managed test DB needs a complete PostgreSQL URL with host, port, database and user.",
         "postgres_client_missing": "Install PostgreSQL client tools (`psql`, optionally `pg_dump`) or use a shell where they are on PATH before rerunning `release-gates --managed-test-db`.",
-        "postgres_createdb_permission_denied": "Use a PostgreSQL role with CREATEDB privilege or start the project compose PostgreSQL and rerun `release-gates --managed-test-db --start-db-if-needed`.",
+        "managed_test_db_admin_password_missing": "Set the environment variable named by `--test-db-admin-password-env` or pass `--test-db-admin-password` before rerunning managed DB release-gates.",
+        "postgres_auth_failed": "Pass a PostgreSQL maintenance role explicitly, for example `--test-db-admin-user postgres --test-db-admin-password-env P2P_TEST_DB_ADMIN_PASSWORD`, or fix the password in backend `DATABASE__URL`.",
+        "postgres_createdb_permission_denied": "Use a PostgreSQL role with CREATEDB privilege, for example `--test-db-admin-user <role> --test-db-admin-password-env <ENV_VAR>`, or start the project compose PostgreSQL and rerun `release-gates --managed-test-db --start-db-if-needed`.",
         "postgres_unavailable": "Start PostgreSQL first, or rerun with `--managed-test-db --start-db-if-needed` to allow devbootstrap to start the project compose PostgreSQL when the configured port is closed.",
         "managed_test_db_unavailable": "Inspect the `managed_test_db_prepare` gate log, fix PostgreSQL capability, then rerun `release-gates --managed-test-db`.",
         "managed_runtime_db_unavailable": "Use `--managed-test-db`, set TEST_DATABASE_URL, or explicitly pass `--allow-dev-db-write` before running `release-gates --managed-runtime`.",
@@ -8278,6 +8350,10 @@ def command_release_gates(args: argparse.Namespace) -> int:
             retention=args.test_db_retention,
             dry_run=args.dry_run,
             start_db_if_needed=args.start_db_if_needed,
+            test_db_admin_user=args.test_db_admin_user,
+            test_db_admin_password=args.test_db_admin_password,
+            test_db_admin_password_env=args.test_db_admin_password_env,
+            test_db_maintenance_db=args.test_db_maintenance_db,
         )
         result.managed_test_db = managed_state
         result.gates.append(release_gates_managed_db_prepare_result(project_root, logs_dir, next_gate_index, managed_state))
@@ -8415,7 +8491,6 @@ def command_release_gates(args: argparse.Namespace) -> int:
             frontend_prepare_blocker is not None
             and spec.name in frontend_prepare_downstream_gate_names
             and not args.dry_run
-            and not spec.skip_reason
             and not spec.not_implemented_reason
         ):
             result.gates.append(release_gates_skip_for_frontend_prepare_failed(project_root, logs_dir, next_gate_index, spec, frontend_prepare_blocker))
@@ -9363,11 +9438,38 @@ def case_self_check_windows_command_resolution() -> str:
         resolved_path=r"C:\Program Files\nodejs\npm.CMD",
         platform_name="nt",
     )
-    assert command[:4] == ["cmd.exe", "/d", "/s", "/c"], command
-    assert "npm.CMD" in command[4] and "--version" in command[4], command
+    assert command[:4] == ["cmd.exe", "/d", "/c", "call"], command
+    assert command[4].endswith("npm.CMD") and command[5:] == ["--version"], command
     direct = command_for_subprocess(["node", "--version"], resolved_path=r"C:\Program Files\nodejs\node.exe", platform_name="nt")
     assert direct[0].endswith("node.exe"), direct
     return "Windows .cmd command resolution checked"
+
+
+def case_self_check_frontend_prepare_blocker_converts_downstream_skip() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-frontend-blocker-") as tmp:
+        root = Path(tmp)
+        logs = root / "logs"
+        logs.mkdir(parents=True)
+        blocker = GateResult(
+            name="frontend_prepare_dependencies",
+            status="infra_failed",
+            classification="frontend_dependencies_missing",
+            message="npm unavailable",
+            cwd=".",
+            log_path="logs/01_frontend_prepare_dependencies.log",
+        )
+        spec = release_gate_frontend_dependency_skip_spec(
+            name="frontend_build",
+            command=["npm", "run", "build"],
+            description="Run frontend build.",
+            reason="npm is not available",
+            details={},
+        )
+        converted = release_gates_skip_for_frontend_prepare_failed(root, logs, 2, spec, blocker)
+    assert converted.status == "skipped_prerequisite"
+    assert converted.classification == "frontend_prepare_dependencies_failed"
+    assert converted.details["blockedBy"]["gate"] == "frontend_prepare_dependencies"
+    return "failed frontend prepare converts downstream frontend failures to prerequisite skips"
 
 
 def case_self_check_release_gates_ignored_covered_by_db_gate() -> str:
@@ -9397,8 +9499,10 @@ def case_self_check_managed_test_db_url_derivation() -> str:
     source = "postgres://planner:secret@127.0.0.1:15432/p2p_planner_dev?sslmode=disable"
     managed = replace_database_name_in_url(source, "p2pkanban_rg_test")
     maintenance = replace_database_name_in_url(source, "postgres")
+    admin_maintenance = database_url_with_credentials(source, database_name="postgres", username="postgres", password="admin secret")
     assert managed == "postgres://planner:secret@127.0.0.1:15432/p2pkanban_rg_test?sslmode=disable"
     assert maintenance == "postgres://planner:secret@127.0.0.1:15432/postgres?sslmode=disable"
+    assert admin_maintenance == "postgres://postgres:admin%20secret@127.0.0.1:15432/postgres?sslmode=disable"
     env = release_gate_managed_db_env(managed)
     assert env["DATABASE__URL"] == managed
     assert env["DATABASE_URL"] == managed
@@ -9706,6 +9810,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_playwright_classifier", case_self_check_release_gates_playwright_classifier)
     self_check_case(result, "release_gates_frontend_classifier_priority", case_self_check_release_gates_frontend_classifier_priority)
     self_check_case(result, "windows_command_resolution", case_self_check_windows_command_resolution)
+    self_check_case(result, "frontend_prepare_blocker_converts_downstream_skip", case_self_check_frontend_prepare_blocker_converts_downstream_skip)
     self_check_case(result, "release_gates_ignored_covered_by_db_gate", case_self_check_release_gates_ignored_covered_by_db_gate)
     self_check_case(result, "managed_test_db_url_derivation", case_self_check_managed_test_db_url_derivation)
     self_check_case(result, "managed_test_db_specs", case_self_check_managed_test_db_specs)
@@ -9901,6 +10006,10 @@ def build_parser() -> argparse.ArgumentParser:
     release_gates.add_argument("--test-db-retention", choices=["drop-always", "keep-on-failure", "keep-always"], default=None, help="Retention policy for --managed-test-db. Default/profile setting keeps failed runs for investigation and drops successful runs.")
     release_gates.add_argument("--keep-test-db", choices=["on-failure", "always", "never"], help="Compatibility alias for --test-db-retention: on-failure, always or never.")
     release_gates.add_argument("--start-db-if-needed", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="With --managed-test-db, start the project docker compose PostgreSQL service if the configured PostgreSQL port is closed. Use =false to override a profile.")
+    release_gates.add_argument("--test-db-admin-user", help="Optional PostgreSQL maintenance/admin role used to create/drop the managed test DB. The backend still connects as the user from DATABASE__URL/DATABASE_URL.")
+    release_gates.add_argument("--test-db-admin-password", help="Password for --test-db-admin-user. Prefer --test-db-admin-password-env to avoid exposing secrets in shell history/process listings.")
+    release_gates.add_argument("--test-db-admin-password-env", help="Environment variable containing the password for --test-db-admin-user.")
+    release_gates.add_argument("--test-db-maintenance-db", default="postgres", help="Maintenance database used for CREATE/DROP DATABASE when --managed-test-db is enabled. Default: postgres.")
     release_gates.add_argument("--dump-test-db-on-failure", nargs="?", const="true", default=None, type=parse_optional_bool_arg, metavar="BOOL", help="With --managed-test-db, try pg_dump into the run directory when release-gates fail and the DB is retained. Use =false to override a profile.")
     release_gates.add_argument("--prepare-frontend", action="store_true", help="Compatibility alias for --prepare-deps=stale.")
     release_gates.add_argument("--prepare-deps", nargs="?", const=DEFAULT_FRONTEND_PREPARE_DEP_MODE, choices=["never", "missing", "stale", "missing-or-stale", "always"], help="Prepare frontend/backend dependencies before release gates. Bare --prepare-deps uses stale/missing-or-stale mode.")
