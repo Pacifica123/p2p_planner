@@ -8035,6 +8035,351 @@ def release_gates_environment_fingerprint(project_root: Path, result: ReleaseGat
     }
 
 
+
+def release_gates_command_resolution_report(project_root: Path, result: ReleaseGatesResult) -> dict[str, Any]:
+    gate_commands: list[dict[str, Any]] = []
+    for gate in result.gates:
+        if not gate.command:
+            continue
+        details = command_resolution_details(gate.command)
+        gate_commands.append(
+            {
+                "gate": gate.name,
+                "status": gate.status,
+                "classification": gate.classification,
+                "required": gate.required,
+                "cwd": gate.cwd,
+                "command": details,
+                "available": bool(details.get("resolvedExecutable")),
+            }
+        )
+    tool_commands: dict[str, Any] = {}
+    for name, command in TOOL_COMMANDS.items():
+        details = command_resolution_details(command)
+        tool_commands[name] = {
+            "command": details,
+            "available": bool(details.get("resolvedExecutable")),
+        }
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "platform": {"osName": os.name, "system": platform.system()},
+        "purpose": "Explain exactly how every release-gates command is resolved before execution, especially on Windows .cmd/.bat launchers.",
+        "toolCommands": tool_commands,
+        "gateCommands": gate_commands,
+    }
+
+
+def render_release_gates_command_resolution_md(report: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("# release-gates command resolution")
+    lines.append("")
+    lines.append(f"- Run ID: `{report.get('runId')}`")
+    lines.append(f"- Generated: `{report.get('generatedAt')}`")
+    lines.append("")
+    lines.append("## Gate commands")
+    lines.append("")
+    lines.append("| Gate | Status | CWD | Display command | Resolved executable | Execution command |")
+    lines.append("|---|---|---|---|---|---|")
+    for item in report.get("gateCommands", []):
+        command = item.get("command") if isinstance(item.get("command"), dict) else {}
+        lines.append(
+            "| "
+            + f"`{item.get('gate')}` | `{item.get('status')}` | `{item.get('cwd')}` | "
+            + f"`{command.get('displayCommand') or ''}` | `{command.get('resolvedExecutable') or '<missing>'}` | `{command.get('executionCommand') or ''}` |"
+        )
+    if not report.get("gateCommands"):
+        lines.append("| `<none>` | | | | | |")
+    lines.append("")
+    lines.append("## Tool commands")
+    lines.append("")
+    lines.append("| Tool | Available | Resolved executable | Version command |")
+    lines.append("|---|---:|---|---|")
+    tool_commands = report.get("toolCommands") if isinstance(report.get("toolCommands"), dict) else {}
+    for name, item in sorted(tool_commands.items()):
+        command = item.get("command") if isinstance(item.get("command"), dict) else {}
+        lines.append(f"| `{name}` | {bool(item.get('available'))} | `{command.get('resolvedExecutable') or '<missing>'}` | `{command.get('displayCommand') or ''}` |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def release_gates_secret_sources(project_root: Path) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    sources: list[dict[str, Any]] = []
+    secret_values: dict[str, str] = {}
+    for relative in ["backend/.env", "backend/.env.example", "frontend/.env.local", "frontend/.env.example"]:
+        values, warnings = parse_env_file(project_root / relative)
+        secret_keys = sorted(key for key in values if is_secret_key(key))
+        for key in secret_keys:
+            value = values.get(key, "")
+            if value:
+                secret_values[f"{relative}:{key}"] = value
+        sources.append(
+            {
+                "path": relative,
+                "exists": (project_root / relative).is_file(),
+                "secretKeys": secret_keys,
+                "parseWarnings": warnings,
+            }
+        )
+    env_secret_keys = sorted(key for key, value in os.environ.items() if value and is_secret_key(key))
+    release_gates_env_value_allowlist = {
+        "DATABASE__URL",
+        "DATABASE_URL",
+        "TEST_DATABASE_URL",
+        "P2P_TEST_DB_ADMIN_PASSWORD",
+        "PGPASSWORD",
+    }
+    for key in env_secret_keys:
+        # The report inventories all secret-like environment key names, but the
+        # raw-value scan only uses release-gates input variables. CI/sandbox
+        # environments often contain unrelated secrets whose common-looking
+        # values can create false positives in plain documentation text.
+        if key.upper() in release_gates_env_value_allowlist:
+            secret_values[f"env:{key}"] = os.environ[key]
+    sources.append({"path": "process-environment", "exists": True, "secretKeys": env_secret_keys, "scannedValueKeys": sorted(release_gates_env_value_allowlist.intersection({key.upper() for key in env_secret_keys})), "parseWarnings": []})
+    return sources, secret_values
+
+
+def release_gates_scan_file_for_raw_secret_hits(path: Path, secret_values: dict[str, str]) -> list[str]:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return []
+    if b"\0" in data:
+        return []
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return []
+    hits: list[str] = []
+    for label, value in secret_values.items():
+        if not value or len(value) < 4:
+            continue
+        if value.lower() in {"true", "false", "none", "null", "password", "postgres", "planner", "localhost", "127.0.0.1"}:
+            continue
+        masked = mask_value(label.split(":")[-1], value)
+        if masked == value:
+            continue
+        if value in text:
+            hits.append(label)
+    return sorted(set(hits))
+
+
+def release_gates_redaction_report(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> dict[str, Any]:
+    sources, secret_values = release_gates_secret_sources(project_root)
+    files_with_hits: list[dict[str, Any]] = []
+    for path in sorted(run_dir.rglob("*")):
+        if path.is_dir() or path.suffix == ".zip":
+            continue
+        hits = release_gates_scan_file_for_raw_secret_hits(path, secret_values)
+        if hits:
+            files_with_hits.append(
+                {
+                    "path": path.relative_to(run_dir).as_posix(),
+                    "secretSourceLabels": hits,
+                }
+            )
+    status = "ok" if not files_with_hits else "raw_secret_hits_detected"
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "status": status,
+        "purpose": "Document which redaction rules were applied and whether generated release-gates artifacts still contain known raw secret values.",
+        "rules": [
+            "mask DATABASE__URL and DATABASE_URL credentials",
+            "mask environment/file keys containing SECRET, PASSWORD, TOKEN or COOKIE",
+            "sanitize release gate stdout/stderr before writing logs",
+            "exclude .env/.env.* and release-gates nested zip files from the shareable archive",
+        ],
+        "sources": sources,
+        "rawSecretHitFiles": files_with_hits,
+        "notes": [
+            "Secret values themselves are never written to this report.",
+            "Default/demo values such as postgres/password/planner/localhost are ignored to avoid noisy false positives.",
+        ],
+    }
+
+
+def render_release_gates_redaction_report_md(report: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("# release-gates redaction report")
+    lines.append("")
+    lines.append(f"- Run ID: `{report.get('runId')}`")
+    lines.append(f"- Status: `{report.get('status')}`")
+    lines.append("")
+    lines.append("## Rules")
+    lines.append("")
+    for rule in report.get("rules", []):
+        lines.append(f"- {rule}")
+    lines.append("")
+    lines.append("## Sensitive source inventory")
+    lines.append("")
+    lines.append("| Source | Exists | Secret keys |")
+    lines.append("|---|---:|---|")
+    for source in report.get("sources", []):
+        keys = ", ".join(f"`{key}`" for key in source.get("secretKeys", [])) or "none"
+        lines.append(f"| `{source.get('path')}` | {bool(source.get('exists'))} | {keys} |")
+    lines.append("")
+    hits = report.get("rawSecretHitFiles") if isinstance(report.get("rawSecretHitFiles"), list) else []
+    lines.append("## Raw secret scan")
+    lines.append("")
+    if not hits:
+        lines.append("No generated release-gates artifact contained a known raw secret value from scanned env sources.")
+    else:
+        for item in hits:
+            labels = ", ".join(f"`{label}`" for label in item.get("secretSourceLabels", []))
+            lines.append(f"- `{item.get('path')}` contains raw values from {labels}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def release_gates_required_bundle_artifacts() -> list[dict[str, Any]]:
+    return [
+        {"path": "bundle-manifest.json", "required": True, "description": "Machine-readable autopsy bundle manifest."},
+        {"path": "artifact-completeness.json", "required": True, "description": "Machine-readable required artifact completeness check."},
+        {"path": "artifact-completeness.md", "required": True, "description": "Human-readable required artifact completeness check."},
+        {"path": "summary.txt", "required": True, "description": "Compact terminal-independent run summary."},
+        {"path": "release-gates.md", "required": True, "description": "Human-readable release-gates report."},
+        {"path": "release-gates.json", "required": True, "description": "Machine-readable release-gates JSON envelope."},
+        {"path": "environment-fingerprint.json", "required": True, "description": "Root environment fingerprint for quick bundle triage."},
+        {"path": "command-resolution.json", "required": True, "description": "Machine-readable command resolution artifact."},
+        {"path": "command-resolution.md", "required": True, "description": "Human-readable command resolution artifact."},
+        {"path": "redaction-report.json", "required": True, "description": "Machine-readable redaction and raw-secret scan report."},
+        {"path": "redaction-report.md", "required": True, "description": "Human-readable redaction and raw-secret scan report."},
+        {"path": "logs/", "required": True, "description": "Per-gate logs directory."},
+        {"path": "remediation/gate-ledger.json", "required": True, "description": "Machine-readable gate ledger."},
+        {"path": "remediation/gate-ledger.md", "required": True, "description": "Human-readable gate ledger."},
+        {"path": "remediation/prerequisites.md", "required": True, "description": "Prerequisite blocker report."},
+        {"path": "remediation/skipped-gates.md", "required": True, "description": "Skipped/unverified gate report."},
+        {"path": "remediation/next-actions.md", "required": True, "description": "Targeted next actions."},
+        {"path": "remediation/rerun-commands.md", "required": True, "description": "Targeted rerun commands."},
+        {"path": "remediation/environment-fingerprint.json", "required": True, "description": "Environment fingerprint mirrored inside remediation bundle."},
+    ]
+
+
+def release_gates_artifact_record(run_dir: Path, spec: dict[str, Any]) -> dict[str, Any]:
+    relative = str(spec["path"])
+    required = bool(spec.get("required", True))
+    path = run_dir / relative.rstrip("/")
+    if relative.endswith("/"):
+        exists = path.is_dir()
+        child_count = len([item for item in path.rglob("*") if item.is_file()]) if exists else 0
+        status = "present" if exists and child_count > 0 else "unavailable"
+        return {
+            "path": relative,
+            "required": required,
+            "status": status,
+            "description": spec.get("description"),
+            "type": "directory",
+            "childFileCount": child_count,
+        }
+    if relative in {"artifact-completeness.json", "artifact-completeness.md"} and not path.exists():
+        return {
+            "path": relative,
+            "required": required,
+            "status": "generated_by_current_check",
+            "description": spec.get("description"),
+            "type": "file",
+            "sizeBytes": None,
+            "sha256": None,
+        }
+    exists = path.is_file()
+    return {
+        "path": relative,
+        "required": required,
+        "status": "present" if exists else "unavailable",
+        "description": spec.get("description"),
+        "type": "file",
+        "sizeBytes": path.stat().st_size if exists else None,
+        "sha256": sha256_file(path) if exists else None,
+    }
+
+
+def release_gates_artifact_completeness(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> dict[str, Any]:
+    artifacts = [release_gates_artifact_record(run_dir, spec) for spec in release_gates_required_bundle_artifacts()]
+    missing_required = [item for item in artifacts if item.get("required") and item.get("status") == "unavailable"]
+    redaction_payload = read_json(run_dir / "redaction-report.json")
+    if redaction_payload.get("status") == "raw_secret_hits_detected":
+        missing_required.append({"path": "redaction-report.json", "status": "raw_secret_hits_detected", "required": True})
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "overallStatus": "ok" if not missing_required else "failed",
+        "missingRequiredArtifacts": missing_required,
+        "artifacts": artifacts,
+        "policy": "Required artifacts must be present or explicitly generated by the current completeness check before the archive is created.",
+    }
+
+
+def render_release_gates_artifact_completeness_md(report: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append("# release-gates artifact completeness")
+    lines.append("")
+    lines.append(f"- Run ID: `{report.get('runId')}`")
+    lines.append(f"- Overall: `{report.get('overallStatus')}`")
+    lines.append("")
+    lines.append("| Artifact | Required | Status | Notes |")
+    lines.append("|---|---:|---|---|")
+    for item in report.get("artifacts", []):
+        notes = item.get("description") or ""
+        if item.get("type") == "directory":
+            notes += f"; files={item.get('childFileCount')}"
+        elif item.get("sizeBytes") is not None:
+            notes += f"; bytes={item.get('sizeBytes')}"
+        lines.append(f"| `{item.get('path')}` | {bool(item.get('required'))} | `{item.get('status')}` | {notes} |")
+    missing = report.get("missingRequiredArtifacts") if isinstance(report.get("missingRequiredArtifacts"), list) else []
+    lines.append("")
+    if missing:
+        lines.append("## Missing or unsafe required artifacts")
+        lines.append("")
+        for item in missing:
+            lines.append(f"- `{item.get('path')}` — `{item.get('status')}`")
+    else:
+        lines.append("All required autopsy artifacts are present for this bundle contract.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def release_gates_bundle_manifest(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> dict[str, Any]:
+    artifacts = [release_gates_artifact_record(run_dir, spec) for spec in release_gates_required_bundle_artifacts()]
+    return {
+        "schemaVersion": 1,
+        "bundleType": "devbootstrap-release-gates-autopsy",
+        "contractVersion": "phase-1",
+        "generatedAt": iso_now(),
+        "toolVersion": result.tool_version,
+        "runId": result.run_id,
+        "dryRun": result.dry_run,
+        "projectRoot": result.project_root,
+        "invokedFrom": result.invoked_from,
+        "overallStatus": result.overall_status,
+        "classification": result.classification,
+        "profile": result.profile_plan.profile if result.profile_plan else None,
+        "archivePath": result.archive_path,
+        "requiredArtifacts": artifacts,
+        "gates": [release_gates_gate_ledger_entry(gate) for gate in result.gates],
+        "redactionReport": "redaction-report.json",
+        "artifactCompleteness": "artifact-completeness.json",
+        "environmentFingerprint": "environment-fingerprint.json",
+        "commandResolution": "command-resolution.json",
+    }
+
+
+def release_gates_autopsy_bundle_paths(result: ReleaseGatesResult) -> dict[str, Any] | None:
+    if not result.report_dir:
+        return None
+    base = result.report_dir.rstrip("/")
+    return {
+        "manifestPath": f"{base}/bundle-manifest.json",
+        "artifactCompletenessPath": f"{base}/artifact-completeness.json",
+        "environmentFingerprintPath": f"{base}/environment-fingerprint.json",
+        "commandResolutionPath": f"{base}/command-resolution.json",
+        "redactionReportPath": f"{base}/redaction-report.json",
+    }
+
 def render_release_gates_gate_ledger_md(ledger: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append("# release-gates gate ledger")
@@ -8239,6 +8584,12 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append(f"- Archive: `{result.archive_path}`")
     if getattr(result, "remediation_bundle_path", None):
         lines.append("- Remediation bundle: `" + result.remediation_bundle_path + "`")
+    autopsy_paths = release_gates_autopsy_bundle_paths(result)
+    if autopsy_paths:
+        lines.append("- Bundle manifest: `" + autopsy_paths["manifestPath"] + "`")
+        lines.append("- Artifact completeness: `" + autopsy_paths["artifactCompletenessPath"] + "`")
+        lines.append("- Command resolution: `" + autopsy_paths["commandResolutionPath"] + "`")
+        lines.append("- Redaction report: `" + autopsy_paths["redactionReportPath"] + "`")
     if result.profile_plan:
         lines.append("")
         lines.append("## Profile and consent")
@@ -8296,6 +8647,16 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("- Rerun commands: `remediation/rerun-commands.md`")
         lines.append("- Environment fingerprint: `remediation/environment-fingerprint.json`")
         lines.append("")
+    autopsy_paths = release_gates_autopsy_bundle_paths(result)
+    if autopsy_paths:
+        lines.append("## Phase 1 autopsy bundle contract")
+        lines.append("")
+        lines.append("- Manifest: `bundle-manifest.json`")
+        lines.append("- Artifact completeness: `artifact-completeness.json` / `artifact-completeness.md`")
+        lines.append("- Environment fingerprint: `environment-fingerprint.json`")
+        lines.append("- Command resolution: `command-resolution.json` / `command-resolution.md`")
+        lines.append("- Redaction report: `redaction-report.json` / `redaction-report.md`")
+        lines.append("")
     lines.append("## Findings")
     lines.append("")
     if result.findings:
@@ -8328,6 +8689,7 @@ def release_gates_json_payload(result: ReleaseGatesResult) -> dict[str, Any]:
         "reportDir": result.report_dir,
         "archivePath": result.archive_path,
         "remediationBundlePath": result.remediation_bundle_path,
+        "autopsyBundle": release_gates_autopsy_bundle_paths(result),
         "profilePlan": as_jsonable(result.profile_plan) if result.profile_plan else None,
         "managedTestDb": managed_test_db_public_payload(result.managed_test_db) if result.managed_test_db else None,
         "managedRuntime": managed_runtime_public_payload(result.managed_runtime) if result.managed_runtime else None,
@@ -8371,9 +8733,32 @@ def write_release_gates_reports(project_root: Path, result: ReleaseGatesResult, 
     archive_path = run_dir / f"release-gates_{timestamp}.zip"
     result.archive_path = rel(archive_path, project_root)
     write_release_gates_remediation_bundle(project_root, result, run_dir)
+
+    environment_fingerprint = release_gates_environment_fingerprint(project_root, result)
+    write_json(run_dir / "environment-fingerprint.json", environment_fingerprint)
+
+    command_resolution = release_gates_command_resolution_report(project_root, result)
+    write_json(run_dir / "command-resolution.json", command_resolution)
+    (run_dir / "command-resolution.md").write_text(render_release_gates_command_resolution_md(command_resolution), encoding="utf-8")
+
     (run_dir / "summary.txt").write_text(render_release_gates_summary(result), encoding="utf-8")
     (run_dir / "release-gates.md").write_text(render_release_gates_report(result), encoding="utf-8")
     write_json(run_dir / "release-gates.json", release_gates_json_payload(result))
+
+    redaction = release_gates_redaction_report(project_root, result, run_dir)
+    write_json(run_dir / "redaction-report.json", redaction)
+    (run_dir / "redaction-report.md").write_text(render_release_gates_redaction_report_md(redaction), encoding="utf-8")
+
+    manifest = release_gates_bundle_manifest(project_root, result, run_dir)
+    write_json(run_dir / "bundle-manifest.json", manifest)
+    completeness = release_gates_artifact_completeness(project_root, result, run_dir)
+    write_json(run_dir / "artifact-completeness.json", completeness)
+    (run_dir / "artifact-completeness.md").write_text(render_release_gates_artifact_completeness_md(completeness), encoding="utf-8")
+    # Re-write the manifest after the completeness artifact exists, so a bundle
+    # opened from the archive has a manifest that names every final artifact.
+    manifest = release_gates_bundle_manifest(project_root, result, run_dir)
+    write_json(run_dir / "bundle-manifest.json", manifest)
+
     create_release_gates_archive(run_dir, archive_path)
     append_report_to_state(project_root, run_dir, result.run_id)
 
@@ -9949,6 +10334,62 @@ def case_self_check_release_gates_keep_going_behavior() -> str:
 
 
 
+def case_self_check_release_gates_phase1_bundle_contract() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase1-") as tmp:
+        root = Path(tmp)
+        (root / "backend" / "migrations").mkdir(parents=True)
+        (root / "frontend").mkdir(parents=True)
+        (root / "tools").mkdir(parents=True)
+        (root / "backend" / "Cargo.toml").write_text("[package]\nname='fixture'\nversion='0.0.0'\n", encoding="utf-8")
+        (root / "backend" / "Cargo.lock").write_text("# fixture\n", encoding="utf-8")
+        (root / "backend" / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
+        (root / "backend" / "migrations" / "0001_fixture.sql").write_text("select 1;\n", encoding="utf-8")
+        (root / "frontend" / "package.json").write_text(json.dumps({"scripts": {"build": "vite build"}}), encoding="utf-8")
+        (root / "frontend" / "package-lock.json").write_text("{}\n", encoding="utf-8")
+        (root / "tools" / "devbootstrap.py").write_text("# fixture\n", encoding="utf-8")
+        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase1"
+        logs = run_dir / "logs"
+        logs.mkdir(parents=True)
+        (logs / "01_fixture_gate.log").write_text("status: ok\n", encoding="utf-8")
+        result = ReleaseGatesResult(
+            generated_at="2026-05-27T00:00:00+00:00",
+            tool_version=TOOL_VERSION,
+            project_root=str(root),
+            invoked_from=str(root),
+            run_id="selfcheck-release-gates-phase1",
+            dry_run=False,
+            timeout_seconds=123,
+            overall_status="ok",
+            classification="release_gates_ok",
+            gates=[GateResult(name="fixture_gate", status="ok", classification="ok", message="gate completed", cwd=".", command=[sys.executable, "--version"], log_path="logs/01_fixture_gate.log")],
+        )
+        write_release_gates_reports(root, result, run_dir)
+        manifest = read_json(run_dir / "bundle-manifest.json")
+        completeness = read_json(run_dir / "artifact-completeness.json")
+        command_resolution = read_json(run_dir / "command-resolution.json")
+        redaction = read_json(run_dir / "redaction-report.json")
+        archive_path = Path(result.archive_path or "")
+        archive_abs = root / archive_path
+        with zipfile.ZipFile(archive_abs) as zf:
+            names = set(zf.namelist())
+    assert manifest["bundleType"] == "devbootstrap-release-gates-autopsy"
+    assert manifest["contractVersion"] == "phase-1"
+    assert completeness["overallStatus"] == "ok", completeness
+    assert command_resolution["gateCommands"][0]["command"]["resolvedExecutable"]
+    assert redaction["status"] == "ok"
+    for required_name in [
+        "bundle-manifest.json",
+        "artifact-completeness.json",
+        "environment-fingerprint.json",
+        "command-resolution.json",
+        "redaction-report.json",
+        "release-gates.json",
+    ]:
+        assert required_name in names, f"missing {required_name} from archive"
+    return "release-gates phase 1 autopsy bundle contract checked"
+
+
+
 def case_self_check_frontend_direct_vite_launch_command() -> str:
     with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-frontend-direct-vite-") as tmp:
         root = Path(tmp)
@@ -10000,6 +10441,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_remediation_bundle", case_self_check_release_gates_remediation_bundle)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
+    self_check_case(result, "release_gates_phase1_bundle_contract", case_self_check_release_gates_phase1_bundle_contract)
     if result.failures:
         result.classification = "failed"
         result.next_actions.append("Fix failing self-check cases before using devbootstrap as the v1 routine entrypoint.")

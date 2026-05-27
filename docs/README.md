@@ -62,6 +62,7 @@
 7. Затем `development/systemic-release-stabilization-manifesto-v1.md`,
    `development/release-stabilization-program-v1.md`,
    `development/release-stabilization-phase-0-baseline.md`,
+   `development/release-stabilization-phase-1-autopsy-bundle-contract.md`,
    `development/release-stabilization-problem-ledger.md`,
    `development/release-confidence-scorecard-v1.md`,
    `development/release-stabilization-profile-side-effects-v1.md`,
@@ -122,6 +123,8 @@ local-first, sync и optional p2p.
 - `docs/development/release-stabilization-plan-merge-notes-2026-05-27.md` — merge notes по объединению free-form strategic response и не примененного `deep-release-autopsy-strategy` патча: сходства, различия, что оставлено/отброшено и какие слабые места найдены после объединения.
 
 - `docs/development/release-stabilization-phase-0-baseline.md` — Phase 0 operating baseline: stabilization lane active, freeze rules, current product grounding, baseline inventory, exit criteria mapping and extraordinary findings.
+
+- `docs/development/release-stabilization-phase-1-autopsy-bundle-contract.md` — Phase 1 release-gates autopsy bundle contract: manifest, root environment fingerprint, command-resolution artifacts, redaction report and artifact completeness check.
 
 - `docs/development/release-stabilization-problem-ledger.md` — initial human Problem Ledger with stable `REL-*` failure-mode IDs, owner layers, severity and required probes.
 
