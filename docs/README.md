@@ -19,7 +19,7 @@
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
 - `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy.
-- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс и манифест системной стабилизации release/dev lifecycle.
+- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс и манифест радикального release autopsy: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem Ledger и цепочке тематических ремедиаций.
 
 ## Зафиксированные принципы
 
@@ -109,5 +109,5 @@ local-first, sync и optional p2p.
 
 - `docs/dev-bootstrap/devbootstrap-v1-operations.md` — эксплуатационная памятка devbootstrap v1: quick commands, command responsibilities, report artifact contract, timeout policy, failure handling rules and cleanup rules.
 
-- `docs/development/systemic-release-stabilization-manifesto-v1.md` — манифест новой вехи системной стабилизации release/dev lifecycle: почему цикл точечных псевдофиксов больше не подходит и зачем нужна комплексная диагностическая стратегия.
+- `docs/development/systemic-release-stabilization-manifesto-v1.md` — манифест радикальной стабилизации release/dev lifecycle v2: Deep Release Autopsy, Problem Ledger, PostgreSQL authority ladder, controlled mutators и план тематической цепочки ремедиаций вместо бесконечного fix-after-fail цикла.
 
