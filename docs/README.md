@@ -63,6 +63,7 @@
    `development/release-stabilization-program-v1.md`,
    `development/release-stabilization-phase-0-baseline.md`,
    `development/release-stabilization-phase-1-autopsy-bundle-contract.md`,
+   `development/release-stabilization-phase-2-ledgers-and-taxonomy.md`,
    `development/release-stabilization-problem-ledger.md`,
    `development/release-confidence-scorecard-v1.md`,
    `development/release-stabilization-profile-side-effects-v1.md`,
@@ -125,6 +126,8 @@ local-first, sync и optional p2p.
 - `docs/development/release-stabilization-phase-0-baseline.md` — Phase 0 operating baseline: stabilization lane active, freeze rules, current product grounding, baseline inventory, exit criteria mapping and extraordinary findings.
 
 - `docs/development/release-stabilization-phase-1-autopsy-bundle-contract.md` — Phase 1 release-gates autopsy bundle contract: manifest, root environment fingerprint, command-resolution artifacts, redaction report and artifact completeness check.
+
+- `docs/development/release-stabilization-phase-2-ledgers-and-taxonomy.md` — Phase 2 release-gates ledgers and taxonomy: machine-readable Problem Ledger, Probe Ledger skeleton, Decision Ledger template, stable problem ID mapping and fallback rule for new classifications.
 
 - `docs/development/release-stabilization-problem-ledger.md` — initial human Problem Ledger with stable `REL-*` failure-mode IDs, owner layers, severity and required probes.
 

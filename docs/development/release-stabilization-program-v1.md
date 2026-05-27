@@ -1032,11 +1032,20 @@ Actions:
 4. Map gate statuses into families.
 5. Generate rerun/next-action commands.
 
+Operating artifacts:
+
+- `docs/development/release-stabilization-phase-2-ledgers-and-taxonomy.md`;
+- `.dev-bootstrap/runs/<run-id>/remediation/problem-ledger.json`;
+- `.dev-bootstrap/runs/<run-id>/remediation/probe-ledger.json`;
+- `.dev-bootstrap/runs/<run-id>/remediation/decision-ledger-template.json`.
+
 Exit criteria:
 
 - repeated same failure maps to stable ID;
 - unresolved blockers are listed in one place;
 - each blocker has next action.
+
+Implementation status: implemented in `tools/devbootstrap.py`; bundle contract version is now `phase-2`.
 
 ### Phase 3. Diagnostic provocation matrix
 

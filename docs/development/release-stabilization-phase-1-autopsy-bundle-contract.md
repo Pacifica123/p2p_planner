@@ -1,6 +1,6 @@
 # Release stabilization phase 1 autopsy bundle contract
 
-- Статус: Implemented in `tools/devbootstrap.py`
+- Статус: Implemented in `tools/devbootstrap.py`; superseded in active bundles by Phase 2 contract version
 - Дата: 2026-05-27
 - Родительский документ: `docs/development/release-stabilization-program-v1.md`
 - Связанные failure-mode IDs: `REL-ART-001`, `REL-SEC-001`, `REL-WIN-001`, `REL-DOCS-001`
@@ -47,7 +47,7 @@ Redaction report:
 
 Минимальный порядок ручного анализа bundle:
 
-1. Открыть `bundle-manifest.json` и проверить `contractVersion == "phase-1"`.
+1. Открыть `bundle-manifest.json`. Для архивов после Phase 2 активное значение — `contractVersion == "phase-2"`; для старых Phase 1 архивов допустимо `phase-1`.
 2. Открыть `artifact-completeness.json` и проверить `overallStatus == "ok"`.
 3. Открыть `redaction-report.json` и проверить `status == "ok"`.
 4. Открыть `command-resolution.md`, если есть Windows/npm/Vite/cargo странности.
@@ -108,3 +108,9 @@ Resolution for this patch:
 - the actual patch `files/` payload remains limited to source/docs files.
 
 This finding reinforces `REL-ART-001`: acceptance archives must avoid generated/heavy/legacy release payloads unless an explicit release-packaging patch is targeting them.
+
+---
+
+## 7. Phase 2 compatibility note
+
+Phase 1 artifacts remain mandatory, but the active bundle contract has moved to `phase-2` because the same bundle now also contains machine-readable Problem/Probe/Decision ledgers.

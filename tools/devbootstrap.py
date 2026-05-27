@@ -7845,6 +7845,8 @@ def release_gates_gate_ledger_entry(gate: GateResult) -> dict[str, Any]:
         "rawStatus": gate.status,
         "classification": gate.classification,
         "classificationFamily": release_gates_classification_family(gate.classification),
+        "problemId": release_gates_problem_id_for_code(gate.classification),
+        "nextAction": release_gates_next_action_for_code(gate.classification),
         "required": gate.required,
         "message": gate.message,
         "cwd": gate.cwd,
@@ -8251,6 +8253,12 @@ def release_gates_required_bundle_artifacts() -> list[dict[str, Any]]:
         {"path": "logs/", "required": True, "description": "Per-gate logs directory."},
         {"path": "remediation/gate-ledger.json", "required": True, "description": "Machine-readable gate ledger."},
         {"path": "remediation/gate-ledger.md", "required": True, "description": "Human-readable gate ledger."},
+        {"path": "remediation/problem-ledger.json", "required": True, "description": "Machine-readable durable problem ledger with stable REL-* IDs."},
+        {"path": "remediation/problem-ledger.md", "required": True, "description": "Human-readable durable problem ledger."},
+        {"path": "remediation/probe-ledger.json", "required": True, "description": "Machine-readable probe ledger skeleton for every gate."},
+        {"path": "remediation/probe-ledger.md", "required": True, "description": "Human-readable probe ledger skeleton."},
+        {"path": "remediation/decision-ledger-template.json", "required": True, "description": "Machine-readable decision ledger template."},
+        {"path": "remediation/decision-ledger-template.md", "required": True, "description": "Human-readable decision ledger template."},
         {"path": "remediation/prerequisites.md", "required": True, "description": "Prerequisite blocker report."},
         {"path": "remediation/skipped-gates.md", "required": True, "description": "Skipped/unverified gate report."},
         {"path": "remediation/next-actions.md", "required": True, "description": "Targeted next actions."},
@@ -8348,7 +8356,7 @@ def release_gates_bundle_manifest(project_root: Path, result: ReleaseGatesResult
     return {
         "schemaVersion": 1,
         "bundleType": "devbootstrap-release-gates-autopsy",
-        "contractVersion": "phase-1",
+        "contractVersion": "phase-2",
         "generatedAt": iso_now(),
         "toolVersion": result.tool_version,
         "runId": result.run_id,
@@ -8365,6 +8373,9 @@ def release_gates_bundle_manifest(project_root: Path, result: ReleaseGatesResult
         "artifactCompleteness": "artifact-completeness.json",
         "environmentFingerprint": "environment-fingerprint.json",
         "commandResolution": "command-resolution.json",
+        "problemLedger": "remediation/problem-ledger.json",
+        "probeLedger": "remediation/probe-ledger.json",
+        "decisionLedgerTemplate": "remediation/decision-ledger-template.json",
     }
 
 
@@ -8378,6 +8389,9 @@ def release_gates_autopsy_bundle_paths(result: ReleaseGatesResult) -> dict[str, 
         "environmentFingerprintPath": f"{base}/environment-fingerprint.json",
         "commandResolutionPath": f"{base}/command-resolution.json",
         "redactionReportPath": f"{base}/redaction-report.json",
+        "problemLedgerPath": f"{base}/remediation/problem-ledger.json",
+        "probeLedgerPath": f"{base}/remediation/probe-ledger.json",
+        "decisionLedgerTemplatePath": f"{base}/remediation/decision-ledger-template.json",
     }
 
 def render_release_gates_gate_ledger_md(ledger: dict[str, Any]) -> str:
@@ -8512,6 +8526,286 @@ def render_release_gates_rerun_commands_md(commands: list[str]) -> str:
     return "\n".join(lines)
 
 
+
+
+def release_gates_problem_id_for_code(code: str) -> str | None:
+    if not code or code in {"ok", "dry_run", "release_gates_ok", "release_gates_dry_run"}:
+        return None
+    exact = {
+        "critical_tests_ignored": "REL-DB-001",
+        "db_test_prerequisite_missing": "REL-DB-001",
+        "smoke_db_write_guard": "REL-SMOKE-001",
+        "real_backend_browser_write_guard": "REL-BROWSER-001",
+        "real_backend_browser_opt_in_required": "REL-BROWSER-001",
+        "browser_smoke_prerequisite": "REL-BROWSER-001",
+        "runtime_unreachable": "REL-PROC-001",
+        "frontend_port_conflict": "REL-PORT-001",
+        "clean_machine_optional_not_requested": "REL-CLEAN-001",
+        "release_gates_infra_failed": "REL-ART-001",
+        "release_gates_incomplete": "REL-ART-001",
+        "release_gates_failed": "REL-ART-001",
+        "release_gates_timeout": "REL-ART-001",
+        "release_gates_unknown": "REL-ART-001",
+    }
+    if code in exact:
+        return exact[code]
+    prefix_map = [
+        (("frontend_dependencies_", "frontend_prepare_", "frontend_lockfile_", "dependency_network_"), "REL-FE-001"),
+        (("managed_test_db_", "postgres_"), "REL-DB-002"),
+        (("managed_runtime_db_",), "REL-DB-001"),
+        (("managed_backend_port_", "managed_frontend_port_"), "REL-PORT-001"),
+        (("managed_runtime_", "managed_backend_", "managed_frontend_"), "REL-PROC-001"),
+        (("docs_",), "REL-DOCS-001"),
+        (("clean_machine_",), "REL-CLEAN-001"),
+    ]
+    for prefixes, problem_id in prefix_map:
+        if code.startswith(prefixes):
+            return problem_id
+    digest = hashlib.sha1(code.encode("utf-8")).hexdigest()[:8].upper()
+    return f"REL-UNMAPPED-{digest}"
+
+
+def release_gates_problem_family(problem_id: str | None) -> str:
+    if not problem_id:
+        return "none"
+    if problem_id.startswith("REL-UNMAPPED-"):
+        return "REL-UNMAPPED"
+    parts = problem_id.split("-")
+    return "-".join(parts[:2]) if len(parts) >= 2 else problem_id
+
+
+def release_gates_problem_status_for_gate(gate: GateResult) -> str:
+    normalized = release_gates_normalized_status(gate)
+    if normalized in {"failed", "infra_failed"}:
+        return "observed"
+    if normalized in {"skipped_prerequisite", "partial_pass"}:
+        return "remediation_planned"
+    if normalized == "skipped_optional":
+        return "accepted_non_blocking"
+    if normalized == "planned":
+        return "suspected"
+    return "guarded"
+
+
+def release_gates_problem_severity_for_gate(gate: GateResult) -> str:
+    normalized = release_gates_normalized_status(gate)
+    if gate.required and normalized in {"failed", "infra_failed", "skipped_prerequisite", "partial_pass"}:
+        return "blocks_release"
+    if normalized in {"skipped_optional", "planned"}:
+        return "non_blocking_signal_gap"
+    return "informational"
+
+
+def release_gates_problem_ledger(result: ReleaseGatesResult, rerun_commands: list[str]) -> dict[str, Any]:
+    ignored_covered = release_gates_critical_ignored_covered(result.gates)
+    problems: dict[str, dict[str, Any]] = {}
+    for gate in result.gates:
+        if ignored_covered and gate.classification == "critical_tests_ignored":
+            continue
+        normalized = release_gates_normalized_status(gate)
+        include = normalized in {"failed", "infra_failed", "skipped_prerequisite", "partial_pass", "skipped_optional"}
+        if not include:
+            continue
+        problem_id = release_gates_problem_id_for_code(gate.classification)
+        if not problem_id:
+            continue
+        entry = problems.setdefault(
+            problem_id,
+            {
+                "id": problem_id,
+                "family": release_gates_problem_family(problem_id),
+                "status": release_gates_problem_status_for_gate(gate),
+                "severity": release_gates_problem_severity_for_gate(gate),
+                "classificationCodes": [],
+                "ownerLayers": [],
+                "summary": gate.message,
+                "evidence": [],
+                "nextActions": [],
+                "rerunCommands": [],
+                "confidence": "runtime_observed" if normalized in {"failed", "infra_failed"} else "classified_signal",
+            },
+        )
+        if gate.classification not in entry["classificationCodes"]:
+            entry["classificationCodes"].append(gate.classification)
+        area = release_gates_gate_area(gate)
+        if area not in entry["ownerLayers"]:
+            entry["ownerLayers"].append(area)
+        # Keep the strongest blocking severity/status seen for this problem.
+        if entry["severity"] != "blocks_release" and release_gates_problem_severity_for_gate(gate) == "blocks_release":
+            entry["severity"] = "blocks_release"
+        if entry["status"] == "suspected" and normalized not in {"planned", "skipped_optional"}:
+            entry["status"] = release_gates_problem_status_for_gate(gate)
+        evidence = {
+            "gate": gate.name,
+            "status": normalized,
+            "rawStatus": gate.status,
+            "classification": gate.classification,
+            "message": gate.message,
+            "required": gate.required,
+            "logPath": gate.log_path,
+        }
+        entry["evidence"].append(evidence)
+        next_action = release_gates_next_action_for_code(gate.classification)
+        if next_action and next_action not in entry["nextActions"]:
+            entry["nextActions"].append(next_action)
+    for entry in problems.values():
+        if not entry["nextActions"]:
+            entry["nextActions"].append("Inspect the listed gate logs and classify the blocker before changing product/runtime behavior.")
+        entry["rerunCommands"] = list(rerun_commands)
+    unresolved = [entry for entry in problems.values() if entry["severity"] == "blocks_release"]
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "ledgerType": "problem-ledger",
+        "policy": "Stable REL-* IDs group repeated failures across release-gates runs; unresolved blockers must have a next action before remediation.",
+        "overallStatus": "blocked" if unresolved else "no_blocking_problems_detected",
+        "unresolvedBlockerCount": len(unresolved),
+        "problems": sorted(problems.values(), key=lambda item: (item["severity"] != "blocks_release", item["id"])),
+    }
+
+
+def render_release_gates_problem_ledger_md(ledger: dict[str, Any]) -> str:
+    lines = ["# release-gates problem ledger", ""]
+    lines.append(f"- Run ID: `{ledger.get('runId')}`")
+    lines.append(f"- Overall: `{ledger.get('overallStatus')}`")
+    lines.append(f"- Unresolved blockers: `{ledger.get('unresolvedBlockerCount')}`")
+    lines.append("")
+    problems = ledger.get("problems") if isinstance(ledger.get("problems"), list) else []
+    if not problems:
+        lines.append("No unresolved or skipped release-gates problems were classified in this run.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.append("| Problem ID | Family | Status | Severity | Classifications | Next action |")
+    lines.append("|---|---|---|---|---|---|")
+    for problem in problems:
+        codes = ", ".join(f"`{code}`" for code in problem.get("classificationCodes", []))
+        action = (problem.get("nextActions") or [""])[0].replace("\n", " ").replace("|", "\\|")
+        lines.append(
+            f"| `{problem.get('id')}` | `{problem.get('family')}` | `{problem.get('status')}` | `{problem.get('severity')}` | {codes} | {action} |"
+        )
+    lines.append("")
+    lines.append("## Evidence")
+    lines.append("")
+    for problem in problems:
+        lines.append(f"### `{problem.get('id')}`")
+        lines.append("")
+        for evidence in problem.get("evidence", []):
+            log = f"; log `{evidence.get('logPath')}`" if evidence.get("logPath") else ""
+            lines.append(f"- `{evidence.get('gate')}` — `{evidence.get('status')}` / `{evidence.get('classification')}`{log}: {evidence.get('message')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def release_gates_probe_ledger(result: ReleaseGatesResult) -> dict[str, Any]:
+    probes: list[dict[str, Any]] = []
+    for gate in result.gates:
+        problem_id = release_gates_problem_id_for_code(gate.classification)
+        probes.append(
+            {
+                "probeId": f"gate:{gate.name}",
+                "kind": "release-gate",
+                "area": release_gates_gate_area(gate),
+                "problemId": problem_id,
+                "status": release_gates_normalized_status(gate),
+                "classification": gate.classification,
+                "required": gate.required,
+                "command": release_gate_command_display(gate.command) if gate.command else None,
+                "logPath": gate.log_path,
+                "coverageRole": "regression_or_prerequisite_signal" if gate.required else "optional_signal",
+            }
+        )
+    missing_problem_links = [
+        probe
+        for probe in probes
+        if probe["status"] in {"failed", "infra_failed", "skipped_prerequisite", "partial_pass", "skipped_optional"}
+        and not probe.get("problemId")
+    ]
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "ledgerType": "probe-ledger",
+        "policy": "Every release gate is tracked as a probe; failing/skipped probes should link to a stable Problem Ledger ID.",
+        "missingProblemLinkCount": len(missing_problem_links),
+        "probes": probes,
+    }
+
+
+def render_release_gates_probe_ledger_md(ledger: dict[str, Any]) -> str:
+    lines = ["# release-gates probe ledger", ""]
+    lines.append(f"- Run ID: `{ledger.get('runId')}`")
+    lines.append(f"- Missing problem links: `{ledger.get('missingProblemLinkCount')}`")
+    lines.append("")
+    lines.append("| Probe | Area | Status | Classification | Problem ID | Required | Log |")
+    lines.append("|---|---|---|---|---|---:|---|")
+    for probe in ledger.get("probes", []):
+        log = f"`{probe.get('logPath')}`" if probe.get("logPath") else ""
+        problem_id = f"`{probe.get('problemId')}`" if probe.get("problemId") else ""
+        lines.append(
+            f"| `{probe.get('probeId')}` | `{probe.get('area')}` | `{probe.get('status')}` | `{probe.get('classification')}` | {problem_id} | {probe.get('required')} | {log} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def release_gates_decision_ledger_template(result: ReleaseGatesResult, problem_ledger: dict[str, Any]) -> dict[str, Any]:
+    problem_ids = [problem.get("id") for problem in problem_ledger.get("problems", []) if problem.get("id")]
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "ledgerType": "decision-ledger-template",
+        "policy": "Copy one template entry per remediation decision into project docs or the next patch summary before changing behavior.",
+        "template": {
+            "decisionId": f"DEC-{result.run_id}-001",
+            "problemIds": problem_ids,
+            "status": "proposed",
+            "context": "What evidence from problem-ledger/probe-ledger forced this decision?",
+            "optionsConsidered": ["Option A", "Option B"],
+            "chosenOption": "",
+            "rationale": "",
+            "risks": [],
+            "acceptanceChecks": [],
+            "rollbackPlan": "",
+        },
+    }
+
+
+def render_release_gates_decision_ledger_template_md(template: dict[str, Any]) -> str:
+    decision = template.get("template") if isinstance(template.get("template"), dict) else {}
+    lines = ["# release-gates decision ledger template", ""]
+    lines.append(f"- Run ID: `{template.get('runId')}`")
+    lines.append(f"- Decision ID: `{decision.get('decisionId')}`")
+    lines.append(f"- Status: `{decision.get('status')}`")
+    lines.append("")
+    lines.append("Use this template when a blocker requires a behavior-changing remediation patch.")
+    lines.append("")
+    lines.append("## Problem IDs")
+    lines.append("")
+    problem_ids = decision.get("problemIds") if isinstance(decision.get("problemIds"), list) else []
+    if problem_ids:
+        for problem_id in problem_ids:
+            lines.append(f"- `{problem_id}`")
+    else:
+        lines.append("- `<none from this run>`")
+    lines.append("")
+    lines.append("## Decision record")
+    lines.append("")
+    lines.append("```text")
+    lines.append("context: What evidence from problem-ledger/probe-ledger forced this decision?")
+    lines.append("optionsConsidered:")
+    lines.append("  - Option A")
+    lines.append("  - Option B")
+    lines.append("chosenOption:")
+    lines.append("rationale:")
+    lines.append("risks:")
+    lines.append("acceptanceChecks:")
+    lines.append("rollbackPlan:")
+    lines.append("```")
+    lines.append("")
+    return "\n".join(lines)
+
 def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> None:
     remediation_dir = run_dir / "remediation"
     remediation_dir.mkdir(parents=True, exist_ok=True)
@@ -8521,9 +8815,18 @@ def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGa
     unverified = release_gates_unverified_areas(result)
     rerun_commands = release_gates_rerun_commands(result, blockers)
     fingerprint = release_gates_environment_fingerprint(project_root, result)
+    problem_ledger = release_gates_problem_ledger(result, rerun_commands)
+    probe_ledger = release_gates_probe_ledger(result)
+    decision_template = release_gates_decision_ledger_template(result, problem_ledger)
 
     write_json(remediation_dir / "gate-ledger.json", ledger)
     (remediation_dir / "gate-ledger.md").write_text(render_release_gates_gate_ledger_md(ledger), encoding="utf-8")
+    write_json(remediation_dir / "problem-ledger.json", problem_ledger)
+    (remediation_dir / "problem-ledger.md").write_text(render_release_gates_problem_ledger_md(problem_ledger), encoding="utf-8")
+    write_json(remediation_dir / "probe-ledger.json", probe_ledger)
+    (remediation_dir / "probe-ledger.md").write_text(render_release_gates_probe_ledger_md(probe_ledger), encoding="utf-8")
+    write_json(remediation_dir / "decision-ledger-template.json", decision_template)
+    (remediation_dir / "decision-ledger-template.md").write_text(render_release_gates_decision_ledger_template_md(decision_template), encoding="utf-8")
     (remediation_dir / "prerequisites.md").write_text(render_release_gates_prerequisites_md(result, blockers), encoding="utf-8")
     (remediation_dir / "skipped-gates.md").write_text(render_release_gates_skipped_gates_md(unverified), encoding="utf-8")
     (remediation_dir / "next-actions.md").write_text(render_release_gates_next_actions_md(result), encoding="utf-8")
@@ -8641,6 +8944,9 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("")
         lines.append(f"- Bundle directory: `{result.remediation_bundle_path}`")
         lines.append("- Gate ledger: `remediation/gate-ledger.md` / `remediation/gate-ledger.json`")
+        lines.append("- Problem ledger: `remediation/problem-ledger.md` / `remediation/problem-ledger.json`")
+        lines.append("- Probe ledger: `remediation/probe-ledger.md` / `remediation/probe-ledger.json`")
+        lines.append("- Decision ledger template: `remediation/decision-ledger-template.md` / `remediation/decision-ledger-template.json`")
         lines.append("- Prerequisites: `remediation/prerequisites.md`")
         lines.append("- Skipped gates: `remediation/skipped-gates.md`")
         lines.append("- Next actions: `remediation/next-actions.md`")
@@ -8649,13 +8955,14 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("")
     autopsy_paths = release_gates_autopsy_bundle_paths(result)
     if autopsy_paths:
-        lines.append("## Phase 1 autopsy bundle contract")
+        lines.append("## Phase 2 autopsy bundle contract")
         lines.append("")
         lines.append("- Manifest: `bundle-manifest.json`")
         lines.append("- Artifact completeness: `artifact-completeness.json` / `artifact-completeness.md`")
         lines.append("- Environment fingerprint: `environment-fingerprint.json`")
         lines.append("- Command resolution: `command-resolution.json` / `command-resolution.md`")
         lines.append("- Redaction report: `redaction-report.json` / `redaction-report.md`")
+        lines.append("- Ledgers: `remediation/problem-ledger.*`, `remediation/probe-ledger.*`, `remediation/decision-ledger-template.*`")
         lines.append("")
     lines.append("## Findings")
     lines.append("")
@@ -10255,6 +10562,8 @@ def case_self_check_release_gates_remediation_bundle() -> str:
     blockers = release_gates_infrastructure_blockers(result)
     unverified = release_gates_unverified_areas(result)
     commands = release_gates_rerun_commands(result, blockers)
+    problem_ledger = release_gates_problem_ledger(result, commands)
+    probe_ledger = release_gates_probe_ledger(result)
     assert ledger["releaseConfidence"] == "incomplete"
     assert ledger["countsByStatus"]["infra_failed"] == 1
     assert ledger["countsByStatus"]["passed"] == 1
@@ -10262,6 +10571,8 @@ def case_self_check_release_gates_remediation_bundle() -> str:
     assert blockers and blockers[0]["code"] == "frontend_dependencies_missing"
     assert any(item["gate"] == "frontend_build" for item in unverified)
     assert any("--prepare-deps" in command for command in commands)
+    assert problem_ledger["problems"][0]["id"] == "REL-FE-001"
+    assert any(probe["problemId"] == "REL-FE-001" for probe in probe_ledger["probes"])
     markdown = render_release_gates_gate_ledger_md(ledger)
     assert "Release confidence" in markdown
     assert "frontend_dependencies_missing" in markdown
@@ -10334,8 +10645,8 @@ def case_self_check_release_gates_keep_going_behavior() -> str:
 
 
 
-def case_self_check_release_gates_phase1_bundle_contract() -> str:
-    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase1-") as tmp:
+def case_self_check_release_gates_phase2_bundle_contract() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase2-") as tmp:
         root = Path(tmp)
         (root / "backend" / "migrations").mkdir(parents=True)
         (root / "frontend").mkdir(parents=True)
@@ -10347,7 +10658,7 @@ def case_self_check_release_gates_phase1_bundle_contract() -> str:
         (root / "frontend" / "package.json").write_text(json.dumps({"scripts": {"build": "vite build"}}), encoding="utf-8")
         (root / "frontend" / "package-lock.json").write_text("{}\n", encoding="utf-8")
         (root / "tools" / "devbootstrap.py").write_text("# fixture\n", encoding="utf-8")
-        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase1"
+        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase2"
         logs = run_dir / "logs"
         logs.mkdir(parents=True)
         (logs / "01_fixture_gate.log").write_text("status: ok\n", encoding="utf-8")
@@ -10356,7 +10667,7 @@ def case_self_check_release_gates_phase1_bundle_contract() -> str:
             tool_version=TOOL_VERSION,
             project_root=str(root),
             invoked_from=str(root),
-            run_id="selfcheck-release-gates-phase1",
+            run_id="selfcheck-release-gates-phase2",
             dry_run=False,
             timeout_seconds=123,
             overall_status="ok",
@@ -10373,7 +10684,7 @@ def case_self_check_release_gates_phase1_bundle_contract() -> str:
         with zipfile.ZipFile(archive_abs) as zf:
             names = set(zf.namelist())
     assert manifest["bundleType"] == "devbootstrap-release-gates-autopsy"
-    assert manifest["contractVersion"] == "phase-1"
+    assert manifest["contractVersion"] == "phase-2"
     assert completeness["overallStatus"] == "ok", completeness
     assert command_resolution["gateCommands"][0]["command"]["resolvedExecutable"]
     assert redaction["status"] == "ok"
@@ -10384,9 +10695,12 @@ def case_self_check_release_gates_phase1_bundle_contract() -> str:
         "command-resolution.json",
         "redaction-report.json",
         "release-gates.json",
+        "remediation/problem-ledger.json",
+        "remediation/probe-ledger.json",
+        "remediation/decision-ledger-template.json",
     ]:
         assert required_name in names, f"missing {required_name} from archive"
-    return "release-gates phase 1 autopsy bundle contract checked"
+    return "release-gates phase 2 ledgers and autopsy bundle contract checked"
 
 
 
@@ -10441,7 +10755,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_remediation_bundle", case_self_check_release_gates_remediation_bundle)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
-    self_check_case(result, "release_gates_phase1_bundle_contract", case_self_check_release_gates_phase1_bundle_contract)
+    self_check_case(result, "release_gates_phase2_bundle_contract", case_self_check_release_gates_phase2_bundle_contract)
     if result.failures:
         result.classification = "failed"
         result.next_actions.append("Fix failing self-check cases before using devbootstrap as the v1 routine entrypoint.")
