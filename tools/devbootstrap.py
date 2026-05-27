@@ -4688,6 +4688,7 @@ CLEAN_MACHINE_PROFILES = ("dry", "deps", "runtime", "clean-machine-dry", "clean-
 CLEAN_MACHINE_RETENTION_POLICIES = ("delete-always", "keep-on-failure", "keep-always")
 DEFAULT_CLEAN_MACHINE_PROFILE = "dry"
 DEFAULT_CLEAN_MACHINE_RETENTION = "keep-on-failure"
+RELEASE_GATES_AUTOPSY_CONTRACT_VERSION = "phase-3"
 RELEASE_GATES_PROFILES = ("diagnostic", "prepared-local", "isolated-db", "managed-runtime", "full-local-release")
 RELEASE_GATES_DEFAULT_PROFILE = "diagnostic"
 RELEASE_GATES_PROFILE_DESCRIPTIONS = {
@@ -7670,6 +7671,10 @@ def release_gates_next_action_for_code(code: str) -> str | None:
         "managed_backend_stop_failed": "Inspect the owned managed backend stop log; on Windows this should use CTRL_BREAK/terminate/taskkill only for the current run's Popen-owned process tree.",
         "managed_frontend_stop_failed": "Inspect the owned managed frontend stop log; on Windows this should use CTRL_BREAK/terminate/taskkill only for the current run's Popen-owned process tree.",
         "managed_frontend_started": "Managed frontend started; continue with browser gates.",
+        "port_binder_probe_failed": "Inspect loopback socket permissions and local security tooling; dynamic managed-runtime ports depend on binding 127.0.0.1:0 safely.",
+        "dirty_state_smoke_risk": "Keep backend smoke idempotent: use run-scoped users and avoid assertions that require a pristine shared dev database.",
+        "db_capability_probe_source_missing": "Set backend `DATABASE__URL`/`DATABASE_URL` or use managed DB flags before treating DB-writing gates as executable.",
+        "launcher_dry_run_missing_prerequisite": "Install or expose the missing launcher command on PATH; command-resolution artifacts show the exact unresolved executable.",
         "smoke_db_write_guard": "For backend Python smoke, restart the live backend against the test DB and set `TEST_DATABASE_URL`; use `--allow-dev-db-write` only when the configured dev DB is disposable.",
         "real_backend_browser_opt_in_required": "After frontend deps and write-safe DB are ready, add `--include-real-backend-browser` to run the no-mock browser path.",
         "real_backend_browser_write_guard": "Set `TEST_DATABASE_URL` and restart backend against that DB before running `--include-real-backend-browser`, or consciously pass `--allow-dev-db-write`.",
@@ -7723,6 +7728,10 @@ def finalize_release_gates_result(result: ReleaseGatesResult) -> None:
             "managed_backend_unavailable",
             "managed_backend_stop_failed",
             "managed_frontend_stop_failed",
+            "port_binder_probe_failed",
+            "db_capability_probe_source_missing",
+            "launcher_dry_run_missing_prerequisite",
+            "dirty_state_smoke_risk",
             "frontend_dependencies_missing",
             "frontend_prepare_dependencies_failed",
             "browser_smoke_prerequisite",
@@ -8259,6 +8268,8 @@ def release_gates_required_bundle_artifacts() -> list[dict[str, Any]]:
         {"path": "remediation/probe-ledger.md", "required": True, "description": "Human-readable probe ledger skeleton."},
         {"path": "remediation/decision-ledger-template.json", "required": True, "description": "Machine-readable decision ledger template."},
         {"path": "remediation/decision-ledger-template.md", "required": True, "description": "Human-readable decision ledger template."},
+        {"path": "remediation/provocation-matrix.json", "required": True, "description": "Machine-readable controlled diagnostic provocation matrix."},
+        {"path": "remediation/provocation-matrix.md", "required": True, "description": "Human-readable controlled diagnostic provocation matrix."},
         {"path": "remediation/prerequisites.md", "required": True, "description": "Prerequisite blocker report."},
         {"path": "remediation/skipped-gates.md", "required": True, "description": "Skipped/unverified gate report."},
         {"path": "remediation/next-actions.md", "required": True, "description": "Targeted next actions."},
@@ -8356,7 +8367,7 @@ def release_gates_bundle_manifest(project_root: Path, result: ReleaseGatesResult
     return {
         "schemaVersion": 1,
         "bundleType": "devbootstrap-release-gates-autopsy",
-        "contractVersion": "phase-2",
+        "contractVersion": RELEASE_GATES_AUTOPSY_CONTRACT_VERSION,
         "generatedAt": iso_now(),
         "toolVersion": result.tool_version,
         "runId": result.run_id,
@@ -8376,6 +8387,7 @@ def release_gates_bundle_manifest(project_root: Path, result: ReleaseGatesResult
         "problemLedger": "remediation/problem-ledger.json",
         "probeLedger": "remediation/probe-ledger.json",
         "decisionLedgerTemplate": "remediation/decision-ledger-template.json",
+        "provocationMatrix": "remediation/provocation-matrix.json",
     }
 
 
@@ -8392,6 +8404,7 @@ def release_gates_autopsy_bundle_paths(result: ReleaseGatesResult) -> dict[str, 
         "problemLedgerPath": f"{base}/remediation/problem-ledger.json",
         "probeLedgerPath": f"{base}/remediation/probe-ledger.json",
         "decisionLedgerTemplatePath": f"{base}/remediation/decision-ledger-template.json",
+        "provocationMatrixPath": f"{base}/remediation/provocation-matrix.json",
     }
 
 def render_release_gates_gate_ledger_md(ledger: dict[str, Any]) -> str:
@@ -8541,6 +8554,10 @@ def release_gates_problem_id_for_code(code: str) -> str | None:
         "runtime_unreachable": "REL-PROC-001",
         "frontend_port_conflict": "REL-PORT-001",
         "clean_machine_optional_not_requested": "REL-CLEAN-001",
+        "port_binder_probe_failed": "REL-PORT-001",
+        "dirty_state_smoke_risk": "REL-SMOKE-001",
+        "db_capability_probe_source_missing": "REL-DB-002",
+        "launcher_dry_run_missing_prerequisite": "REL-WIN-001",
         "release_gates_infra_failed": "REL-ART-001",
         "release_gates_incomplete": "REL-ART-001",
         "release_gates_failed": "REL-ART-001",
@@ -8551,7 +8568,7 @@ def release_gates_problem_id_for_code(code: str) -> str | None:
         return exact[code]
     prefix_map = [
         (("frontend_dependencies_", "frontend_prepare_", "frontend_lockfile_", "dependency_network_"), "REL-FE-001"),
-        (("managed_test_db_", "postgres_"), "REL-DB-002"),
+        (("managed_test_db_", "postgres_", "db_capability_probe_"), "REL-DB-002"),
         (("managed_runtime_db_",), "REL-DB-001"),
         (("managed_backend_port_", "managed_frontend_port_"), "REL-PORT-001"),
         (("managed_runtime_", "managed_backend_", "managed_frontend_"), "REL-PROC-001"),
@@ -8806,6 +8823,206 @@ def render_release_gates_decision_ledger_template_md(template: dict[str, Any]) -
     lines.append("")
     return "\n".join(lines)
 
+
+def release_gates_low_risk_port_binder_probe() -> dict[str, Any]:
+    started = time.monotonic()
+    host = "127.0.0.1"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, 0))
+            sock.listen(1)
+            bound_host, bound_port = sock.getsockname()[:2]
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "probeId": "provocation:low-risk-port-binder",
+            "purpose": "Prove that managed runtime can request a disposable loopback port without touching fixed project ports.",
+            "status": "ok",
+            "classification": "ok",
+            "host": bound_host,
+            "requestedPort": 0,
+            "allocatedPort": bound_port,
+            "durationMs": duration_ms,
+            "sideEffects": ["temporarily bound 127.0.0.1:0 during this Python process only"],
+        }
+    except OSError as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "probeId": "provocation:low-risk-port-binder",
+            "purpose": "Prove that managed runtime can request a disposable loopback port without touching fixed project ports.",
+            "status": "infra_failed",
+            "classification": "port_binder_probe_failed",
+            "host": host,
+            "requestedPort": 0,
+            "allocatedPort": None,
+            "durationMs": duration_ms,
+            "error": f"{exc.__class__.__name__}: {exc}",
+            "sideEffects": ["no persistent side effects"],
+        }
+
+
+def release_gates_launcher_dry_run_matrix() -> list[dict[str, Any]]:
+    matrix_commands = {
+        "python": [sys.executable, "--version"],
+        "git": ["git", "--version"],
+        "cargo": ["cargo", "--version"],
+        "npm": ["npm", "--version"],
+        "node": ["node", "--version"],
+        "docker_compose": ["docker", "compose", "version"],
+        "psql": ["psql", "--version"],
+    }
+    rows: list[dict[str, Any]] = []
+    for name, command in matrix_commands.items():
+        details = command_resolution_details(command)
+        resolved = bool(details.get("resolvedExecutable"))
+        classification = "ok" if resolved else "launcher_dry_run_missing_prerequisite"
+        rows.append(
+            {
+                "probeId": f"provocation:launcher:{name}",
+                "name": name,
+                "status": "ok" if resolved else "skipped_prerequisite",
+                "classification": classification,
+                "command": details,
+                "sideEffects": ["dry-run command resolution only; command was not executed"],
+            }
+        )
+    return rows
+
+
+def release_gates_db_capability_probes(project_root: Path) -> list[dict[str, Any]]:
+    raw_url, source = release_gate_database_url_source(project_root)
+    parsed = parse_database_url_probe(raw_url)
+    psql_resolution = command_resolution_details(["psql", "--version"])
+    pg_isready_resolution = command_resolution_details(["pg_isready", "--version"])
+    source_available = bool(raw_url and not parsed.warnings)
+    return [
+        {
+            "probeId": "provocation:db:url-contract",
+            "status": "ok" if source_available else "skipped_prerequisite",
+            "classification": "ok" if source_available else "db_capability_probe_source_missing",
+            "source": source,
+            "databaseUrl": as_jsonable(parsed),
+            "sideEffects": ["read environment files and process environment only; no database connection attempted"],
+        },
+        {
+            "probeId": "provocation:db:psql-launcher",
+            "status": "ok" if psql_resolution.get("resolvedExecutable") else "skipped_prerequisite",
+            "classification": "ok" if psql_resolution.get("resolvedExecutable") else "postgres_client_missing",
+            "command": psql_resolution,
+            "sideEffects": ["dry-run command resolution only; psql was not executed"],
+        },
+        {
+            "probeId": "provocation:db:pg-isready-launcher",
+            "status": "ok" if pg_isready_resolution.get("resolvedExecutable") else "skipped_prerequisite",
+            "classification": "ok" if pg_isready_resolution.get("resolvedExecutable") else "postgres_client_missing",
+            "command": pg_isready_resolution,
+            "sideEffects": ["dry-run command resolution only; pg_isready was not executed"],
+        },
+    ]
+
+
+def release_gates_dirty_state_smoke_probe(project_root: Path) -> dict[str, Any]:
+    smoke_path = project_root / "backend" / "tests" / "smoke_core_api.py"
+    text = ""
+    try:
+        text = smoke_path.read_text(encoding="utf-8")
+        read_error = None
+    except OSError as exc:
+        read_error = f"{exc.__class__.__name__}: {exc}"
+    run_scoped_user = "SMOKE_RUN_ID" in text and "smoke-user-" in text
+    # Keep this heuristic conservative: only known brittle phrase patterns make it risky.
+    brittle_markers = [
+        "me appearance default isCustomized == false",
+        "isCustomized == False",
+        "isCustomized == false",
+    ]
+    brittle_hits = [marker for marker in brittle_markers if marker in text]
+    status = "ok" if run_scoped_user and not brittle_hits and read_error is None else "skipped_prerequisite" if read_error else "infra_failed"
+    classification = "ok" if status == "ok" else "dirty_state_smoke_risk"
+    return {
+        "probeId": "provocation:dirty-state-smoke",
+        "status": status,
+        "classification": classification,
+        "smokePath": rel(smoke_path, project_root),
+        "exists": smoke_path.is_file(),
+        "readError": read_error,
+        "runScopedUserDetected": run_scoped_user,
+        "brittleDefaultStateMarkers": brittle_hits,
+        "sideEffects": ["static source inspection only; smoke was not executed"],
+        "nextAction": release_gates_next_action_for_code(classification),
+    }
+
+
+def release_gates_clean_machine_dry_profile_probe(project_root: Path) -> dict[str, Any]:
+    required_results, missing_required = clean_machine_required_path_results(project_root)
+    commands = release_gate_clean_machine_commands("dry")
+    return {
+        "probeId": "provocation:clean-machine-dry-profile",
+        "status": "ok" if not missing_required else "skipped_prerequisite",
+        "classification": "ok" if not missing_required else "clean_machine_required_files_missing",
+        "profile": "dry",
+        "requiredFiles": required_results,
+        "missingRequiredFiles": missing_required,
+        "plannedCommands": [release_gate_command_display(command) for command in commands],
+        "sideEffects": ["dry profile planning only; no clean-machine copy was created by this matrix probe"],
+    }
+
+
+def release_gates_provocation_matrix(project_root: Path, result: ReleaseGatesResult) -> dict[str, Any]:
+    probes: list[dict[str, Any]] = []
+    probes.append(release_gates_low_risk_port_binder_probe())
+    probes.extend(release_gates_launcher_dry_run_matrix())
+    probes.extend(release_gates_db_capability_probes(project_root))
+    probes.append(release_gates_dirty_state_smoke_probe(project_root))
+    probes.append(release_gates_clean_machine_dry_profile_probe(project_root))
+    for probe in probes:
+        classification = str(probe.get("classification") or "")
+        if classification and classification != "ok":
+            probe.setdefault("problemId", release_gates_problem_id_for_code(classification))
+            probe.setdefault("nextAction", release_gates_next_action_for_code(classification))
+    failures = [probe for probe in probes if probe.get("status") in {"failed", "infra_failed"}]
+    skipped = [probe for probe in probes if str(probe.get("status", "")).startswith("skipped")]
+    classifications = sorted({str(probe.get("classification")) for probe in probes if probe.get("classification") and probe.get("classification") != "ok"})
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "matrixType": "diagnostic-provocation-matrix",
+        "contractVersion": RELEASE_GATES_AUTOPSY_CONTRACT_VERSION,
+        "purpose": "Catch expected low-risk release/dev failures before users hit them accidentally, without destructive mutation.",
+        "overallStatus": "failed" if failures else "incomplete" if skipped else "ok",
+        "classificationCodes": classifications,
+        "sideEffectPolicy": "Read-only/dry-run except for binding a temporary loopback port 0 inside the current Python process.",
+        "probes": probes,
+    }
+
+
+def render_release_gates_provocation_matrix_md(matrix: dict[str, Any]) -> str:
+    lines = ["# release-gates diagnostic provocation matrix", ""]
+    lines.append(f"- Run ID: `{matrix.get('runId')}`")
+    lines.append(f"- Overall: `{matrix.get('overallStatus')}`")
+    lines.append(f"- Contract: `{matrix.get('contractVersion')}`")
+    lines.append("")
+    lines.append("Phase 3 intentionally provokes only low-risk diagnostic conditions. It must not create databases, install dependencies, start long-lived runtimes or modify project files.")
+    lines.append("")
+    lines.append("| Probe | Status | Classification | Problem ID | Side effects |")
+    lines.append("|---|---|---|---|---|")
+    for probe in matrix.get("probes", []):
+        side_effects = "; ".join(str(item) for item in probe.get("sideEffects", [])) or "none"
+        side_effects = side_effects.replace("|", "\\|")
+        problem_id = f"`{probe.get('problemId')}`" if probe.get("problemId") else ""
+        lines.append(f"| `{probe.get('probeId')}` | `{probe.get('status')}` | `{probe.get('classification')}` | {problem_id} | {side_effects} |")
+    lines.append("")
+    codes = matrix.get("classificationCodes") if isinstance(matrix.get("classificationCodes"), list) else []
+    if codes:
+        lines.append("## Non-ok classifications")
+        lines.append("")
+        for code in codes:
+            action = release_gates_next_action_for_code(str(code)) or "Inspect the probe entry and related release-gates logs."
+            lines.append(f"- `{code}` — {action}")
+        lines.append("")
+    return "\n".join(lines)
+
 def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> None:
     remediation_dir = run_dir / "remediation"
     remediation_dir.mkdir(parents=True, exist_ok=True)
@@ -8818,6 +9035,7 @@ def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGa
     problem_ledger = release_gates_problem_ledger(result, rerun_commands)
     probe_ledger = release_gates_probe_ledger(result)
     decision_template = release_gates_decision_ledger_template(result, problem_ledger)
+    provocation_matrix = release_gates_provocation_matrix(project_root, result)
 
     write_json(remediation_dir / "gate-ledger.json", ledger)
     (remediation_dir / "gate-ledger.md").write_text(render_release_gates_gate_ledger_md(ledger), encoding="utf-8")
@@ -8827,6 +9045,8 @@ def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGa
     (remediation_dir / "probe-ledger.md").write_text(render_release_gates_probe_ledger_md(probe_ledger), encoding="utf-8")
     write_json(remediation_dir / "decision-ledger-template.json", decision_template)
     (remediation_dir / "decision-ledger-template.md").write_text(render_release_gates_decision_ledger_template_md(decision_template), encoding="utf-8")
+    write_json(remediation_dir / "provocation-matrix.json", provocation_matrix)
+    (remediation_dir / "provocation-matrix.md").write_text(render_release_gates_provocation_matrix_md(provocation_matrix), encoding="utf-8")
     (remediation_dir / "prerequisites.md").write_text(render_release_gates_prerequisites_md(result, blockers), encoding="utf-8")
     (remediation_dir / "skipped-gates.md").write_text(render_release_gates_skipped_gates_md(unverified), encoding="utf-8")
     (remediation_dir / "next-actions.md").write_text(render_release_gates_next_actions_md(result), encoding="utf-8")
@@ -8947,6 +9167,7 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("- Problem ledger: `remediation/problem-ledger.md` / `remediation/problem-ledger.json`")
         lines.append("- Probe ledger: `remediation/probe-ledger.md` / `remediation/probe-ledger.json`")
         lines.append("- Decision ledger template: `remediation/decision-ledger-template.md` / `remediation/decision-ledger-template.json`")
+        lines.append("- Diagnostic provocation matrix: `remediation/provocation-matrix.md` / `remediation/provocation-matrix.json`")
         lines.append("- Prerequisites: `remediation/prerequisites.md`")
         lines.append("- Skipped gates: `remediation/skipped-gates.md`")
         lines.append("- Next actions: `remediation/next-actions.md`")
@@ -8963,6 +9184,7 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("- Command resolution: `command-resolution.json` / `command-resolution.md`")
         lines.append("- Redaction report: `redaction-report.json` / `redaction-report.md`")
         lines.append("- Ledgers: `remediation/problem-ledger.*`, `remediation/probe-ledger.*`, `remediation/decision-ledger-template.*`")
+        lines.append("- Provocation matrix: `remediation/provocation-matrix.*`")
         lines.append("")
     lines.append("## Findings")
     lines.append("")
@@ -10645,8 +10867,8 @@ def case_self_check_release_gates_keep_going_behavior() -> str:
 
 
 
-def case_self_check_release_gates_phase2_bundle_contract() -> str:
-    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase2-") as tmp:
+def case_self_check_release_gates_phase3_bundle_contract() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase3-") as tmp:
         root = Path(tmp)
         (root / "backend" / "migrations").mkdir(parents=True)
         (root / "frontend").mkdir(parents=True)
@@ -10658,7 +10880,7 @@ def case_self_check_release_gates_phase2_bundle_contract() -> str:
         (root / "frontend" / "package.json").write_text(json.dumps({"scripts": {"build": "vite build"}}), encoding="utf-8")
         (root / "frontend" / "package-lock.json").write_text("{}\n", encoding="utf-8")
         (root / "tools" / "devbootstrap.py").write_text("# fixture\n", encoding="utf-8")
-        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase2"
+        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase3"
         logs = run_dir / "logs"
         logs.mkdir(parents=True)
         (logs / "01_fixture_gate.log").write_text("status: ok\n", encoding="utf-8")
@@ -10667,7 +10889,7 @@ def case_self_check_release_gates_phase2_bundle_contract() -> str:
             tool_version=TOOL_VERSION,
             project_root=str(root),
             invoked_from=str(root),
-            run_id="selfcheck-release-gates-phase2",
+            run_id="selfcheck-release-gates-phase3",
             dry_run=False,
             timeout_seconds=123,
             overall_status="ok",
@@ -10684,7 +10906,7 @@ def case_self_check_release_gates_phase2_bundle_contract() -> str:
         with zipfile.ZipFile(archive_abs) as zf:
             names = set(zf.namelist())
     assert manifest["bundleType"] == "devbootstrap-release-gates-autopsy"
-    assert manifest["contractVersion"] == "phase-2"
+    assert manifest["contractVersion"] == RELEASE_GATES_AUTOPSY_CONTRACT_VERSION
     assert completeness["overallStatus"] == "ok", completeness
     assert command_resolution["gateCommands"][0]["command"]["resolvedExecutable"]
     assert redaction["status"] == "ok"
@@ -10698,9 +10920,10 @@ def case_self_check_release_gates_phase2_bundle_contract() -> str:
         "remediation/problem-ledger.json",
         "remediation/probe-ledger.json",
         "remediation/decision-ledger-template.json",
+        "remediation/provocation-matrix.json",
     ]:
         assert required_name in names, f"missing {required_name} from archive"
-    return "release-gates phase 2 ledgers and autopsy bundle contract checked"
+    return "release-gates phase 3 diagnostic provocation matrix and autopsy bundle contract checked"
 
 
 
@@ -10755,7 +10978,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_remediation_bundle", case_self_check_release_gates_remediation_bundle)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
-    self_check_case(result, "release_gates_phase2_bundle_contract", case_self_check_release_gates_phase2_bundle_contract)
+    self_check_case(result, "release_gates_phase3_bundle_contract", case_self_check_release_gates_phase3_bundle_contract)
     if result.failures:
         result.classification = "failed"
         result.next_actions.append("Fix failing self-check cases before using devbootstrap as the v1 routine entrypoint.")

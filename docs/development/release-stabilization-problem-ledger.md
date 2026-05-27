@@ -108,3 +108,6 @@ Phase 2 now generates per-run machine-readable ledgers under `.dev-bootstrap/run
 - `decision-ledger-template.json` / `decision-ledger-template.md`.
 
 This document remains the canonical human taxonomy for stable `REL-*` IDs. If a run produces `REL-UNMAPPED-*`, add or map a proper `REL-*` row here before making deeper behavior-changing fixes.
+
+
+Phase 3 now adds `remediation/provocation-matrix.json` / `.md` to every `release-gates` bundle. The matrix intentionally provides low-risk signals for `REL-PORT-001`, `REL-WIN-001`, `REL-DB-002`, `REL-SMOKE-001` and `REL-CLEAN-001` without mutating project files, creating databases or starting long-lived runtime processes.

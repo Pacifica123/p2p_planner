@@ -1065,6 +1065,14 @@ Exit criteria:
 - real destructive actions are still opt-in;
 - unknown ratio decreases.
 
+Operating artifacts:
+
+- `docs/development/release-stabilization-phase-3-diagnostic-provocation-matrix.md`;
+- `.dev-bootstrap/runs/<run-id>/remediation/provocation-matrix.json`;
+- `.dev-bootstrap/runs/<run-id>/remediation/provocation-matrix.md`.
+
+Implementation status: implemented in `tools/devbootstrap.py`; bundle contract version is now `phase-3`.
+
 ### Phase 4. Controlled mutators rollout
 
 Purpose: safely perform preparation when diagnostics justify it.
