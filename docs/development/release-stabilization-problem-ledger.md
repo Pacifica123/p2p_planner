@@ -113,3 +113,7 @@ This document remains the canonical human taxonomy for stable `REL-*` IDs. If a 
 Phase 3 now adds `remediation/provocation-matrix.json` / `.md` to every `release-gates` bundle. The matrix intentionally provides low-risk signals for `REL-PORT-001`, `REL-WIN-001`, `REL-DB-002`, `REL-SMOKE-001` and `REL-CLEAN-001` without mutating project files, creating databases or starting long-lived runtime processes.
 
 Phase 4 now adds `remediation/controlled-mutators.json` / `.md` plus required `release-gates-consent.json` / `.md` to every `release-gates` bundle. This does not introduce new default mutations: it makes existing opt-in mutators auditable and keeps `unsafeMutationCount == 0` as a machine-checkable release-gates contract.
+
+Phase 5 now adds `remediation/repeatability-loop.json` / `.md` to every `release-gates` bundle. It does not mark first-run evidence as stable by itself: same-profile history, managed-runtime lifecycle evidence, double smoke evidence and cleanup coverage are reported separately so `REL-SMOKE-001`, `REL-PROC-001` and `REL-ART-001` can be reviewed without treating a single lucky run as proof.
+
+Phase 5 verification also exposed an extraction-tooling caveat for `REL-ART-001`: system `unzip` can misdecode Cyrillic placeholder filenames from uploaded archives into surrogate paths on Linux, while Python `zipfile.extractall()` preserves them. If devctl archive creation fails on surrogate filenames, first verify extraction encoding before changing project logic.

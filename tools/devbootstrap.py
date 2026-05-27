@@ -4688,7 +4688,7 @@ CLEAN_MACHINE_PROFILES = ("dry", "deps", "runtime", "clean-machine-dry", "clean-
 CLEAN_MACHINE_RETENTION_POLICIES = ("delete-always", "keep-on-failure", "keep-always")
 DEFAULT_CLEAN_MACHINE_PROFILE = "dry"
 DEFAULT_CLEAN_MACHINE_RETENTION = "keep-on-failure"
-RELEASE_GATES_AUTOPSY_CONTRACT_VERSION = "phase-4"
+RELEASE_GATES_AUTOPSY_CONTRACT_VERSION = "phase-5"
 RELEASE_GATES_PROFILES = ("diagnostic", "prepared-local", "isolated-db", "managed-runtime", "full-local-release")
 RELEASE_GATES_DEFAULT_PROFILE = "diagnostic"
 RELEASE_GATES_PROFILE_DESCRIPTIONS = {
@@ -8274,6 +8274,8 @@ def release_gates_required_bundle_artifacts() -> list[dict[str, Any]]:
         {"path": "remediation/provocation-matrix.md", "required": True, "description": "Human-readable controlled diagnostic provocation matrix."},
         {"path": "remediation/controlled-mutators.json", "required": True, "description": "Machine-readable Phase 4 controlled mutators and cleanup ledger."},
         {"path": "remediation/controlled-mutators.md", "required": True, "description": "Human-readable Phase 4 controlled mutators and cleanup ledger."},
+        {"path": "remediation/repeatability-loop.json", "required": True, "description": "Machine-readable Phase 5 repeatability loop and ledger comparison report."},
+        {"path": "remediation/repeatability-loop.md", "required": True, "description": "Human-readable Phase 5 repeatability loop report."},
         {"path": "remediation/prerequisites.md", "required": True, "description": "Prerequisite blocker report."},
         {"path": "remediation/skipped-gates.md", "required": True, "description": "Skipped/unverified gate report."},
         {"path": "remediation/next-actions.md", "required": True, "description": "Targeted next actions."},
@@ -8393,6 +8395,7 @@ def release_gates_bundle_manifest(project_root: Path, result: ReleaseGatesResult
         "decisionLedgerTemplate": "remediation/decision-ledger-template.json",
         "provocationMatrix": "remediation/provocation-matrix.json",
         "controlledMutators": "remediation/controlled-mutators.json",
+        "repeatabilityLoop": "remediation/repeatability-loop.json",
         "profileConsent": "release-gates-consent.json",
     }
 
@@ -8413,6 +8416,7 @@ def release_gates_autopsy_bundle_paths(result: ReleaseGatesResult) -> dict[str, 
         "decisionLedgerTemplatePath": f"{base}/remediation/decision-ledger-template.json",
         "provocationMatrixPath": f"{base}/remediation/provocation-matrix.json",
         "controlledMutatorsPath": f"{base}/remediation/controlled-mutators.json",
+        "repeatabilityLoopPath": f"{base}/remediation/repeatability-loop.json",
     }
 
 def render_release_gates_gate_ledger_md(ledger: dict[str, Any]) -> str:
@@ -9299,6 +9303,356 @@ def render_release_gates_controlled_mutators_md(report: dict[str, Any]) -> str:
         lines.append("")
     return "\n".join(lines)
 
+
+def release_gates_gate_signature_from_payload(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    gates = payload.get("gates") if isinstance(payload.get("gates"), list) else []
+    signature: dict[str, dict[str, Any]] = {}
+    for gate in gates:
+        if not isinstance(gate, dict):
+            continue
+        name = str(gate.get("name") or "").strip()
+        if not name:
+            continue
+        signature[name] = {
+            "status": gate.get("status"),
+            "classification": gate.get("classification"),
+            "required": bool(gate.get("required", True)),
+        }
+    return signature
+
+
+def release_gates_current_payload_for_repeatability(result: ReleaseGatesResult) -> dict[str, Any]:
+    return {
+        "generatedAt": result.generated_at,
+        "runId": result.run_id,
+        "dryRun": result.dry_run,
+        "overallStatus": result.overall_status,
+        "classification": result.classification,
+        "profilePlan": as_jsonable(result.profile_plan) if result.profile_plan else None,
+        "gates": [as_jsonable(gate) for gate in result.gates],
+    }
+
+
+def release_gates_profile_from_payload(payload: dict[str, Any]) -> str | None:
+    profile_plan = payload.get("profilePlan")
+    if isinstance(profile_plan, dict):
+        profile = profile_plan.get("profile")
+        return str(profile) if profile else None
+    profile = payload.get("profile")
+    return str(profile) if profile else None
+
+
+def release_gates_previous_run_payloads(project_root: Path, current_report_dir: str | None, limit: int = 12) -> list[dict[str, Any]]:
+    runs_root = project_root / BOOTSTRAP_DIR_NAME / "runs"
+    if not runs_root.is_dir():
+        return []
+    current_abs: Path | None = None
+    if current_report_dir:
+        current_abs = (project_root / current_report_dir).resolve()
+    candidates: list[tuple[float, Path]] = []
+    for path in runs_root.glob("*/release-gates.json"):
+        try:
+            if current_abs is not None and path.parent.resolve() == current_abs:
+                continue
+            candidates.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    payloads: list[dict[str, Any]] = []
+    for _, path in sorted(candidates, reverse=True)[:limit]:
+        payload = read_json(path)
+        if payload.get("command") != "release-gates" and "gates" not in payload:
+            continue
+        payload["_path"] = rel(path, project_root)
+        payloads.append(payload)
+    return payloads
+
+
+def release_gates_gate_signature_similarity(current: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
+    current_sig = release_gates_gate_signature_from_payload(current)
+    previous_sig = release_gates_gate_signature_from_payload(previous)
+    common = sorted(set(current_sig) & set(previous_sig))
+    compared: list[dict[str, Any]] = []
+    matches = 0
+    for name in common:
+        cur = current_sig[name]
+        prev = previous_sig[name]
+        match = cur.get("status") == prev.get("status") and cur.get("classification") == prev.get("classification")
+        if match:
+            matches += 1
+        compared.append(
+            {
+                "gate": name,
+                "matches": match,
+                "current": {"status": cur.get("status"), "classification": cur.get("classification")},
+                "previous": {"status": prev.get("status"), "classification": prev.get("classification")},
+            }
+        )
+    ratio = (matches / len(common)) if common else 0.0
+    return {
+        "commonGateCount": len(common),
+        "matchingGateCount": matches,
+        "gateStabilityRatio": round(ratio, 3),
+        "comparedGates": compared,
+    }
+
+
+def release_gates_repeatability_component(name: str, status: str, score: float, evidence: list[str], notes: list[str]) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "score": round(max(0.0, min(1.0, score)), 3),
+        "evidence": evidence,
+        "notes": notes,
+    }
+
+
+def release_gates_repeatability_loop(project_root: Path, result: ReleaseGatesResult) -> dict[str, Any]:
+    current = release_gates_current_payload_for_repeatability(result)
+    current_profile = release_gates_profile_from_payload(current)
+    previous_runs = release_gates_previous_run_payloads(project_root, result.report_dir)
+    same_profile_runs = [payload for payload in previous_runs if release_gates_profile_from_payload(payload) == current_profile]
+    latest_same_profile = same_profile_runs[0] if same_profile_runs else None
+    components: list[dict[str, Any]] = []
+    comparisons: list[dict[str, Any]] = []
+
+    if result.dry_run:
+        components.append(
+            release_gates_repeatability_component(
+                "same-profile-repeat",
+                "planned-only",
+                0.0,
+                [],
+                ["Current run is a dry-run; execute the same profile twice without --dry-run before claiming repeatability."],
+            )
+        )
+    elif latest_same_profile:
+        similarity = release_gates_gate_signature_similarity(current, latest_same_profile)
+        overall_matches = current.get("overallStatus") == latest_same_profile.get("overallStatus") and current.get("classification") == latest_same_profile.get("classification")
+        score = similarity["gateStabilityRatio"] * 0.8 + (0.2 if overall_matches else 0.0)
+        status = "verified" if overall_matches and similarity["gateStabilityRatio"] >= 0.8 else "unstable"
+        comparison = {
+            "currentRunId": result.run_id,
+            "previousRunId": latest_same_profile.get("runId"),
+            "previousPath": latest_same_profile.get("_path"),
+            "sameProfile": True,
+            "overallMatches": overall_matches,
+            **similarity,
+        }
+        comparisons.append(comparison)
+        components.append(
+            release_gates_repeatability_component(
+                "same-profile-repeat",
+                status,
+                score,
+                [str(latest_same_profile.get("_path"))],
+                [f"Compared with previous same-profile run `{latest_same_profile.get('runId')}`."],
+            )
+        )
+    else:
+        components.append(
+            release_gates_repeatability_component(
+                "same-profile-repeat",
+                "insufficient-history",
+                0.0,
+                [],
+                ["No previous release-gates run with the same profile was found in .dev-bootstrap/runs."],
+            )
+        )
+
+    gate_by_name = {gate.name: gate for gate in result.gates}
+    managed_start_names = [name for name in ["managed_backend_start", "managed_frontend_start"] if name in gate_by_name]
+    managed_stop_names = [name for name in ["managed_backend_stop", "managed_frontend_stop"] if name in gate_by_name]
+    if result.dry_run:
+        components.append(
+            release_gates_repeatability_component(
+                "start-stop-start",
+                "planned-only",
+                0.0,
+                [],
+                ["Dry-run cannot prove process lifecycle repeatability."],
+            )
+        )
+    elif managed_start_names and managed_stop_names:
+        start_ok = all(gate_by_name[name].status == "ok" for name in managed_start_names)
+        stop_ok = all(gate_by_name[name].status == "ok" for name in managed_stop_names)
+        components.append(
+            release_gates_repeatability_component(
+                "start-stop-start",
+                "single-cycle-evidence" if start_ok and stop_ok else "failed-cycle-evidence",
+                0.6 if start_ok and stop_ok else 0.0,
+                [gate_by_name[name].log_path or name for name in managed_start_names + managed_stop_names],
+                ["Current release-gates run contains one owned managed-runtime start/stop cycle; run the same profile again to prove start-stop-start."],
+            )
+        )
+    else:
+        components.append(
+            release_gates_repeatability_component(
+                "start-stop-start",
+                "not-observed",
+                0.0,
+                [],
+                ["Managed runtime was not enabled, so process lifecycle repeatability was not exercised."],
+            )
+        )
+
+    previous_start_failures = [payload for payload in previous_runs if any(isinstance(g, dict) and str(g.get("name", "")).endswith("_start") and g.get("status") in {"failed", "infra_failed", "timeout"} for g in payload.get("gates", []) if isinstance(payload.get("gates"), list))]
+    current_start_ok = any(name in gate_by_name and gate_by_name[name].status == "ok" for name in ["managed_backend_start", "managed_frontend_start"])
+    if previous_start_failures and current_start_ok:
+        components.append(
+            release_gates_repeatability_component(
+                "failed-start-retry",
+                "verified",
+                1.0,
+                [str(previous_start_failures[0].get("_path"))],
+                ["A previous managed start failure exists and the current run reached a managed start successfully."],
+            )
+        )
+    else:
+        components.append(
+            release_gates_repeatability_component(
+                "failed-start-retry",
+                "not-observed",
+                0.0,
+                [],
+                ["No failed-start-then-retry evidence was found; keep this as a scenario in manual/CI repeatability review."],
+            )
+        )
+
+    smoke_gate_names = [name for name in ["backend_python_smoke_first", "backend_python_smoke_second"] if name in gate_by_name]
+    if len(smoke_gate_names) == 2:
+        smoke_ok = all(gate_by_name[name].status == "ok" for name in smoke_gate_names)
+        components.append(
+            release_gates_repeatability_component(
+                "fresh-and-dirty-smoke",
+                "verified" if smoke_ok else "known-classified",
+                1.0 if smoke_ok else 0.4,
+                [gate_by_name[name].log_path or name for name in smoke_gate_names],
+                ["Both backend smoke passes are present; this is the current in-run fresh/dirty smoke proxy."],
+            )
+        )
+    else:
+        components.append(
+            release_gates_repeatability_component(
+                "fresh-and-dirty-smoke",
+                "not-observed",
+                0.0,
+                [],
+                ["The double backend smoke path requires a write-safe DB via managed-test-db or TEST_DATABASE_URL."],
+            )
+        )
+
+    if latest_same_profile:
+        ledger_score = comparisons[0]["gateStabilityRatio"] if comparisons else 0.0
+        components.append(
+            release_gates_repeatability_component(
+                "ledger-compare",
+                "verified" if ledger_score >= 0.8 else "unstable",
+                ledger_score,
+                [str(latest_same_profile.get("_path"))],
+                ["Compared current gate ledger signature with the latest same-profile release-gates JSON."],
+            )
+        )
+    else:
+        components.append(
+            release_gates_repeatability_component(
+                "ledger-compare",
+                "insufficient-history",
+                0.0,
+                [],
+                ["Need at least one previous same-profile release-gates JSON to compare ledgers."],
+            )
+        )
+
+    cleanup_ok = True
+    cleanup_evidence: list[str] = []
+    controlled = release_gates_controlled_mutators(project_root, result)
+    cleanup_ok = controlled.get("cleanupCoverage") == "ok" and int(controlled.get("unsafeMutationCount") or 0) == 0
+    cleanup_evidence.extend(["remediation/controlled-mutators.json", "remediation/controlled-mutators.md"])
+    components.append(
+        release_gates_repeatability_component(
+            "cleanup-verification",
+            "verified" if cleanup_ok else "incomplete",
+            1.0 if cleanup_ok else 0.0,
+            cleanup_evidence,
+            ["Controlled mutators ledger reports cleanup coverage and unsafe mutation count for this run."],
+        )
+    )
+
+    reproducibility_index = sum(float(item.get("score") or 0.0) for item in components) / len(components) if components else 0.0
+    exit_criteria_met = reproducibility_index >= 0.8 and not result.dry_run
+    recommended_commands = [
+        f"python tools/devbootstrap.py release-gates --profile {current_profile or RELEASE_GATES_DEFAULT_PROFILE}",
+        f"python tools/devbootstrap.py release-gates --profile {current_profile or RELEASE_GATES_DEFAULT_PROFILE}",
+        "python tools/devbootstrap.py release-gates --managed-test-db --managed-runtime --test-db-retention=drop-always",
+        "python tools/devbootstrap.py status && python tools/devbootstrap.py stop && python tools/devbootstrap.py up --dry-run --smoke-level quick",
+    ]
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "contractVersion": RELEASE_GATES_AUTOPSY_CONTRACT_VERSION,
+        "phase": "phase-5-repeatability-loop",
+        "purpose": "Show whether configured release-gates evidence is repeatable instead of accidental.",
+        "profile": current_profile,
+        "dryRun": result.dry_run,
+        "reproducibilityIndex": round(reproducibility_index, 3),
+        "exitCriteriaMet": exit_criteria_met,
+        "threshold": 0.8,
+        "previousRunsScanned": len(previous_runs),
+        "sameProfilePreviousRuns": len(same_profile_runs),
+        "comparisons": comparisons,
+        "components": components,
+        "recommendedCommands": recommended_commands,
+        "notes": [
+            "This artifact is evidence-only and does not change release-gates overall status.",
+            "A dry-run can verify the contract shape but cannot prove runtime repeatability.",
+        ],
+    }
+
+
+def render_release_gates_repeatability_loop_md(report: dict[str, Any]) -> str:
+    lines = ["# release-gates repeatability loop", ""]
+    lines.append(f"- Run ID: `{report.get('runId')}`")
+    lines.append(f"- Contract: `{report.get('contractVersion')}`")
+    lines.append(f"- Profile: `{report.get('profile')}`")
+    lines.append(f"- Dry run: `{report.get('dryRun')}`")
+    lines.append(f"- Reproducibility Index: `{report.get('reproducibilityIndex')}` / threshold `{report.get('threshold')}`")
+    lines.append(f"- Exit criteria met: `{report.get('exitCriteriaMet')}`")
+    lines.append(f"- Previous runs scanned: `{report.get('previousRunsScanned')}`")
+    lines.append(f"- Same-profile previous runs: `{report.get('sameProfilePreviousRuns')}`")
+    lines.append("")
+    lines.append("Phase 5 treats one successful run as insufficient. Review this artifact to see which repeatability scenarios are already evidenced and which still need another run or a managed-runtime profile.")
+    lines.append("")
+    lines.append("## Components")
+    lines.append("")
+    lines.append("| Component | Status | Score | Evidence |")
+    lines.append("|---|---|---:|---|")
+    for item in report.get("components", []):
+        evidence = "; ".join(f"`{value}`" for value in item.get("evidence", [])) or "none"
+        lines.append(f"| `{item.get('name')}` | `{item.get('status')}` | `{item.get('score')}` | {evidence} |")
+    lines.append("")
+    lines.append("## Comparisons")
+    lines.append("")
+    comparisons = report.get("comparisons") if isinstance(report.get("comparisons"), list) else []
+    if comparisons:
+        for item in comparisons:
+            lines.append(f"- Current `{item.get('currentRunId')}` vs previous `{item.get('previousRunId')}` from `{item.get('previousPath')}`: gate stability `{item.get('gateStabilityRatio')}`, overall matches `{item.get('overallMatches')}`.")
+    else:
+        lines.append("- No same-profile historical run was available for ledger comparison.")
+    lines.append("")
+    lines.append("## Recommended repeatability commands")
+    lines.append("")
+    for command in report.get("recommendedCommands", []):
+        lines.append(f"- `{command}`")
+    lines.append("")
+    lines.append("## Notes")
+    lines.append("")
+    for note in report.get("notes", []):
+        lines.append(f"- {note}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> None:
     remediation_dir = run_dir / "remediation"
     remediation_dir.mkdir(parents=True, exist_ok=True)
@@ -9313,6 +9667,7 @@ def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGa
     decision_template = release_gates_decision_ledger_template(result, problem_ledger)
     provocation_matrix = release_gates_provocation_matrix(project_root, result)
     controlled_mutators = release_gates_controlled_mutators(project_root, result)
+    repeatability_loop = release_gates_repeatability_loop(project_root, result)
 
     write_json(remediation_dir / "gate-ledger.json", ledger)
     (remediation_dir / "gate-ledger.md").write_text(render_release_gates_gate_ledger_md(ledger), encoding="utf-8")
@@ -9326,6 +9681,8 @@ def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGa
     (remediation_dir / "provocation-matrix.md").write_text(render_release_gates_provocation_matrix_md(provocation_matrix), encoding="utf-8")
     write_json(remediation_dir / "controlled-mutators.json", controlled_mutators)
     (remediation_dir / "controlled-mutators.md").write_text(render_release_gates_controlled_mutators_md(controlled_mutators), encoding="utf-8")
+    write_json(remediation_dir / "repeatability-loop.json", repeatability_loop)
+    (remediation_dir / "repeatability-loop.md").write_text(render_release_gates_repeatability_loop_md(repeatability_loop), encoding="utf-8")
     (remediation_dir / "prerequisites.md").write_text(render_release_gates_prerequisites_md(result, blockers), encoding="utf-8")
     (remediation_dir / "skipped-gates.md").write_text(render_release_gates_skipped_gates_md(unverified), encoding="utf-8")
     (remediation_dir / "next-actions.md").write_text(render_release_gates_next_actions_md(result), encoding="utf-8")
@@ -9448,6 +9805,7 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("- Decision ledger template: `remediation/decision-ledger-template.md` / `remediation/decision-ledger-template.json`")
         lines.append("- Diagnostic provocation matrix: `remediation/provocation-matrix.md` / `remediation/provocation-matrix.json`")
         lines.append("- Controlled mutators ledger: `remediation/controlled-mutators.md` / `remediation/controlled-mutators.json`")
+        lines.append("- Repeatability loop: `remediation/repeatability-loop.md` / `remediation/repeatability-loop.json`")
         lines.append("- Prerequisites: `remediation/prerequisites.md`")
         lines.append("- Skipped gates: `remediation/skipped-gates.md`")
         lines.append("- Next actions: `remediation/next-actions.md`")
@@ -9466,6 +9824,7 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("- Ledgers: `remediation/problem-ledger.*`, `remediation/probe-ledger.*`, `remediation/decision-ledger-template.*`")
         lines.append("- Provocation matrix: `remediation/provocation-matrix.*`")
         lines.append("- Controlled mutators: `remediation/controlled-mutators.*`")
+        lines.append("- Repeatability loop: `remediation/repeatability-loop.*`")
         lines.append("")
     lines.append("## Findings")
     lines.append("")
@@ -11148,8 +11507,8 @@ def case_self_check_release_gates_keep_going_behavior() -> str:
 
 
 
-def case_self_check_release_gates_phase4_bundle_contract() -> str:
-    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase4-") as tmp:
+def case_self_check_release_gates_phase5_bundle_contract() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase5-") as tmp:
         root = Path(tmp)
         (root / "backend" / "migrations").mkdir(parents=True)
         (root / "frontend").mkdir(parents=True)
@@ -11161,7 +11520,7 @@ def case_self_check_release_gates_phase4_bundle_contract() -> str:
         (root / "frontend" / "package.json").write_text(json.dumps({"scripts": {"build": "vite build"}}), encoding="utf-8")
         (root / "frontend" / "package-lock.json").write_text("{}\n", encoding="utf-8")
         (root / "tools" / "devbootstrap.py").write_text("# fixture\n", encoding="utf-8")
-        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase4"
+        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase5"
         logs = run_dir / "logs"
         logs.mkdir(parents=True)
         (logs / "01_fixture_gate.log").write_text("status: ok\n", encoding="utf-8")
@@ -11170,7 +11529,7 @@ def case_self_check_release_gates_phase4_bundle_contract() -> str:
             tool_version=TOOL_VERSION,
             project_root=str(root),
             invoked_from=str(root),
-            run_id="selfcheck-release-gates-phase4",
+            run_id="selfcheck-release-gates-phase5",
             dry_run=False,
             timeout_seconds=123,
             overall_status="ok",
@@ -11214,10 +11573,11 @@ def case_self_check_release_gates_phase4_bundle_contract() -> str:
         "remediation/decision-ledger-template.json",
         "remediation/provocation-matrix.json",
         "remediation/controlled-mutators.json",
+        "remediation/repeatability-loop.json",
         "release-gates-consent.json",
     ]:
         assert required_name in names, f"missing {required_name} from archive"
-    return "release-gates phase 4 controlled mutators and autopsy bundle contract checked"
+    return "release-gates phase 5 repeatability loop and autopsy bundle contract checked"
 
 
 
@@ -11272,7 +11632,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_remediation_bundle", case_self_check_release_gates_remediation_bundle)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
-    self_check_case(result, "release_gates_phase4_bundle_contract", case_self_check_release_gates_phase4_bundle_contract)
+    self_check_case(result, "release_gates_phase5_bundle_contract", case_self_check_release_gates_phase5_bundle_contract)
     if result.failures:
         result.classification = "failed"
         result.next_actions.append("Fix failing self-check cases before using devbootstrap as the v1 routine entrypoint.")

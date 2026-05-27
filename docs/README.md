@@ -19,7 +19,7 @@
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
 - `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy.
-- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy, каноническую release stabilization program и Phase 0 operating baseline: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, метрикам release confidence, side-effect profiles и цепочке тематических ремедиаций.
+- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy, каноническую release stabilization program и Phase 0–5 operating baseline: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, repeatability loop, метрикам release confidence, side-effect profiles и цепочке тематических ремедиаций.
 
 ## Зафиксированные принципы
 
@@ -66,6 +66,7 @@
    `development/release-stabilization-phase-2-ledgers-and-taxonomy.md`,
    `development/release-stabilization-phase-3-diagnostic-provocation-matrix.md`,
    `development/release-stabilization-phase-4-controlled-mutators-rollout.md`,
+   `development/release-stabilization-phase-5-repeatability-loop.md`,
    `development/release-stabilization-problem-ledger.md`,
    `development/release-confidence-scorecard-v1.md`,
    `development/release-stabilization-profile-side-effects-v1.md`,
@@ -134,6 +135,8 @@ local-first, sync и optional p2p.
 - `docs/development/release-stabilization-phase-3-diagnostic-provocation-matrix.md` — Phase 3 diagnostic provocation matrix: low-risk port binder, launcher dry-run matrix, DB capability probes, dirty-state smoke probe and clean-machine dry planning in the release-gates autopsy bundle.
 
 - `docs/development/release-stabilization-phase-4-controlled-mutators-rollout.md` — Phase 4 controlled mutators rollout: managed DB/runtime/dependency/browser/clean-machine actions are explicit, consented and bundled with cleanup/rollback evidence.
+
+- `docs/development/release-stabilization-phase-5-repeatability-loop.md` — Phase 5 repeatability loop: release-gates now emits `remediation/repeatability-loop.*`, compares same-profile historical runs and separates real repeatability evidence from first-run/dry-run contract shape.
 
 - `docs/development/release-stabilization-problem-ledger.md` — initial human Problem Ledger with stable `REL-*` failure-mode IDs, owner layers, severity and required probes.
 

@@ -1118,6 +1118,14 @@ Exit criteria:
 - repeated smoke passes or produces known non-blocking classifications;
 - cleanup verification passes.
 
+Operating artifacts:
+
+- `docs/development/release-stabilization-phase-5-repeatability-loop.md`;
+- `.dev-bootstrap/runs/<run-id>/remediation/repeatability-loop.json`;
+- `.dev-bootstrap/runs/<run-id>/remediation/repeatability-loop.md`.
+
+Implementation status: implemented in `tools/devbootstrap.py`; bundle contract version is now `phase-5`. The first run in a new workspace is allowed to report `insufficient-history`; the next same-profile run is what upgrades this from contract-shape evidence to repeatability evidence.
+
 ### Phase 6. Release confidence gate
 
 Purpose: convert evidence into release decision.
