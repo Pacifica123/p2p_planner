@@ -1124,7 +1124,7 @@ Operating artifacts:
 - `.dev-bootstrap/runs/<run-id>/remediation/repeatability-loop.json`;
 - `.dev-bootstrap/runs/<run-id>/remediation/repeatability-loop.md`.
 
-Implementation status: implemented in `tools/devbootstrap.py`; bundle contract version is now `phase-5`. The first run in a new workspace is allowed to report `insufficient-history`; the next same-profile run is what upgrades this from contract-shape evidence to repeatability evidence.
+Implementation status: implemented in `tools/devbootstrap.py`. Phase 5 introduced the `repeatability-loop.*` artifact; after Phase 6 the global bundle contract version is `phase-6`. The first run in a new workspace is allowed to report `insufficient-history`; the next same-profile run is what upgrades this from contract-shape evidence to repeatability evidence.
 
 ### Phase 6. Release confidence gate
 
@@ -1143,6 +1143,15 @@ Exit criteria:
 - score >= 85 for beta candidate;
 - no unknown blockers;
 - accepted skips are documented and non-blocking.
+
+Operating artifacts:
+
+- `docs/development/release-stabilization-phase-6-release-confidence-gate.md`;
+- `.dev-bootstrap/runs/<run-id>/release-confidence-gate.json`;
+- `.dev-bootstrap/runs/<run-id>/release-confidence-gate.md`;
+- `.dev-bootstrap/runs/<run-id>/v1-release-readiness.md`.
+
+Implementation status: implemented in `tools/devbootstrap.py`; bundle contract version is now `phase-6`. Phase 6 is a decision layer over existing evidence, not a new product-test layer.
 
 ### Phase 7. Continuous memory and regression protection
 

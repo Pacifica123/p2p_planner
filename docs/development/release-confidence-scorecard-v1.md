@@ -1,9 +1,16 @@
 # Release confidence scorecard v1
 
-- Статус: Manual scorecard for Phase 0
+- Статус: Automated by Phase 6 release confidence gate; manual policy remains canonical
 - Дата: 2026-05-27
 - Родительский документ: `docs/development/release-stabilization-program-v1.md`
-- Назначение: дать ручной способ считать release confidence до автоматизации Phase 6.
+- Назначение: зафиксировать политику release confidence; с Phase 6 она считается автоматически в `release-confidence-gate.json/md`.
+
+---
+
+
+## 0. Automation status
+
+Phase 6 now writes `release-confidence-gate.json` / `.md` and `v1-release-readiness.md` into every `release-gates` bundle. This document remains the scoring policy, while the run artifacts contain the current computed score, active hard caps, unknown ratio, classification coverage and final release recommendation.
 
 ---
 

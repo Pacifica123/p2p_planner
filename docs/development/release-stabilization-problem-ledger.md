@@ -117,3 +117,6 @@ Phase 4 now adds `remediation/controlled-mutators.json` / `.md` plus required `r
 Phase 5 now adds `remediation/repeatability-loop.json` / `.md` to every `release-gates` bundle. It does not mark first-run evidence as stable by itself: same-profile history, managed-runtime lifecycle evidence, double smoke evidence and cleanup coverage are reported separately so `REL-SMOKE-001`, `REL-PROC-001` and `REL-ART-001` can be reviewed without treating a single lucky run as proof.
 
 Phase 5 verification also exposed an extraction-tooling caveat for `REL-ART-001`: system `unzip` can misdecode Cyrillic placeholder filenames from uploaded archives into surrogate paths on Linux, while Python `zipfile.extractall()` preserves them. If devctl archive creation fails on surrogate filenames, first verify extraction encoding before changing project logic.
+
+
+Phase 6 now adds `release-confidence-gate.json` / `.md` and `v1-release-readiness.md` to every `release-gates` bundle. This gives `REL-ART-001`, `REL-SMOKE-001`, `REL-BROWSER-001` and `REL-CLEAN-001` an explicit decision surface: skipped prerequisites, missing repeatability and absent real-backend product-path evidence become hard caps instead of ambiguous “almost green” release results.

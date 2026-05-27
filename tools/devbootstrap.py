@@ -4688,7 +4688,7 @@ CLEAN_MACHINE_PROFILES = ("dry", "deps", "runtime", "clean-machine-dry", "clean-
 CLEAN_MACHINE_RETENTION_POLICIES = ("delete-always", "keep-on-failure", "keep-always")
 DEFAULT_CLEAN_MACHINE_PROFILE = "dry"
 DEFAULT_CLEAN_MACHINE_RETENTION = "keep-on-failure"
-RELEASE_GATES_AUTOPSY_CONTRACT_VERSION = "phase-5"
+RELEASE_GATES_AUTOPSY_CONTRACT_VERSION = "phase-6"
 RELEASE_GATES_PROFILES = ("diagnostic", "prepared-local", "isolated-db", "managed-runtime", "full-local-release")
 RELEASE_GATES_DEFAULT_PROFILE = "diagnostic"
 RELEASE_GATES_PROFILE_DESCRIPTIONS = {
@@ -8276,6 +8276,9 @@ def release_gates_required_bundle_artifacts() -> list[dict[str, Any]]:
         {"path": "remediation/controlled-mutators.md", "required": True, "description": "Human-readable Phase 4 controlled mutators and cleanup ledger."},
         {"path": "remediation/repeatability-loop.json", "required": True, "description": "Machine-readable Phase 5 repeatability loop and ledger comparison report."},
         {"path": "remediation/repeatability-loop.md", "required": True, "description": "Human-readable Phase 5 repeatability loop report."},
+        {"path": "release-confidence-gate.json", "required": True, "description": "Machine-readable Phase 6 release confidence score, caps and decision."},
+        {"path": "release-confidence-gate.md", "required": True, "description": "Human-readable Phase 6 release confidence gate report."},
+        {"path": "v1-release-readiness.md", "required": True, "description": "Human-readable v1 release readiness decision summary."},
         {"path": "remediation/prerequisites.md", "required": True, "description": "Prerequisite blocker report."},
         {"path": "remediation/skipped-gates.md", "required": True, "description": "Skipped/unverified gate report."},
         {"path": "remediation/next-actions.md", "required": True, "description": "Targeted next actions."},
@@ -8396,6 +8399,8 @@ def release_gates_bundle_manifest(project_root: Path, result: ReleaseGatesResult
         "provocationMatrix": "remediation/provocation-matrix.json",
         "controlledMutators": "remediation/controlled-mutators.json",
         "repeatabilityLoop": "remediation/repeatability-loop.json",
+        "releaseConfidenceGate": "release-confidence-gate.json",
+        "v1ReleaseReadiness": "v1-release-readiness.md",
         "profileConsent": "release-gates-consent.json",
     }
 
@@ -8417,6 +8422,8 @@ def release_gates_autopsy_bundle_paths(result: ReleaseGatesResult) -> dict[str, 
         "provocationMatrixPath": f"{base}/remediation/provocation-matrix.json",
         "controlledMutatorsPath": f"{base}/remediation/controlled-mutators.json",
         "repeatabilityLoopPath": f"{base}/remediation/repeatability-loop.json",
+        "releaseConfidenceGatePath": f"{base}/release-confidence-gate.json",
+        "v1ReleaseReadinessPath": f"{base}/v1-release-readiness.md",
     }
 
 def render_release_gates_gate_ledger_md(ledger: dict[str, Any]) -> str:
@@ -9653,6 +9660,523 @@ def render_release_gates_repeatability_loop_md(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+
+RELEASE_CONFIDENCE_SCORE_CLASSES = [
+    (95, "stable_release_loop"),
+    (85, "beta_candidate"),
+    (70, "internal_candidate"),
+    (50, "partial_signal"),
+    (0, "diagnostic_chaos"),
+]
+
+
+def release_confidence_score_class(score: int) -> str:
+    for threshold, class_name in RELEASE_CONFIDENCE_SCORE_CLASSES:
+        if score >= threshold:
+            return class_name
+    return "diagnostic_chaos"
+
+
+def release_confidence_class_rank(class_name: str) -> int:
+    order = ["diagnostic_chaos", "partial_signal", "internal_candidate", "beta_candidate", "stable_release_loop"]
+    try:
+        return order.index(class_name)
+    except ValueError:
+        return 0
+
+
+def release_confidence_min_class(current: str, cap: str) -> str:
+    return current if release_confidence_class_rank(current) <= release_confidence_class_rank(cap) else cap
+
+
+def release_confidence_gate_counts(result: ReleaseGatesResult) -> dict[str, Any]:
+    required = [gate for gate in result.gates if gate.required]
+    optional = [gate for gate in result.gates if not gate.required]
+    statuses: dict[str, int] = {}
+    for gate in result.gates:
+        status = release_gates_normalized_status(gate)
+        statuses[status] = statuses.get(status, 0) + 1
+    ignored_covered = release_gates_critical_ignored_covered(result.gates)
+    unknown_statuses = {"infra_failed", "skipped_prerequisite", "partial_pass", "planned", "unknown"}
+    unknown_required = [
+        gate
+        for gate in required
+        if release_gates_normalized_status(gate) in unknown_statuses
+        and not (ignored_covered and gate.classification == "critical_tests_ignored")
+    ]
+    failed_required = [gate for gate in required if release_gates_normalized_status(gate) == "failed"]
+    accepted_skips = [gate for gate in optional if release_gates_normalized_status(gate) in {"skipped_optional", "planned"}]
+    return {
+        "requiredGateCount": len(required),
+        "optionalGateCount": len(optional),
+        "passedRequiredGateCount": len([gate for gate in required if release_gates_normalized_status(gate) == "passed"]),
+        "unknownRequiredGateCount": len(unknown_required),
+        "failedRequiredGateCount": len(failed_required),
+        "acceptedSkipCount": len(accepted_skips),
+        "statuses": statuses,
+        "unknownRequiredGates": [release_gates_gate_ledger_entry(gate) for gate in unknown_required],
+        "failedRequiredGates": [release_gates_gate_ledger_entry(gate) for gate in failed_required],
+        "acceptedSkips": [release_gates_gate_ledger_entry(gate) for gate in accepted_skips],
+    }
+
+
+def release_confidence_ratio(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator, 3)
+
+
+def release_confidence_read_json_or_none(path: Path) -> dict[str, Any] | None:
+    payload = read_json(path)
+    return payload if payload else None
+
+
+def release_confidence_artifact_quality(run_dir: Path) -> dict[str, Any]:
+    redaction = release_confidence_read_json_or_none(run_dir / "redaction-report.json")
+    completeness = release_confidence_read_json_or_none(run_dir / "artifact-completeness.json")
+    manifest = release_confidence_read_json_or_none(run_dir / "bundle-manifest.json")
+    redaction_ok = bool(redaction and redaction.get("status") == "ok")
+    completeness_ok = bool(completeness and completeness.get("overallStatus") == "ok")
+    manifest_ok = bool(manifest and manifest.get("contractVersion") == RELEASE_GATES_AUTOPSY_CONTRACT_VERSION)
+    # During the first write pass, artifact-completeness and the final manifest may
+    # not exist yet. Award partial credit for redaction and the currently present
+    # required artifacts; the report is rewritten after completeness is generated.
+    present_required = 0
+    total_required = 0
+    for spec in release_gates_required_bundle_artifacts():
+        if not spec.get("required", True):
+            continue
+        total_required += 1
+        relative = str(spec["path"])
+        candidate = run_dir / relative.rstrip("/")
+        if relative.endswith("/"):
+            if candidate.is_dir() and any(item.is_file() for item in candidate.rglob("*")):
+                present_required += 1
+        elif candidate.is_file() or relative in {"artifact-completeness.json", "artifact-completeness.md"}:
+            present_required += 1
+    presence_ratio = release_confidence_ratio(present_required, total_required)
+    if redaction_ok and completeness_ok and manifest_ok:
+        score = 5
+    elif redaction_ok and presence_ratio >= 0.9:
+        score = 4
+    elif redaction_ok:
+        score = 3
+    else:
+        score = 1 if presence_ratio >= 0.75 else 0
+    return {
+        "score": score,
+        "maxScore": 5,
+        "redactionStatus": redaction.get("status") if redaction else "missing",
+        "artifactCompletenessStatus": completeness.get("overallStatus") if completeness else "pending",
+        "manifestContractVersion": manifest.get("contractVersion") if manifest else "pending",
+        "requiredArtifactPresenceRatio": presence_ratio,
+        "requiredArtifactsPresent": present_required,
+        "requiredArtifactCount": total_required,
+    }
+
+
+def release_confidence_evidence_completeness(counts: dict[str, Any], artifact_quality: dict[str, Any], result: ReleaseGatesResult) -> dict[str, Any]:
+    required_count = int(counts.get("requiredGateCount") or 0)
+    unknown_count = int(counts.get("unknownRequiredGateCount") or 0)
+    gate_signal_ratio = 1.0 - release_confidence_ratio(unknown_count, required_count) if required_count else 0.0
+    artifact_ratio = float(artifact_quality.get("requiredArtifactPresenceRatio") or 0.0)
+    base = round(15 * (0.6 * gate_signal_ratio + 0.4 * artifact_ratio))
+    if result.dry_run:
+        base = min(base, 7)
+    return {
+        "score": max(0, min(15, base)),
+        "maxScore": 15,
+        "gateSignalRatio": round(gate_signal_ratio, 3),
+        "artifactPresenceRatio": artifact_ratio,
+        "reason": "Reviewer can use bundle artifacts plus gate ledger to understand the run." if base >= 10 else "Evidence is still incomplete or mostly planned/skipped.",
+    }
+
+
+def release_confidence_gate_execution_signal(counts: dict[str, Any], result: ReleaseGatesResult) -> dict[str, Any]:
+    required_count = int(counts.get("requiredGateCount") or 0)
+    passed = int(counts.get("passedRequiredGateCount") or 0)
+    failed = int(counts.get("failedRequiredGateCount") or 0)
+    unknown = int(counts.get("unknownRequiredGateCount") or 0)
+    executed = max(0, required_count - unknown)
+    executed_ratio = release_confidence_ratio(executed, required_count)
+    pass_ratio = release_confidence_ratio(passed, required_count)
+    base = round(20 * (0.7 * pass_ratio + 0.3 * executed_ratio))
+    if failed:
+        base = min(base, 8)
+    if result.dry_run:
+        base = min(base, 4)
+    return {
+        "score": max(0, min(20, base)),
+        "maxScore": 20,
+        "requiredGateCount": required_count,
+        "executedRequiredGateCount": executed,
+        "passedRequiredGateCount": passed,
+        "failedRequiredGateCount": failed,
+        "unknownRequiredGateCount": unknown,
+        "reason": "Required gates mostly executed and passed." if base >= 14 else "Required gates are still skipped, planned, infra-blocked or failing.",
+    }
+
+
+def release_confidence_repeatability(repeatability_loop: dict[str, Any] | None, result: ReleaseGatesResult) -> dict[str, Any]:
+    index = float((repeatability_loop or {}).get("reproducibilityIndex") or 0.0)
+    base = round(15 * index)
+    if result.dry_run:
+        base = min(base, 3)
+    exit_met = bool((repeatability_loop or {}).get("exitCriteriaMet"))
+    if not exit_met:
+        base = min(base, 12)
+    return {
+        "score": max(0, min(15, base)),
+        "maxScore": 15,
+        "reproducibilityIndex": round(index, 3),
+        "exitCriteriaMet": exit_met,
+        "reason": "Repeatability threshold is met." if exit_met else "Repeatability is not fully proven by current history.",
+    }
+
+
+def release_confidence_isolation_safety(controlled_mutators: dict[str, Any] | None, result: ReleaseGatesResult) -> dict[str, Any]:
+    unsafe_count = int((controlled_mutators or {}).get("unsafeMutationCount") or 0)
+    cleanup_ok = (controlled_mutators or {}).get("cleanupCoverage") == "ok"
+    enabled = [item for item in (controlled_mutators or {}).get("mutators", []) if isinstance(item, dict) and item.get("enabled")]
+    score = 15
+    if unsafe_count:
+        score = 0
+    elif not cleanup_ok:
+        score = 8
+    elif result.dry_run and enabled:
+        score = 10
+    elif not enabled:
+        score = 12
+    return {
+        "score": max(0, min(15, score)),
+        "maxScore": 15,
+        "unsafeMutationCount": unsafe_count,
+        "cleanupCoverage": (controlled_mutators or {}).get("cleanupCoverage", "missing"),
+        "enabledMutatorCount": len(enabled),
+        "reason": "Side effects are scoped and cleanup-covered." if score >= 12 else "Mutation safety is not fully covered.",
+    }
+
+
+def release_confidence_cross_platform(command_resolution: dict[str, Any] | None, provocation_matrix: dict[str, Any] | None, result: ReleaseGatesResult) -> dict[str, Any]:
+    command_resolution_present = bool(command_resolution and command_resolution.get("gateCommands") is not None)
+    launcher_probe = False
+    for item in (provocation_matrix or {}).get("probes", []):
+        if isinstance(item, dict) and "launcher" in str(item.get("probeId") or item.get("name") or ""):
+            launcher_probe = True
+            break
+    score = 0
+    if command_resolution_present:
+        score += 5
+    if launcher_probe:
+        score += 3
+    if platform.system().lower().startswith("win"):
+        score += 1
+    if result.dry_run:
+        score = min(score, 8)
+    return {
+        "score": max(0, min(10, score)),
+        "maxScore": 10,
+        "commandResolutionPresent": command_resolution_present,
+        "launcherProbePresent": launcher_probe,
+        "currentPlatform": platform.system(),
+        "reason": "Command resolution and launcher probes are present." if score >= 7 else "Cross-platform evidence is still partial.",
+    }
+
+
+def release_confidence_product_path(result: ReleaseGatesResult) -> dict[str, Any]:
+    by_name = {gate.name: gate for gate in result.gates}
+    def passed(name: str) -> bool:
+        gate = by_name.get(name)
+        return bool(gate and release_gates_normalized_status(gate) == "passed")
+    backend_smoke = passed("backend_python_smoke_first") or passed("backend_python_smoke_second")
+    frontend_build = passed("frontend_build")
+    frontend_unit = passed("frontend_unit_integration")
+    browser_mocked = passed("frontend_browser_smoke")
+    real_backend_browser = passed("browser_real_backend_path")
+    score = 0
+    if backend_smoke:
+        score += 5
+    if frontend_build:
+        score += 3
+    if frontend_unit:
+        score += 2
+    if browser_mocked:
+        score += 2
+    if real_backend_browser:
+        score += 5
+    if result.dry_run:
+        score = min(score, 3)
+    return {
+        "score": max(0, min(15, score)),
+        "maxScore": 15,
+        "backendSmokePassed": backend_smoke,
+        "frontendBuildPassed": frontend_build,
+        "frontendUnitPassed": frontend_unit,
+        "mockedBrowserSmokePassed": browser_mocked,
+        "realBackendBrowserPassed": real_backend_browser,
+        "reason": "Real backend product path is covered." if real_backend_browser else "Real-backend product path is not proven in this run.",
+    }
+
+
+def release_confidence_remediation_maturity(problem_ledger: dict[str, Any] | None, probe_ledger: dict[str, Any] | None, decision_template: dict[str, Any] | None) -> dict[str, Any]:
+    problems = [item for item in (problem_ledger or {}).get("problems", []) if isinstance(item, dict)]
+    probes = [item for item in (probe_ledger or {}).get("probes", []) if isinstance(item, dict)]
+    unmapped = [item for item in problems if str(item.get("id") or "").startswith("REL-UNMAPPED-")]
+    missing_links = int((probe_ledger or {}).get("missingProblemLinkCount") or 0)
+    score = 0
+    if problem_ledger:
+        score += 2
+    if probe_ledger:
+        score += 1
+    if decision_template:
+        score += 1
+    if not unmapped and missing_links == 0:
+        score += 1
+    return {
+        "score": max(0, min(5, score)),
+        "maxScore": 5,
+        "problemCount": len(problems),
+        "probeCount": len(probes),
+        "unmappedProblemCount": len(unmapped),
+        "missingProblemLinkCount": missing_links,
+        "reason": "Problems, probes and decisions are linked." if score >= 4 else "Problem/probe linkage still needs curation.",
+    }
+
+
+def release_confidence_caps(
+    *,
+    counts: dict[str, Any],
+    repeatability: dict[str, Any],
+    product_path: dict[str, Any],
+    artifact_quality: dict[str, Any],
+    result: ReleaseGatesResult,
+) -> list[dict[str, Any]]:
+    caps: list[dict[str, Any]] = []
+    if int(counts.get("unknownRequiredGateCount") or 0) > 0:
+        caps.append({"id": "unknown-release-blockers", "maximumClass": "partial_signal", "active": True, "reason": "One or more required gates are infra-blocked, skipped, partial or planned."})
+    if int(counts.get("failedRequiredGateCount") or 0) > 0:
+        caps.append({"id": "required-gate-failed", "maximumClass": "partial_signal", "active": True, "reason": "A required gate failed."})
+    if float(repeatability.get("reproducibilityIndex") or 0.0) < 0.8:
+        caps.append({"id": "repeatability-not-proven", "maximumClass": "internal_candidate", "active": True, "reason": "No accepted two-run/repeatability evidence at threshold 0.8."})
+    if not product_path.get("realBackendBrowserPassed"):
+        caps.append({"id": "real-backend-product-path-missing", "maximumClass": "internal_candidate", "active": True, "reason": "Real-backend product path was not proven."})
+    if artifact_quality.get("redactionStatus") != "ok" or artifact_quality.get("artifactCompletenessStatus") not in {"ok", "pending"}:
+        caps.append({"id": "artifact-not-shareable", "maximumClass": "partial_signal", "active": True, "reason": "Redaction or artifact completeness is not accepted."})
+    if result.dry_run:
+        caps.append({"id": "dry-run", "maximumClass": "partial_signal", "active": True, "reason": "Dry-run validates contract shape only; it is not release evidence."})
+    return caps
+
+
+def release_confidence_decision(score: int, raw_class: str, capped_class: str, caps: list[dict[str, Any]], result: ReleaseGatesResult) -> dict[str, Any]:
+    beta_allowed = score >= 85 and capped_class in {"beta_candidate", "stable_release_loop"} and not caps and result.overall_status == "ok"
+    if beta_allowed:
+        decision = "beta_candidate_allowed"
+        recommendation = "Proceed to limited beta review with known limitations documented."
+    elif capped_class == "internal_candidate" and result.overall_status in {"ok", "incomplete", "partial_pass"}:
+        decision = "internal_candidate_only"
+        recommendation = "Use for internal testing only; lift active hard caps before external beta."
+    elif capped_class == "partial_signal":
+        decision = "release_blocked_partial_signal"
+        recommendation = "Do not release; resolve unknown blockers, skipped prerequisites or failed required gates."
+    else:
+        decision = "release_forbidden_diagnostic_chaos"
+        recommendation = "Do not release; improve diagnostic evidence before product judgement."
+    return {
+        "decision": decision,
+        "betaAllowed": beta_allowed,
+        "recommendation": recommendation,
+    }
+
+
+def release_gates_release_confidence_gate(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> dict[str, Any]:
+    counts = release_confidence_gate_counts(result)
+    repeatability_loop = release_confidence_read_json_or_none(run_dir / "remediation" / "repeatability-loop.json")
+    controlled_mutators = release_confidence_read_json_or_none(run_dir / "remediation" / "controlled-mutators.json")
+    problem_ledger = release_confidence_read_json_or_none(run_dir / "remediation" / "problem-ledger.json")
+    probe_ledger = release_confidence_read_json_or_none(run_dir / "remediation" / "probe-ledger.json")
+    decision_template = release_confidence_read_json_or_none(run_dir / "remediation" / "decision-ledger-template.json")
+    provocation_matrix = release_confidence_read_json_or_none(run_dir / "remediation" / "provocation-matrix.json")
+    command_resolution = release_confidence_read_json_or_none(run_dir / "command-resolution.json")
+    artifact_quality = release_confidence_artifact_quality(run_dir)
+
+    blocks = {
+        "evidenceCompleteness": release_confidence_evidence_completeness(counts, artifact_quality, result),
+        "gateExecutionSignal": release_confidence_gate_execution_signal(counts, result),
+        "repeatability": release_confidence_repeatability(repeatability_loop, result),
+        "isolationSafety": release_confidence_isolation_safety(controlled_mutators, result),
+        "crossPlatformConfidence": release_confidence_cross_platform(command_resolution, provocation_matrix, result),
+        "productPathConfidence": release_confidence_product_path(result),
+        "remediationMaturity": release_confidence_remediation_maturity(problem_ledger, probe_ledger, decision_template),
+        "artifactQuality": artifact_quality,
+    }
+    score = int(sum(int(block.get("score") or 0) for block in blocks.values()))
+    raw_class = release_confidence_score_class(score)
+    caps = release_confidence_caps(
+        counts=counts,
+        repeatability=blocks["repeatability"],
+        product_path=blocks["productPathConfidence"],
+        artifact_quality=artifact_quality,
+        result=result,
+    )
+    capped_class = raw_class
+    for cap in caps:
+        capped_class = release_confidence_min_class(capped_class, str(cap.get("maximumClass") or "diagnostic_chaos"))
+    decision = release_confidence_decision(score, raw_class, capped_class, caps, result)
+    required_count = int(counts.get("requiredGateCount") or 0)
+    unknown_count = int(counts.get("unknownRequiredGateCount") or 0)
+    report = {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "contractVersion": RELEASE_GATES_AUTOPSY_CONTRACT_VERSION,
+        "phase": "phase-6-release-confidence-gate",
+        "toolVersion": TOOL_VERSION,
+        "profile": result.profile_plan.profile if result.profile_plan else None,
+        "dryRun": result.dry_run,
+        "overallStatus": result.overall_status,
+        "classification": result.classification,
+        "score": score,
+        "scoreClass": raw_class,
+        "effectiveClass": capped_class,
+        "unknownRatio": release_confidence_ratio(unknown_count, required_count),
+        "classificationCoverage": release_confidence_ratio(
+            len([gate for gate in result.gates if gate.classification and gate.classification != "unknown"]),
+            len(result.gates),
+        ),
+        "blocks": blocks,
+        "gateCounts": counts,
+        "hardCaps": caps,
+        "decision": decision,
+        "acceptedSkipsDocumented": bool(counts.get("acceptedSkips") is not None),
+        "evidencePaths": release_gates_autopsy_bundle_paths(result),
+        "scorePolicy": {
+            "betaCandidateThreshold": 85,
+            "unknownBlockersCap": "partial_signal",
+            "repeatabilityCapUntilThreshold": "internal_candidate",
+            "realBackendPathCapUntilProven": "internal_candidate",
+        },
+    }
+    return report
+
+
+def render_release_gates_release_confidence_gate_md(report: dict[str, Any]) -> str:
+    lines = ["# release-gates release confidence gate", ""]
+    lines.append(f"- Run ID: `{report.get('runId')}`")
+    lines.append(f"- Contract: `{report.get('contractVersion')}`")
+    lines.append(f"- Profile: `{report.get('profile')}`")
+    lines.append(f"- Dry run: `{report.get('dryRun')}`")
+    lines.append(f"- Overall: `{report.get('overallStatus')}` / `{report.get('classification')}`")
+    lines.append(f"- Score: `{report.get('score')}`")
+    lines.append(f"- Raw class: `{report.get('scoreClass')}`")
+    lines.append(f"- Effective class: `{report.get('effectiveClass')}`")
+    lines.append(f"- Unknown ratio: `{report.get('unknownRatio')}`")
+    decision = report.get("decision") if isinstance(report.get("decision"), dict) else {}
+    lines.append(f"- Decision: `{decision.get('decision')}`")
+    lines.append(f"- Recommendation: {decision.get('recommendation')}")
+    lines.append("")
+    lines.append("## Score blocks")
+    lines.append("")
+    lines.append("| Block | Score | Max | Reason |")
+    lines.append("|---|---:|---:|---|")
+    blocks = report.get("blocks") if isinstance(report.get("blocks"), dict) else {}
+    for name, block in blocks.items():
+        if not isinstance(block, dict):
+            continue
+        reason = str(block.get("reason") or "").replace("|", "\\|")
+        lines.append(f"| `{name}` | {block.get('score')} | {block.get('maxScore')} | {reason} |")
+    lines.append("")
+    lines.append("## Hard caps")
+    lines.append("")
+    caps = report.get("hardCaps") if isinstance(report.get("hardCaps"), list) else []
+    if caps:
+        lines.append("| Cap | Maximum class | Reason |")
+        lines.append("|---|---|---|")
+        for cap in caps:
+            reason = str(cap.get("reason") or "").replace("|", "\\|")
+            lines.append(f"| `{cap.get('id')}` | `{cap.get('maximumClass')}` | {reason} |")
+    else:
+        lines.append("No hard caps are active.")
+    lines.append("")
+    lines.append("## Unknown required gates")
+    lines.append("")
+    gate_counts = report.get("gateCounts") if isinstance(report.get("gateCounts"), dict) else {}
+    unknown = gate_counts.get("unknownRequiredGates") if isinstance(gate_counts.get("unknownRequiredGates"), list) else []
+    if unknown:
+        for gate in unknown:
+            lines.append(f"- `{gate.get('name')}` — `{gate.get('status')}` / `{gate.get('classification')}`: {gate.get('message')}")
+    else:
+        lines.append("No unknown required gates were detected.")
+    lines.append("")
+    lines.append("## Accepted skips")
+    lines.append("")
+    skips = gate_counts.get("acceptedSkips") if isinstance(gate_counts.get("acceptedSkips"), list) else []
+    if skips:
+        for gate in skips:
+            lines.append(f"- `{gate.get('name')}` — `{gate.get('status')}` / `{gate.get('classification')}`: {gate.get('message')}")
+    else:
+        lines.append("No optional skips were recorded.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_v1_release_readiness_md(report: dict[str, Any]) -> str:
+    decision = report.get("decision") if isinstance(report.get("decision"), dict) else {}
+    lines = ["# v1 release readiness", ""]
+    lines.append(f"- Generated: `{report.get('generatedAt')}`")
+    lines.append(f"- Run ID: `{report.get('runId')}`")
+    lines.append(f"- Profile: `{report.get('profile')}`")
+    lines.append(f"- Overall: `{report.get('overallStatus')}`")
+    lines.append(f"- Release Confidence Score: `{report.get('score')}` / `100`")
+    lines.append(f"- Effective class: `{report.get('effectiveClass')}`")
+    lines.append(f"- Unknown ratio: `{report.get('unknownRatio')}`")
+    lines.append(f"- Decision: `{decision.get('decision')}`")
+    lines.append("")
+    lines.append("## Verdict")
+    lines.append("")
+    lines.append(str(decision.get("recommendation") or "No recommendation generated."))
+    lines.append("")
+    beta_allowed = bool(decision.get("betaAllowed"))
+    if beta_allowed:
+        lines.append("This run satisfies the automated beta-candidate gate. A human reviewer should still attach known limitations and release notes before publishing.")
+    else:
+        lines.append("This run is not sufficient for external beta release. Use the hard caps and unknown required gates below as the next stabilization checklist.")
+    lines.append("")
+    lines.append("## Blocking caps")
+    lines.append("")
+    caps = report.get("hardCaps") if isinstance(report.get("hardCaps"), list) else []
+    if caps:
+        for cap in caps:
+            lines.append(f"- `{cap.get('id')}` caps the result at `{cap.get('maximumClass')}`: {cap.get('reason')}")
+    else:
+        lines.append("- No active hard caps.")
+    lines.append("")
+    lines.append("## Evidence summary")
+    lines.append("")
+    blocks = report.get("blocks") if isinstance(report.get("blocks"), dict) else {}
+    for name, block in blocks.items():
+        if isinstance(block, dict):
+            lines.append(f"- `{name}`: `{block.get('score')}/{block.get('maxScore')}` — {block.get('reason', '')}")
+    lines.append("")
+    lines.append("## Required follow-up")
+    lines.append("")
+    if caps:
+        lines.append("1. Resolve or explicitly accept every active hard cap.")
+        lines.append("2. Rerun `python tools/devbootstrap.py release-gates` with the same profile to refresh repeatability evidence.")
+        lines.append("3. Use `remediation/problem-ledger.md` and `release-confidence-gate.md` as the review checklist.")
+    else:
+        lines.append("1. Attach known limitations and release notes.")
+        lines.append("2. Preserve this bundle as release evidence.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_release_gates_release_confidence_artifacts(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> dict[str, Any]:
+    report = release_gates_release_confidence_gate(project_root, result, run_dir)
+    write_json(run_dir / "release-confidence-gate.json", report)
+    (run_dir / "release-confidence-gate.md").write_text(render_release_gates_release_confidence_gate_md(report), encoding="utf-8")
+    (run_dir / "v1-release-readiness.md").write_text(render_v1_release_readiness_md(report), encoding="utf-8")
+    return report
+
 def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> None:
     remediation_dir = run_dir / "remediation"
     remediation_dir.mkdir(parents=True, exist_ok=True)
@@ -9918,11 +10442,16 @@ def write_release_gates_reports(project_root: Path, result: ReleaseGatesResult, 
     write_json(run_dir / "redaction-report.json", redaction)
     (run_dir / "redaction-report.md").write_text(render_release_gates_redaction_report_md(redaction), encoding="utf-8")
 
+    # Phase 6 readiness is written before completeness so the completeness check
+    # can require it, then rewritten after completeness/manifest exist so the
+    # final archive carries the strongest available artifact-quality signal.
+    write_release_gates_release_confidence_artifacts(project_root, result, run_dir)
     manifest = release_gates_bundle_manifest(project_root, result, run_dir)
     write_json(run_dir / "bundle-manifest.json", manifest)
     completeness = release_gates_artifact_completeness(project_root, result, run_dir)
     write_json(run_dir / "artifact-completeness.json", completeness)
     (run_dir / "artifact-completeness.md").write_text(render_release_gates_artifact_completeness_md(completeness), encoding="utf-8")
+    write_release_gates_release_confidence_artifacts(project_root, result, run_dir)
     # Re-write the manifest after the completeness artifact exists, so a bundle
     # opened from the archive has a manifest that names every final artifact.
     manifest = release_gates_bundle_manifest(project_root, result, run_dir)
@@ -11507,8 +12036,8 @@ def case_self_check_release_gates_keep_going_behavior() -> str:
 
 
 
-def case_self_check_release_gates_phase5_bundle_contract() -> str:
-    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase5-") as tmp:
+def case_self_check_release_gates_phase6_bundle_contract() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase6-") as tmp:
         root = Path(tmp)
         (root / "backend" / "migrations").mkdir(parents=True)
         (root / "frontend").mkdir(parents=True)
@@ -11520,7 +12049,7 @@ def case_self_check_release_gates_phase5_bundle_contract() -> str:
         (root / "frontend" / "package.json").write_text(json.dumps({"scripts": {"build": "vite build"}}), encoding="utf-8")
         (root / "frontend" / "package-lock.json").write_text("{}\n", encoding="utf-8")
         (root / "tools" / "devbootstrap.py").write_text("# fixture\n", encoding="utf-8")
-        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase5"
+        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase6"
         logs = run_dir / "logs"
         logs.mkdir(parents=True)
         (logs / "01_fixture_gate.log").write_text("status: ok\n", encoding="utf-8")
@@ -11529,7 +12058,7 @@ def case_self_check_release_gates_phase5_bundle_contract() -> str:
             tool_version=TOOL_VERSION,
             project_root=str(root),
             invoked_from=str(root),
-            run_id="selfcheck-release-gates-phase5",
+            run_id="selfcheck-release-gates-phase6",
             dry_run=False,
             timeout_seconds=123,
             overall_status="ok",
@@ -11574,10 +12103,13 @@ def case_self_check_release_gates_phase5_bundle_contract() -> str:
         "remediation/provocation-matrix.json",
         "remediation/controlled-mutators.json",
         "remediation/repeatability-loop.json",
+        "release-confidence-gate.json",
+        "release-confidence-gate.md",
+        "v1-release-readiness.md",
         "release-gates-consent.json",
     ]:
         assert required_name in names, f"missing {required_name} from archive"
-    return "release-gates phase 5 repeatability loop and autopsy bundle contract checked"
+    return "release-gates phase 6 confidence gate and autopsy bundle contract checked"
 
 
 
@@ -11632,7 +12164,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_remediation_bundle", case_self_check_release_gates_remediation_bundle)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
-    self_check_case(result, "release_gates_phase5_bundle_contract", case_self_check_release_gates_phase5_bundle_contract)
+    self_check_case(result, "release_gates_phase6_bundle_contract", case_self_check_release_gates_phase6_bundle_contract)
     if result.failures:
         result.classification = "failed"
         result.next_actions.append("Fix failing self-check cases before using devbootstrap as the v1 routine entrypoint.")

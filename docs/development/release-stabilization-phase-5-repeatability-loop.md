@@ -16,7 +16,7 @@
 |---|---|
 | `remediation/repeatability-loop.json` / `.md` | Показывает, какие repeatability-сценарии уже имеют evidence, какие требуют повторного прогона, и какой `Reproducibility Index` получается по текущему bundle. |
 
-Контракт bundle поднят до `phase-5`. Артефакт включён в:
+Phase 5 introduced the `repeatability-loop.*` artifact and originally raised the bundle contract to `phase-5`. After Phase 6 the global bundle contract is `phase-6`, while this artifact remains required. Артефакт включён в:
 
 - `bundle-manifest.json`;
 - `artifact-completeness.json/md`;
@@ -55,7 +55,7 @@
 
 Exit criteria after this patch:
 
-- `bundle-manifest.json` содержит `contractVersion == "phase-5"`;
+- `bundle-manifest.json` contains the current global contract version, now `phase-6` after Phase 6;
 - `artifact-completeness.json` требует `remediation/repeatability-loop.*`;
 - archive содержит `repeatability-loop.json/md`;
 - reviewer видит `Reproducibility Index`, `exitCriteriaMet` и точные repeatability commands;
@@ -65,7 +65,7 @@ Exit criteria after this patch:
 
 ## 4. Reviewer workflow после фазы 5
 
-1. Открыть `bundle-manifest.json` и проверить `contractVersion == "phase-5"`.
+1. Открыть `bundle-manifest.json` и проверить текущий `contractVersion` (`phase-6` после Phase 6).
 2. Открыть `remediation/repeatability-loop.md`.
 3. Проверить `Reproducibility Index` и `exitCriteriaMet`.
 4. Если `same-profile-repeat == insufficient-history`, запустить рекомендованную команду того же profile второй раз.
