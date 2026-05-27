@@ -358,13 +358,13 @@ def command_for_subprocess(command: list[str], *, resolved_path: str | None = No
     resolved_command = [resolved, *command[1:]]
     if effective_platform == "nt" and resolved.lower().endswith((".cmd", ".bat")):
         # Batch launchers such as npm.CMD are not regular executables on Windows.
-        # Build a single command string after /c so cmd.exe receives the quoted
-        # launcher path as part of the command to execute.  Keeping `call` inside
-        # that command string avoids the fragile token form where diagnostics show
-        # `call C:\Program Files\...` and some shells/wrappers mis-handle the
-        # path with spaces when starting long-lived dev servers.
+        # Run them through cmd.exe with the same conservative form that works
+        # reliably from PowerShell: cmd.exe /d /c call "C:\Program Files\...".
+        # Do not add `/s`: with a quoted .cmd path containing spaces, cmd's /s
+        # quote rewriting can make diagnostics fail even though `npm --version`
+        # works in the user's interactive shell.
         cmdline = "call " + subprocess.list2cmdline([resolved, *command[1:]])
-        return ["cmd.exe", "/d", "/s", "/c", cmdline]
+        return ["cmd.exe", "/d", "/c", cmdline]
     return resolved_command
 
 
@@ -9548,10 +9548,11 @@ def case_self_check_windows_command_resolution() -> str:
         resolved_path=r"C:\Program Files\nodejs\npm.CMD",
         platform_name="nt",
     )
-    assert command[:4] == ["cmd.exe", "/d", "/s", "/c"], command
-    assert command[4].startswith("call "), command
-    assert r'"C:\Program Files\nodejs\npm.CMD"' in command[4], command
-    assert command[4].endswith("--version"), command
+    assert command[:3] == ["cmd.exe", "/d", "/c"], command
+    assert "/s" not in command, command
+    assert command[3].startswith("call "), command
+    assert r'"C:\Program Files\nodejs\npm.CMD"' in command[3], command
+    assert command[3].endswith("--version"), command
     display = command_as_text(command)
     assert r'"call \"C:\Program Files\nodejs\npm.CMD\" --version"' in display, display
     direct = command_for_subprocess(["node", "--version"], resolved_path=r"C:\Program Files\nodejs\node.exe", platform_name="nt")
