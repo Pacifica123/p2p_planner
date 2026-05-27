@@ -19,7 +19,7 @@
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
 - `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy.
-- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy и каноническую release stabilization program: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, метрикам release confidence и цепочке тематических ремедиаций.
+- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy, каноническую release stabilization program и Phase 0 operating baseline: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, метрикам release confidence, side-effect profiles и цепочке тематических ремедиаций.
 
 ## Зафиксированные принципы
 
@@ -61,8 +61,12 @@
    `dev-bootstrap/devbootstrap-v1-operations.md` для автоматизации локального разворачивания.
 7. Затем `development/systemic-release-stabilization-manifesto-v1.md`,
    `development/release-stabilization-program-v1.md`,
+   `development/release-stabilization-phase-0-baseline.md`,
+   `development/release-stabilization-problem-ledger.md`,
+   `development/release-confidence-scorecard-v1.md`,
+   `development/release-stabilization-profile-side-effects-v1.md`,
    `development/release-stabilization-plan-merge-notes-2026-05-27.md` и
-   `development/accelerated-development-strategy-v1.md` для понимания рабочего режима стабилизации, patch/devctl-цикла, метрик release confidence и причин перехода от реактивных псевдофиксов к системному исследованию.
+   `development/accelerated-development-strategy-v1.md` для понимания рабочего режима стабилизации, patch/devctl-цикла, метрик release confidence, side-effect profiles и причин перехода от реактивных псевдофиксов к системному исследованию.
 8. И только потом `api/openapi.yaml`, `sync/protocol.md` и
    `sync/conflict-resolution.md`.
 
@@ -116,4 +120,12 @@ local-first, sync и optional p2p.
 - `docs/development/release-stabilization-program-v1.md` — каноническая программа достижения целей манифеста: supported reality v1, current product grounding, Problem/Probe/Decision ledgers, failure taxonomy, Release Confidence Score, metrics, workstreams, phased roadmap, risk register, patch-chain and whole-program definition of done.
 
 - `docs/development/release-stabilization-plan-merge-notes-2026-05-27.md` — merge notes по объединению free-form strategic response и не примененного `deep-release-autopsy-strategy` патча: сходства, различия, что оставлено/отброшено и какие слабые места найдены после объединения.
+
+- `docs/development/release-stabilization-phase-0-baseline.md` — Phase 0 operating baseline: stabilization lane active, freeze rules, current product grounding, baseline inventory, exit criteria mapping and extraordinary findings.
+
+- `docs/development/release-stabilization-problem-ledger.md` — initial human Problem Ledger with stable `REL-*` failure-mode IDs, owner layers, severity and required probes.
+
+- `docs/development/release-confidence-scorecard-v1.md` — manual Release Confidence Score calculation, classes, hard caps, provisional baseline and score update review questions.
+
+- `docs/development/release-stabilization-profile-side-effects-v1.md` — side-effect classes and profile consent matrix for diagnostic/prepared/isolated/managed/full/clean-machine profiles.
 

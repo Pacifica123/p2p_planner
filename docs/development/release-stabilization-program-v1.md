@@ -474,6 +474,7 @@ Families:
 | Family | Meaning |
 |---|---|
 | `REL-ART` | artifact/report/bundle quality |
+| `REL-SEC` | diagnostic security, redaction and secret leakage prevention |
 | `REL-BE` | backend build/runtime/test |
 | `REL-BROWSER` | browser/e2e realism and Playwright |
 | `REL-CFG` | env/config/API/CORS mismatch |
@@ -987,6 +988,13 @@ Actions:
 3. Define score/classes.
 4. Define profile side effects.
 5. Update docs map.
+
+Phase 0 operating artifacts:
+
+- `docs/development/release-stabilization-phase-0-baseline.md`;
+- `docs/development/release-stabilization-problem-ledger.md`;
+- `docs/development/release-confidence-scorecard-v1.md`;
+- `docs/development/release-stabilization-profile-side-effects-v1.md`.
 
 Exit criteria:
 

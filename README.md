@@ -139,7 +139,8 @@ VITE_ENABLE_PROJECT_ROADMAP_SEED=true
 - `docs/architecture/backend-modules.md` — карта backend-модулей;
 - `docs/architecture/frontend_architecture_v_1.md` — структура frontend;
 - `docs/api/openapi.yaml` — текущий HTTP-контракт;
-- `docs/dev-bootstrap/devbootstrap-v1-operations.md` — quick commands, report contract, timeout policy and cleanup rules for devbootstrap v1.
+- `docs/dev-bootstrap/devbootstrap-v1-operations.md` — quick commands, report contract, timeout policy and cleanup rules for devbootstrap v1;
+- `docs/development/release-stabilization-phase-0-baseline.md` — активный baseline фазы 0: freeze rules, Problem Ledger, scorecard and side-effect profiles для release stabilization lane.
 
 ## Что можно тестить руками сейчас
 
