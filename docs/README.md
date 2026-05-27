@@ -19,7 +19,7 @@
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
 - `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy.
-- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy, каноническую release stabilization program и Phase 0–6 operating baseline: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, repeatability loop, automated release confidence gate, side-effect profiles и цепочке тематических ремедиаций.
+- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy, каноническую release stabilization program и Phase 0–7 operating baseline: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, repeatability loop, automated release confidence gate, continuous regression memory, side-effect profiles и цепочке тематических ремедиаций.
 
 ## Зафиксированные принципы
 
@@ -68,6 +68,7 @@
    `development/release-stabilization-phase-4-controlled-mutators-rollout.md`,
    `development/release-stabilization-phase-5-repeatability-loop.md`,
    `development/release-stabilization-phase-6-release-confidence-gate.md`,
+   `development/release-stabilization-phase-7-regression-memory.md`,
    `development/release-stabilization-problem-ledger.md`,
    `development/release-confidence-scorecard-v1.md`,
    `development/release-stabilization-profile-side-effects-v1.md`,
@@ -121,6 +122,8 @@ local-first, sync и optional p2p.
 
 - `docs/dev-bootstrap/devbootstrap-v1-operations.md` — эксплуатационная памятка devbootstrap v1: quick commands, command responsibilities, report artifact contract, timeout policy, failure handling rules and cleanup rules.
 
+- `docs/development/release-stabilization-phase-7-regression-memory.md` — финальная фаза release stabilization: per-run regression memory, recurring REL-family counts, probe/ledger linkage and process-review triggers.
+
 - `docs/development/systemic-release-stabilization-manifesto-v1.md` — манифест радикальной стабилизации release/dev lifecycle v2: Deep Release Autopsy, Problem Ledger, PostgreSQL authority ladder, controlled mutators, отдельную классификацию transport-failures и план тематической цепочки ремедиаций вместо бесконечного fix-after-fail цикла.
 
 - `docs/development/release-stabilization-program-v1.md` — каноническая программа достижения целей манифеста: supported reality v1, current product grounding, Problem/Probe/Decision ledgers, failure taxonomy, Release Confidence Score, metrics, workstreams, phased roadmap, risk register, patch-chain and whole-program definition of done.
@@ -144,6 +147,8 @@ local-first, sync и optional p2p.
 - `docs/development/release-confidence-scorecard-v1.md` — manual Release Confidence Score calculation, classes, hard caps, provisional baseline and score update review questions.
 
 - `docs/development/release-stabilization-phase-6-release-confidence-gate.md` — Phase 6 operating contract: automated Release Confidence Score, Unknown Ratio, classification coverage, hard caps and `v1-release-readiness.md`.
+
+- `docs/development/release-stabilization-phase-7-regression-memory.md` — Phase 7 operating contract: continuous regression memory, recurring REL-family counts, probe/ledger linkage and process-review triggers.
 
 - `docs/development/release-stabilization-profile-side-effects-v1.md` — side-effect classes and profile consent matrix for diagnostic/prepared/isolated/managed/full/clean-machine profiles.
 

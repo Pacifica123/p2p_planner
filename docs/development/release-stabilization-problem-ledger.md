@@ -120,3 +120,5 @@ Phase 5 verification also exposed an extraction-tooling caveat for `REL-ART-001`
 
 
 Phase 6 now adds `release-confidence-gate.json` / `.md` and `v1-release-readiness.md` to every `release-gates` bundle. This gives `REL-ART-001`, `REL-SMOKE-001`, `REL-BROWSER-001` and `REL-CLEAN-001` an explicit decision surface: skipped prerequisites, missing repeatability and absent real-backend product-path evidence become hard caps instead of ambiguous “almost green” release results.
+
+Phase 7 now adds `remediation/regression-memory.json` / `.md` and `remediation/recurring-family-counts.json` / `.md` to every `release-gates` bundle. This turns the static taxonomy in this document into per-run operational memory: new failures must map to stable IDs, probes must keep links to IDs, repeated `REL-*` families become visible, and any family seen in three or more scanned runs becomes a process-review trigger instead of another tactical patch target.

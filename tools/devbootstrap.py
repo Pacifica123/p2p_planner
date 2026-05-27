@@ -4688,7 +4688,7 @@ CLEAN_MACHINE_PROFILES = ("dry", "deps", "runtime", "clean-machine-dry", "clean-
 CLEAN_MACHINE_RETENTION_POLICIES = ("delete-always", "keep-on-failure", "keep-always")
 DEFAULT_CLEAN_MACHINE_PROFILE = "dry"
 DEFAULT_CLEAN_MACHINE_RETENTION = "keep-on-failure"
-RELEASE_GATES_AUTOPSY_CONTRACT_VERSION = "phase-6"
+RELEASE_GATES_AUTOPSY_CONTRACT_VERSION = "phase-7"
 RELEASE_GATES_PROFILES = ("diagnostic", "prepared-local", "isolated-db", "managed-runtime", "full-local-release")
 RELEASE_GATES_DEFAULT_PROFILE = "diagnostic"
 RELEASE_GATES_PROFILE_DESCRIPTIONS = {
@@ -8279,6 +8279,10 @@ def release_gates_required_bundle_artifacts() -> list[dict[str, Any]]:
         {"path": "release-confidence-gate.json", "required": True, "description": "Machine-readable Phase 6 release confidence score, caps and decision."},
         {"path": "release-confidence-gate.md", "required": True, "description": "Human-readable Phase 6 release confidence gate report."},
         {"path": "v1-release-readiness.md", "required": True, "description": "Human-readable v1 release readiness decision summary."},
+        {"path": "remediation/regression-memory.json", "required": True, "description": "Machine-readable Phase 7 continuous memory and regression protection report."},
+        {"path": "remediation/regression-memory.md", "required": True, "description": "Human-readable Phase 7 continuous memory and regression protection report."},
+        {"path": "remediation/recurring-family-counts.json", "required": True, "description": "Machine-readable recurring REL-* family counts across release-gates history."},
+        {"path": "remediation/recurring-family-counts.md", "required": True, "description": "Human-readable recurring REL-* family counts across release-gates history."},
         {"path": "remediation/prerequisites.md", "required": True, "description": "Prerequisite blocker report."},
         {"path": "remediation/skipped-gates.md", "required": True, "description": "Skipped/unverified gate report."},
         {"path": "remediation/next-actions.md", "required": True, "description": "Targeted next actions."},
@@ -8401,6 +8405,8 @@ def release_gates_bundle_manifest(project_root: Path, result: ReleaseGatesResult
         "repeatabilityLoop": "remediation/repeatability-loop.json",
         "releaseConfidenceGate": "release-confidence-gate.json",
         "v1ReleaseReadiness": "v1-release-readiness.md",
+        "regressionMemory": "remediation/regression-memory.json",
+        "recurringFamilyCounts": "remediation/recurring-family-counts.json",
         "profileConsent": "release-gates-consent.json",
     }
 
@@ -8424,6 +8430,8 @@ def release_gates_autopsy_bundle_paths(result: ReleaseGatesResult) -> dict[str, 
         "repeatabilityLoopPath": f"{base}/remediation/repeatability-loop.json",
         "releaseConfidenceGatePath": f"{base}/release-confidence-gate.json",
         "v1ReleaseReadinessPath": f"{base}/v1-release-readiness.md",
+        "regressionMemoryPath": f"{base}/remediation/regression-memory.json",
+        "recurringFamilyCountsPath": f"{base}/remediation/recurring-family-counts.json",
     }
 
 def render_release_gates_gate_ledger_md(ledger: dict[str, Any]) -> str:
@@ -10177,6 +10185,307 @@ def write_release_gates_release_confidence_artifacts(project_root: Path, result:
     (run_dir / "v1-release-readiness.md").write_text(render_v1_release_readiness_md(report), encoding="utf-8")
     return report
 
+def release_gates_current_problem_families(problem_ledger: dict[str, Any] | None) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    problems = problem_ledger.get("problems") if isinstance(problem_ledger, dict) and isinstance(problem_ledger.get("problems"), list) else []
+    for problem in problems:
+        if not isinstance(problem, dict):
+            continue
+        family = str(problem.get("family") or release_gates_problem_family(str(problem.get("id") or "REL-UNKNOWN")))
+        counts[family] = counts.get(family, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def release_gates_previous_problem_family_observations(project_root: Path, result: ReleaseGatesResult, limit: int = 24) -> list[dict[str, Any]]:
+    observations: list[dict[str, Any]] = []
+    for payload in release_gates_previous_run_payloads(project_root, result.report_dir, limit=limit):
+        payload_path = payload.get("_path")
+        if not payload_path:
+            continue
+        ledger_path = project_root / str(payload_path).replace("release-gates.json", "remediation/problem-ledger.json")
+        ledger = release_confidence_read_json_or_none(ledger_path)
+        if not ledger:
+            continue
+        observations.append(
+            {
+                "runId": ledger.get("runId") or payload.get("runId"),
+                "path": rel(ledger_path, project_root),
+                "overallStatus": ledger.get("overallStatus"),
+                "unresolvedBlockerCount": ledger.get("unresolvedBlockerCount"),
+                "familyCounts": release_gates_current_problem_families(ledger),
+            }
+        )
+    return observations
+
+
+def release_gates_recurring_family_counts(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> dict[str, Any]:
+    current_ledger = release_confidence_read_json_or_none(run_dir / "remediation" / "problem-ledger.json") or {}
+    current_counts = release_gates_current_problem_families(current_ledger)
+    previous = release_gates_previous_problem_family_observations(project_root, result)
+    totals: dict[str, dict[str, Any]] = {}
+
+    def add_family(family: str, count: int, *, run_id: str | None, path: str | None, current: bool) -> None:
+        if not family:
+            return
+        item = totals.setdefault(
+            family,
+            {
+                "family": family,
+                "currentCount": 0,
+                "historicalCount": 0,
+                "runCount": 0,
+                "runs": [],
+                "recurrenceClass": "single_run",
+                "processReviewRequired": False,
+            },
+        )
+        if current:
+            item["currentCount"] = int(item.get("currentCount") or 0) + count
+        else:
+            item["historicalCount"] = int(item.get("historicalCount") or 0) + count
+        if run_id and run_id not in item["runs"]:
+            item["runs"].append(run_id)
+            item["runCount"] = len(item["runs"])
+        if path:
+            item.setdefault("evidencePaths", [])
+            if path not in item["evidencePaths"]:
+                item["evidencePaths"].append(path)
+
+    for family, count in current_counts.items():
+        add_family(family, int(count), run_id=result.run_id, path=rel(run_dir / "remediation" / "problem-ledger.json", project_root), current=True)
+    for observation in previous:
+        for family, count in (observation.get("familyCounts") or {}).items():
+            add_family(str(family), int(count), run_id=str(observation.get("runId") or ""), path=str(observation.get("path") or ""), current=False)
+
+    recurring: list[dict[str, Any]] = []
+    for item in totals.values():
+        current_count = int(item.get("currentCount") or 0)
+        historical_count = int(item.get("historicalCount") or 0)
+        run_count = int(item.get("runCount") or 0)
+        if run_count >= 3:
+            item["recurrenceClass"] = "recurring_process_risk"
+            item["processReviewRequired"] = True
+        elif run_count >= 2:
+            item["recurrenceClass"] = "repeated_signal"
+        elif current_count and historical_count:
+            item["recurrenceClass"] = "repeated_signal"
+        else:
+            item["recurrenceClass"] = "single_run"
+        item["totalCount"] = current_count + historical_count
+        recurring.append(item)
+    recurring.sort(key=lambda item: (not item.get("processReviewRequired"), -int(item.get("runCount") or 0), str(item.get("family"))))
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "contractVersion": RELEASE_GATES_AUTOPSY_CONTRACT_VERSION,
+        "phase": "phase-7-recurring-family-counts",
+        "purpose": "Track repeated REL-* failure families across release-gates history so recurring families trigger process review instead of ad-hoc fixes.",
+        "currentFamilyCounts": current_counts,
+        "previousRunsScanned": len(previous),
+        "families": recurring,
+        "processReviewFamilies": [item for item in recurring if item.get("processReviewRequired")],
+        "overallStatus": "review_required" if any(item.get("processReviewRequired") for item in recurring) else "ok",
+        "policy": {
+            "repeatedSignalRunThreshold": 2,
+            "processReviewRunThreshold": 3,
+            "currentRunAlwaysIncluded": True,
+        },
+    }
+
+
+def render_release_gates_recurring_family_counts_md(report: dict[str, Any]) -> str:
+    lines = ["# release-gates recurring family counts", ""]
+    lines.append(f"- Run ID: `{report.get('runId')}`")
+    lines.append(f"- Contract: `{report.get('contractVersion')}`")
+    lines.append(f"- Overall: `{report.get('overallStatus')}`")
+    lines.append(f"- Previous runs scanned: `{report.get('previousRunsScanned')}`")
+    lines.append("")
+    families = report.get("families") if isinstance(report.get("families"), list) else []
+    if not families:
+        lines.append("No failure families were observed in the current or scanned release-gates history.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.append("| Family | Current | Historical | Runs | Class | Process review |")
+    lines.append("|---|---:|---:|---:|---|---:|")
+    for item in families:
+        lines.append(
+            f"| `{item.get('family')}` | {item.get('currentCount')} | {item.get('historicalCount')} | {item.get('runCount')} | `{item.get('recurrenceClass')}` | {bool(item.get('processReviewRequired'))} |"
+        )
+    lines.append("")
+    review = report.get("processReviewFamilies") if isinstance(report.get("processReviewFamilies"), list) else []
+    lines.append("## Process review triggers")
+    lines.append("")
+    if review:
+        for item in review:
+            lines.append(f"- `{item.get('family')}` appeared in `{item.get('runCount')}` scanned runs; stop patching symptoms and review the process/system boundary.")
+    else:
+        lines.append("No family reached the process-review threshold in the scanned history.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def release_gates_regression_memory(project_root: Path, result: ReleaseGatesResult, run_dir: Path, recurring: dict[str, Any]) -> dict[str, Any]:
+    problem_ledger = release_confidence_read_json_or_none(run_dir / "remediation" / "problem-ledger.json") or {}
+    probe_ledger = release_confidence_read_json_or_none(run_dir / "remediation" / "probe-ledger.json") or {}
+    repeatability_loop = release_confidence_read_json_or_none(run_dir / "remediation" / "repeatability-loop.json") or {}
+    confidence = release_confidence_read_json_or_none(run_dir / "release-confidence-gate.json") or {}
+    completeness = release_confidence_read_json_or_none(run_dir / "artifact-completeness.json") or {}
+    manifest = release_confidence_read_json_or_none(run_dir / "bundle-manifest.json") or {}
+    problems = [item for item in problem_ledger.get("problems", []) if isinstance(item, dict)]
+    probes = [item for item in probe_ledger.get("probes", []) if isinstance(item, dict)]
+    problem_ids = {str(problem.get("id")) for problem in problems if problem.get("id")}
+    probe_problem_ids = {str(probe.get("problemId")) for probe in probes if probe.get("problemId")}
+    unguarded = sorted(problem_ids - probe_problem_ids)
+    phase7_doc = project_root / "docs" / "development" / "release-stabilization-phase-7-regression-memory.md"
+    docs_checks = [
+        {"path": "docs/development/release-stabilization-program-v1.md", "exists": (project_root / "docs" / "development" / "release-stabilization-program-v1.md").is_file()},
+        {"path": "docs/development/release-stabilization-problem-ledger.md", "exists": (project_root / "docs" / "development" / "release-stabilization-problem-ledger.md").is_file()},
+        {"path": "docs/development/release-stabilization-phase-7-regression-memory.md", "exists": phase7_doc.is_file()},
+        {"path": "docs/README.md", "exists": (project_root / "docs" / "README.md").is_file()},
+    ]
+    missing_docs = [item for item in docs_checks if not item.get("exists")]
+    memory_checks = [
+        {
+            "name": "failure-updates-ledger",
+            "status": "ok" if problem_ledger.get("ledgerType") == "problem-ledger" else "missing",
+            "evidence": "remediation/problem-ledger.json",
+            "reason": "Every classified failure/skipped gate has a durable REL-* entry for this run.",
+        },
+        {
+            "name": "remediation-updates-probes",
+            "status": "ok" if probe_ledger.get("ledgerType") == "probe-ledger" and int(probe_ledger.get("missingProblemLinkCount") or 0) == 0 else "needs-curation",
+            "evidence": "remediation/probe-ledger.json",
+            "reason": "Failing/skipped probes should point to stable Problem Ledger IDs.",
+            "missingProblemLinkCount": probe_ledger.get("missingProblemLinkCount"),
+        },
+        {
+            "name": "run-history-comparison",
+            "status": "ok" if int(repeatability_loop.get("previousRunsScanned") or 0) > 0 else "insufficient-history",
+            "evidence": "remediation/repeatability-loop.json",
+            "reason": "Run history comparison prevents a single lucky run from being treated as proof.",
+        },
+        {
+            "name": "docs-synchronized",
+            "status": "ok" if not missing_docs else "missing-docs",
+            "evidence": "docs/development/release-stabilization-phase-7-regression-memory.md",
+            "reason": "The operating docs name the current regression-memory contract.",
+            "missingDocs": missing_docs,
+        },
+        {
+            "name": "recurring-family-counts",
+            "status": "review_required" if recurring.get("processReviewFamilies") else "ok",
+            "evidence": "remediation/recurring-family-counts.json",
+            "reason": "Recurring REL-* families are counted separately from one-off gate failures.",
+        },
+        {
+            "name": "artifact-shareability-memory",
+            "status": "ok" if completeness.get("overallStatus") in {"ok", "pending", None} and manifest.get("contractVersion") in {RELEASE_GATES_AUTOPSY_CONTRACT_VERSION, None} else "incomplete",
+            "evidence": "artifact-completeness.json / bundle-manifest.json",
+            "reason": "The current bundle should carry enough context for future reviewers without terminal scrollback.",
+        },
+    ]
+    review_required = any(item.get("status") == "review_required" for item in memory_checks)
+    needs_curation = any(item.get("status") in {"missing", "needs-curation", "missing-docs", "incomplete"} for item in memory_checks)
+    next_actions: list[str] = []
+    if unguarded:
+        next_actions.append("Map unguarded problem IDs to probes or add an explicit accepted-skip rationale before behavior-changing remediation.")
+    if recurring.get("processReviewFamilies"):
+        next_actions.append("Open a process review for recurring families before adding another tactical patch.")
+    if not next_actions:
+        next_actions.append("Use this bundle as the baseline memory for the next release-gates run.")
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "contractVersion": RELEASE_GATES_AUTOPSY_CONTRACT_VERSION,
+        "phase": "phase-7-continuous-memory-regression-protection",
+        "purpose": "Close the stabilization program by making every run update durable memory, probe links, docs synchronization and recurring family counts.",
+        "overallStatus": "review_required" if review_required else "needs_curation" if needs_curation else "ok",
+        "dryRun": result.dry_run,
+        "profile": result.profile_plan.profile if result.profile_plan else None,
+        "releaseConfidence": {
+            "score": confidence.get("score"),
+            "effectiveClass": confidence.get("effectiveClass"),
+            "decision": (confidence.get("decision") or {}).get("decision") if isinstance(confidence.get("decision"), dict) else None,
+        },
+        "problemIds": sorted(problem_ids),
+        "unguardedProblemIds": unguarded,
+        "memoryChecks": memory_checks,
+        "recurringFamilySummary": {
+            "overallStatus": recurring.get("overallStatus"),
+            "familyCount": len(recurring.get("families") or []),
+            "processReviewFamilyCount": len(recurring.get("processReviewFamilies") or []),
+            "previousRunsScanned": recurring.get("previousRunsScanned"),
+        },
+        "evidencePaths": {
+            "problemLedger": "remediation/problem-ledger.json",
+            "probeLedger": "remediation/probe-ledger.json",
+            "repeatabilityLoop": "remediation/repeatability-loop.json",
+            "releaseConfidenceGate": "release-confidence-gate.json",
+            "recurringFamilyCounts": "remediation/recurring-family-counts.json",
+            "artifactCompleteness": "artifact-completeness.json",
+            "bundleManifest": "bundle-manifest.json",
+        },
+        "nextActions": next_actions,
+    }
+
+
+def render_release_gates_regression_memory_md(report: dict[str, Any]) -> str:
+    lines = ["# release-gates regression memory", ""]
+    lines.append(f"- Run ID: `{report.get('runId')}`")
+    lines.append(f"- Contract: `{report.get('contractVersion')}`")
+    lines.append(f"- Overall: `{report.get('overallStatus')}`")
+    lines.append(f"- Profile: `{report.get('profile')}`")
+    lines.append(f"- Dry run: `{report.get('dryRun')}`")
+    confidence = report.get("releaseConfidence") if isinstance(report.get("releaseConfidence"), dict) else {}
+    lines.append(f"- Release confidence: `{confidence.get('score')}` / `{confidence.get('effectiveClass')}` / `{confidence.get('decision')}`")
+    lines.append("")
+    lines.append("## Memory checks")
+    lines.append("")
+    lines.append("| Check | Status | Evidence | Reason |")
+    lines.append("|---|---|---|---|")
+    for item in report.get("memoryChecks", []):
+        reason = str(item.get("reason") or "").replace("|", "\\|")
+        lines.append(f"| `{item.get('name')}` | `{item.get('status')}` | `{item.get('evidence')}` | {reason} |")
+    lines.append("")
+    lines.append("## Unguarded problem IDs")
+    lines.append("")
+    unguarded = report.get("unguardedProblemIds") if isinstance(report.get("unguardedProblemIds"), list) else []
+    if unguarded:
+        for problem_id in unguarded:
+            lines.append(f"- `{problem_id}`")
+    else:
+        lines.append("All current problem IDs are linked from the probe ledger or no current problems were detected.")
+    lines.append("")
+    lines.append("## Recurring family summary")
+    lines.append("")
+    recurring = report.get("recurringFamilySummary") if isinstance(report.get("recurringFamilySummary"), dict) else {}
+    lines.append(f"- Overall: `{recurring.get('overallStatus')}`")
+    lines.append(f"- Families: `{recurring.get('familyCount')}`")
+    lines.append(f"- Process-review families: `{recurring.get('processReviewFamilyCount')}`")
+    lines.append(f"- Previous runs scanned: `{recurring.get('previousRunsScanned')}`")
+    lines.append("")
+    lines.append("## Next actions")
+    lines.append("")
+    for action in report.get("nextActions", []):
+        lines.append(f"- {action}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_release_gates_phase7_artifacts(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> dict[str, Any]:
+    remediation_dir = run_dir / "remediation"
+    remediation_dir.mkdir(parents=True, exist_ok=True)
+    recurring = release_gates_recurring_family_counts(project_root, result, run_dir)
+    write_json(remediation_dir / "recurring-family-counts.json", recurring)
+    (remediation_dir / "recurring-family-counts.md").write_text(render_release_gates_recurring_family_counts_md(recurring), encoding="utf-8")
+    memory = release_gates_regression_memory(project_root, result, run_dir, recurring)
+    write_json(remediation_dir / "regression-memory.json", memory)
+    (remediation_dir / "regression-memory.md").write_text(render_release_gates_regression_memory_md(memory), encoding="utf-8")
+    return memory
+
+
 def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> None:
     remediation_dir = run_dir / "remediation"
     remediation_dir.mkdir(parents=True, exist_ok=True)
@@ -10442,18 +10751,20 @@ def write_release_gates_reports(project_root: Path, result: ReleaseGatesResult, 
     write_json(run_dir / "redaction-report.json", redaction)
     (run_dir / "redaction-report.md").write_text(render_release_gates_redaction_report_md(redaction), encoding="utf-8")
 
-    # Phase 6 readiness is written before completeness so the completeness check
-    # can require it, then rewritten after completeness/manifest exist so the
-    # final archive carries the strongest available artifact-quality signal.
+    # Phase 6/7 readiness is written before completeness so the completeness
+    # check can require those artifacts, then rewritten after completeness and
+    # manifest exist so the final archive carries the strongest available signal.
     write_release_gates_release_confidence_artifacts(project_root, result, run_dir)
+    write_release_gates_phase7_artifacts(project_root, result, run_dir)
     manifest = release_gates_bundle_manifest(project_root, result, run_dir)
     write_json(run_dir / "bundle-manifest.json", manifest)
     completeness = release_gates_artifact_completeness(project_root, result, run_dir)
     write_json(run_dir / "artifact-completeness.json", completeness)
     (run_dir / "artifact-completeness.md").write_text(render_release_gates_artifact_completeness_md(completeness), encoding="utf-8")
     write_release_gates_release_confidence_artifacts(project_root, result, run_dir)
-    # Re-write the manifest after the completeness artifact exists, so a bundle
-    # opened from the archive has a manifest that names every final artifact.
+    write_release_gates_phase7_artifacts(project_root, result, run_dir)
+    # Re-write the manifest after the completeness and Phase 7 artifacts exist,
+    # so a bundle opened from the archive names every final artifact.
     manifest = release_gates_bundle_manifest(project_root, result, run_dir)
     write_json(run_dir / "bundle-manifest.json", manifest)
 
@@ -12036,8 +12347,8 @@ def case_self_check_release_gates_keep_going_behavior() -> str:
 
 
 
-def case_self_check_release_gates_phase6_bundle_contract() -> str:
-    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase6-") as tmp:
+def case_self_check_release_gates_phase7_bundle_contract() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase7-") as tmp:
         root = Path(tmp)
         (root / "backend" / "migrations").mkdir(parents=True)
         (root / "frontend").mkdir(parents=True)
@@ -12049,7 +12360,7 @@ def case_self_check_release_gates_phase6_bundle_contract() -> str:
         (root / "frontend" / "package.json").write_text(json.dumps({"scripts": {"build": "vite build"}}), encoding="utf-8")
         (root / "frontend" / "package-lock.json").write_text("{}\n", encoding="utf-8")
         (root / "tools" / "devbootstrap.py").write_text("# fixture\n", encoding="utf-8")
-        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase6"
+        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase7"
         logs = run_dir / "logs"
         logs.mkdir(parents=True)
         (logs / "01_fixture_gate.log").write_text("status: ok\n", encoding="utf-8")
@@ -12058,7 +12369,7 @@ def case_self_check_release_gates_phase6_bundle_contract() -> str:
             tool_version=TOOL_VERSION,
             project_root=str(root),
             invoked_from=str(root),
-            run_id="selfcheck-release-gates-phase6",
+            run_id="selfcheck-release-gates-phase7",
             dry_run=False,
             timeout_seconds=123,
             overall_status="ok",
@@ -12106,10 +12417,14 @@ def case_self_check_release_gates_phase6_bundle_contract() -> str:
         "release-confidence-gate.json",
         "release-confidence-gate.md",
         "v1-release-readiness.md",
+        "remediation/regression-memory.json",
+        "remediation/regression-memory.md",
+        "remediation/recurring-family-counts.json",
+        "remediation/recurring-family-counts.md",
         "release-gates-consent.json",
     ]:
         assert required_name in names, f"missing {required_name} from archive"
-    return "release-gates phase 6 confidence gate and autopsy bundle contract checked"
+    return "release-gates phase 7 regression memory and autopsy bundle contract checked"
 
 
 
@@ -12164,7 +12479,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_remediation_bundle", case_self_check_release_gates_remediation_bundle)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
-    self_check_case(result, "release_gates_phase6_bundle_contract", case_self_check_release_gates_phase6_bundle_contract)
+    self_check_case(result, "release_gates_phase7_bundle_contract", case_self_check_release_gates_phase7_bundle_contract)
     if result.failures:
         result.classification = "failed"
         result.next_actions.append("Fix failing self-check cases before using devbootstrap as the v1 routine entrypoint.")

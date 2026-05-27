@@ -1124,7 +1124,7 @@ Operating artifacts:
 - `.dev-bootstrap/runs/<run-id>/remediation/repeatability-loop.json`;
 - `.dev-bootstrap/runs/<run-id>/remediation/repeatability-loop.md`.
 
-Implementation status: implemented in `tools/devbootstrap.py`. Phase 5 introduced the `repeatability-loop.*` artifact; after Phase 6 the global bundle contract version is `phase-6`. The first run in a new workspace is allowed to report `insufficient-history`; the next same-profile run is what upgrades this from contract-shape evidence to repeatability evidence.
+Implementation status: implemented in `tools/devbootstrap.py`. Phase 5 introduced the `repeatability-loop.*` artifact; after Phase 7 the global bundle contract version is `phase-7`. The first run in a new workspace is allowed to report `insufficient-history`; the next same-profile run is what upgrades this from contract-shape evidence to repeatability evidence.
 
 ### Phase 6. Release confidence gate
 
@@ -1151,7 +1151,7 @@ Operating artifacts:
 - `.dev-bootstrap/runs/<run-id>/release-confidence-gate.md`;
 - `.dev-bootstrap/runs/<run-id>/v1-release-readiness.md`.
 
-Implementation status: implemented in `tools/devbootstrap.py`; bundle contract version is now `phase-6`. Phase 6 is a decision layer over existing evidence, not a new product-test layer.
+Implementation status: implemented in `tools/devbootstrap.py`; Phase 6 is a decision layer over existing evidence, not a new product-test layer. After Phase 7 the global bundle contract version is `phase-7`, while Phase 6 artifacts remain required.
 
 ### Phase 7. Continuous memory and regression protection
 
@@ -1170,6 +1170,16 @@ Exit criteria:
 - new failures add light to the map;
 - fixed failures have guards;
 - recurring failure family causes process review.
+
+Operating artifacts:
+
+- `docs/development/release-stabilization-phase-7-regression-memory.md`;
+- `.dev-bootstrap/runs/<run-id>/remediation/regression-memory.json`;
+- `.dev-bootstrap/runs/<run-id>/remediation/regression-memory.md`;
+- `.dev-bootstrap/runs/<run-id>/remediation/recurring-family-counts.json`;
+- `.dev-bootstrap/runs/<run-id>/remediation/recurring-family-counts.md`.
+
+Implementation status: implemented in `tools/devbootstrap.py`; bundle contract version is now `phase-7`. Phase 7 closes the stabilization program by preserving per-run continuous memory and by making recurring `REL-*` families visible as process-review triggers, without pretending that historical recurrence alone is a product-test failure.
 
 ---
 

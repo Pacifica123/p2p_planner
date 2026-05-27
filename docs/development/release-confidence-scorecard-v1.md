@@ -1,6 +1,6 @@
 # Release confidence scorecard v1
 
-- Статус: Automated by Phase 6 release confidence gate; manual policy remains canonical
+- Статус: Automated by Phase 6 release confidence gate and preserved by Phase 7 regression memory; manual policy remains canonical
 - Дата: 2026-05-27
 - Родительский документ: `docs/development/release-stabilization-program-v1.md`
 - Назначение: зафиксировать политику release confidence; с Phase 6 она считается автоматически в `release-confidence-gate.json/md`.
@@ -10,7 +10,7 @@
 
 ## 0. Automation status
 
-Phase 6 now writes `release-confidence-gate.json` / `.md` and `v1-release-readiness.md` into every `release-gates` bundle. This document remains the scoring policy, while the run artifacts contain the current computed score, active hard caps, unknown ratio, classification coverage and final release recommendation.
+Phase 6 now writes `release-confidence-gate.json` / `.md` and `v1-release-readiness.md` into every `release-gates` bundle. Phase 7 additionally writes `remediation/regression-memory.*` and `remediation/recurring-family-counts.*`, so score changes can be reviewed against problem/probe memory and recurring failure families. This document remains the scoring policy, while the run artifacts contain the current computed score, active hard caps, unknown ratio, classification coverage and final release recommendation.
 
 ---
 
@@ -118,3 +118,4 @@ The score should be recalculated after the first Phase 1/2 autopsy bundle run. A
 5. Which `REL-*` IDs changed status?
 6. Which new probes prevent regression?
 7. What is the exact reason the score class changed?
+8. Which recurring `REL-*` family, if any, requires process review before another tactical patch?

@@ -17,7 +17,7 @@
 | `release-confidence-gate.json` / `.md` | Machine/human-readable score, score blocks, hard caps, unknown ratio, classification coverage and final decision. |
 | `v1-release-readiness.md` | Короткий reviewer-facing вердикт: можно ли считать текущий прогон beta candidate, internal candidate или только diagnostic signal. |
 
-Контракт bundle поднят до `phase-6`. Эти artifacts включены в:
+Phase 6 originally raised the bundle contract to `phase-6`; after Phase 7 the global contract is `phase-7`, while these artifacts remain required. Они включены в:
 
 - `bundle-manifest.json`;
 - `artifact-completeness.json/md`;
@@ -102,7 +102,7 @@ This intentionally treats missing prerequisites as release-confidence blockers r
 
 ### 6.1. Artifact quality needs a two-pass write
 
-`v1-release-readiness.md` must itself be included in `artifact-completeness.json`, but artifact quality should also know whether completeness passed. The implementation therefore writes Phase 6 confidence artifacts once before completeness, writes completeness/manifest, then rewrites Phase 6 artifacts with the final artifact-quality signal.
+`v1-release-readiness.md` must itself be included in `artifact-completeness.json`, but artifact quality should also know whether completeness passed. The implementation therefore writes Phase 6 confidence artifacts once before completeness, writes completeness/manifest, then rewrites Phase 6 artifacts with the final artifact-quality signal; Phase 7 regression-memory artifacts follow the same two-pass pattern.
 
 This avoids a circular dependency while keeping the final archive self-contained.
 
