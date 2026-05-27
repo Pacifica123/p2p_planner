@@ -122,3 +122,14 @@ This keeps release-gates from becoming an invisible fixer and preserves the rule
 Diagnostics produce evidence.
 Patches change the project.
 ```
+
+---
+
+## 7. Phase 4 controlled-mutators artifact
+
+Phase 4 makes the consent summary enforceable as bundle evidence. Every `release-gates` run now includes:
+
+- `release-gates-consent.json` / `.md` for expanded profile flags and allowed/denied side effects;
+- `remediation/controlled-mutators.json` / `.md` for enabled mutators, actual status, cleanup, rollback and evidence paths.
+
+The default `diagnostic` profile must keep DB/dependency/network/process/sandbox mutators disabled. More invasive profiles are acceptable only when the controlled-mutators ledger reports `unsafeMutationCount == 0` and `cleanupCoverage == "ok"`.

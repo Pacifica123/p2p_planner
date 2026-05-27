@@ -111,3 +111,5 @@ This document remains the canonical human taxonomy for stable `REL-*` IDs. If a 
 
 
 Phase 3 now adds `remediation/provocation-matrix.json` / `.md` to every `release-gates` bundle. The matrix intentionally provides low-risk signals for `REL-PORT-001`, `REL-WIN-001`, `REL-DB-002`, `REL-SMOKE-001` and `REL-CLEAN-001` without mutating project files, creating databases or starting long-lived runtime processes.
+
+Phase 4 now adds `remediation/controlled-mutators.json` / `.md` plus required `release-gates-consent.json` / `.md` to every `release-gates` bundle. This does not introduce new default mutations: it makes existing opt-in mutators auditable and keeps `unsafeMutationCount == 0` as a machine-checkable release-gates contract.

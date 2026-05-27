@@ -1091,6 +1091,15 @@ Exit criteria:
 - user sees side-effect summary;
 - cleanup command exists for every created resource.
 
+Operating artifacts:
+
+- `docs/development/release-stabilization-phase-4-controlled-mutators-rollout.md`;
+- `.dev-bootstrap/runs/<run-id>/release-gates-consent.json` / `.md`;
+- `.dev-bootstrap/runs/<run-id>/remediation/controlled-mutators.json`;
+- `.dev-bootstrap/runs/<run-id>/remediation/controlled-mutators.md`.
+
+Implementation status: implemented in `tools/devbootstrap.py`; bundle contract version is now `phase-4`.
+
 ### Phase 5. Repeatability loop
 
 Purpose: prove that success is not accidental.

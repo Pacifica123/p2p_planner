@@ -4688,7 +4688,7 @@ CLEAN_MACHINE_PROFILES = ("dry", "deps", "runtime", "clean-machine-dry", "clean-
 CLEAN_MACHINE_RETENTION_POLICIES = ("delete-always", "keep-on-failure", "keep-always")
 DEFAULT_CLEAN_MACHINE_PROFILE = "dry"
 DEFAULT_CLEAN_MACHINE_RETENTION = "keep-on-failure"
-RELEASE_GATES_AUTOPSY_CONTRACT_VERSION = "phase-3"
+RELEASE_GATES_AUTOPSY_CONTRACT_VERSION = "phase-4"
 RELEASE_GATES_PROFILES = ("diagnostic", "prepared-local", "isolated-db", "managed-runtime", "full-local-release")
 RELEASE_GATES_DEFAULT_PROFILE = "diagnostic"
 RELEASE_GATES_PROFILE_DESCRIPTIONS = {
@@ -8254,6 +8254,8 @@ def release_gates_required_bundle_artifacts() -> list[dict[str, Any]]:
         {"path": "summary.txt", "required": True, "description": "Compact terminal-independent run summary."},
         {"path": "release-gates.md", "required": True, "description": "Human-readable release-gates report."},
         {"path": "release-gates.json", "required": True, "description": "Machine-readable release-gates JSON envelope."},
+        {"path": "release-gates-consent.json", "required": True, "description": "Machine-readable profile consent and scoped side-effect plan."},
+        {"path": "release-gates-consent.md", "required": True, "description": "Human-readable profile consent and scoped side-effect plan."},
         {"path": "environment-fingerprint.json", "required": True, "description": "Root environment fingerprint for quick bundle triage."},
         {"path": "command-resolution.json", "required": True, "description": "Machine-readable command resolution artifact."},
         {"path": "command-resolution.md", "required": True, "description": "Human-readable command resolution artifact."},
@@ -8270,6 +8272,8 @@ def release_gates_required_bundle_artifacts() -> list[dict[str, Any]]:
         {"path": "remediation/decision-ledger-template.md", "required": True, "description": "Human-readable decision ledger template."},
         {"path": "remediation/provocation-matrix.json", "required": True, "description": "Machine-readable controlled diagnostic provocation matrix."},
         {"path": "remediation/provocation-matrix.md", "required": True, "description": "Human-readable controlled diagnostic provocation matrix."},
+        {"path": "remediation/controlled-mutators.json", "required": True, "description": "Machine-readable Phase 4 controlled mutators and cleanup ledger."},
+        {"path": "remediation/controlled-mutators.md", "required": True, "description": "Human-readable Phase 4 controlled mutators and cleanup ledger."},
         {"path": "remediation/prerequisites.md", "required": True, "description": "Prerequisite blocker report."},
         {"path": "remediation/skipped-gates.md", "required": True, "description": "Skipped/unverified gate report."},
         {"path": "remediation/next-actions.md", "required": True, "description": "Targeted next actions."},
@@ -8388,6 +8392,8 @@ def release_gates_bundle_manifest(project_root: Path, result: ReleaseGatesResult
         "probeLedger": "remediation/probe-ledger.json",
         "decisionLedgerTemplate": "remediation/decision-ledger-template.json",
         "provocationMatrix": "remediation/provocation-matrix.json",
+        "controlledMutators": "remediation/controlled-mutators.json",
+        "profileConsent": "release-gates-consent.json",
     }
 
 
@@ -8401,10 +8407,12 @@ def release_gates_autopsy_bundle_paths(result: ReleaseGatesResult) -> dict[str, 
         "environmentFingerprintPath": f"{base}/environment-fingerprint.json",
         "commandResolutionPath": f"{base}/command-resolution.json",
         "redactionReportPath": f"{base}/redaction-report.json",
+        "profileConsentPath": f"{base}/release-gates-consent.json",
         "problemLedgerPath": f"{base}/remediation/problem-ledger.json",
         "probeLedgerPath": f"{base}/remediation/probe-ledger.json",
         "decisionLedgerTemplatePath": f"{base}/remediation/decision-ledger-template.json",
         "provocationMatrixPath": f"{base}/remediation/provocation-matrix.json",
+        "controlledMutatorsPath": f"{base}/remediation/controlled-mutators.json",
     }
 
 def render_release_gates_gate_ledger_md(ledger: dict[str, Any]) -> str:
@@ -9023,6 +9031,274 @@ def render_release_gates_provocation_matrix_md(matrix: dict[str, Any]) -> str:
         lines.append("")
     return "\n".join(lines)
 
+
+def release_gates_find_gate(result: ReleaseGatesResult, name: str) -> GateResult | None:
+    for gate in reversed(result.gates):
+        if gate.name == name:
+            return gate
+    return None
+
+
+def release_gates_controlled_mutator_item(
+    *,
+    mutator_id: str,
+    title: str,
+    enabled: bool,
+    status: str,
+    classification: str,
+    side_effects: list[str],
+    cleanup: list[str],
+    rollback: list[str],
+    evidence: list[str],
+    unsafe: bool = False,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "mutatorId": mutator_id,
+        "title": title,
+        "enabled": enabled,
+        "status": status,
+        "classification": classification,
+        "unsafe": unsafe,
+        "sideEffects": side_effects,
+        "cleanup": cleanup,
+        "rollback": rollback,
+        "evidence": evidence,
+        "details": details or {},
+    }
+
+
+def release_gates_playwright_cleanup_hints(project_root: Path) -> list[str]:
+    hints: list[str] = []
+    for root in playwright_browser_cache_roots(project_root):
+        hints.append(f"remove Playwright browser cache manually if desired: {root}")
+    return hints or ["no Playwright browser cache roots could be determined"]
+
+
+def release_gates_controlled_mutators(project_root: Path, result: ReleaseGatesResult) -> dict[str, Any]:
+    profile_options = result.profile_plan.effective_options if result.profile_plan else {}
+    mutators: list[dict[str, Any]] = []
+
+    db_state = result.managed_test_db
+    db_enabled = bool(db_state and db_state.enabled) or bool(profile_options.get("managed_test_db"))
+    db_cleanup: list[str] = []
+    db_evidence: list[str] = []
+    db_details: dict[str, Any] = {"retention": profile_options.get("test_db_retention")}
+    if db_state:
+        db_details.update(managed_test_db_public_payload(db_state))
+        if db_state.cleanup_command:
+            db_cleanup.append(db_state.cleanup_command)
+        if db_state.metadata_path:
+            db_evidence.append(db_state.metadata_path)
+        gate = release_gates_find_gate(result, "managed_test_db_retention") or release_gates_find_gate(result, "managed_test_db_prepare")
+        if gate and gate.log_path:
+            db_evidence.append(gate.log_path)
+    mutators.append(
+        release_gates_controlled_mutator_item(
+            mutator_id="managed-test-database",
+            title="Managed PostgreSQL test database",
+            enabled=db_enabled,
+            status=db_state.status if db_state else "disabled",
+            classification=db_state.classification if db_state else "disabled",
+            side_effects=[
+                "creates at most one per-run PostgreSQL database when --managed-test-db/profile requires it",
+                "routes DB-writing release gates to that isolated database",
+                "drops or retains only the registered managed database according to retention policy",
+            ] if db_enabled else [],
+            cleanup=db_cleanup or (["dry-run only; no database was created"] if result.dry_run and db_enabled else ["no managed database cleanup required"]),
+            rollback=["rerun the cleanup command from managed-test-db.json if a retained DB is no longer needed"],
+            evidence=db_evidence,
+            details=db_details,
+        )
+    )
+
+    runtime_state = result.managed_runtime
+    runtime_enabled = bool(runtime_state and runtime_state.enabled) or bool(profile_options.get("managed_runtime") or profile_options.get("managed_test_db"))
+    runtime_evidence: list[str] = []
+    runtime_cleanup: list[str] = []
+    if runtime_state:
+        for maybe_path in [runtime_state.runtime_state_path, runtime_state.env_diff_path, runtime_state.managed_urls_path, runtime_state.backend_log_path, runtime_state.frontend_log_path]:
+            if maybe_path:
+                runtime_evidence.append(maybe_path)
+        for gate_name in ["managed_frontend_stop", "managed_backend_stop"]:
+            gate = release_gates_find_gate(result, gate_name)
+            if gate and gate.log_path:
+                runtime_evidence.append(gate.log_path)
+        if runtime_state.backend_pid:
+            runtime_cleanup.append(f"owned backend PID {runtime_state.backend_pid} should have been stopped by release-gates; if still alive, use devbootstrap stop verification before killing it")
+        if runtime_state.frontend_pid:
+            runtime_cleanup.append(f"owned frontend PID {runtime_state.frontend_pid} should have been stopped by release-gates; if still alive, use devbootstrap stop verification before killing it")
+    mutators.append(
+        release_gates_controlled_mutator_item(
+            mutator_id="managed-runtime-dynamic-ports",
+            title="Managed backend/frontend runtime on dynamic ports",
+            enabled=runtime_enabled,
+            status=runtime_state.status if runtime_state else "disabled",
+            classification=runtime_state.classification if runtime_state else "disabled",
+            side_effects=[
+                "allocates loopback ports with port 0 and refuses occupied selected ports",
+                "starts only backend/frontend processes owned by this release-gates run",
+                "writes runtime-state, env-diff and managed-urls artifacts into the run directory",
+            ] if runtime_enabled else [],
+            cleanup=runtime_cleanup or (["dry-run only; no processes were started"] if result.dry_run and runtime_enabled else ["no managed runtime cleanup required"]),
+            rollback=["inspect logs/runtime-state.json before stopping any leftover process; do not kill unrelated live processes"],
+            evidence=runtime_evidence,
+            details=managed_runtime_public_payload(runtime_state) if runtime_state else {},
+        )
+    )
+
+    prepare_mode = str(profile_options.get("prepare_deps") or "never")
+    prepare_gate = release_gates_find_gate(result, "frontend_prepare_dependencies")
+    warmup_gate = release_gates_find_gate(result, "backend_dependency_warmup")
+    deps_evidence = [gate.log_path for gate in [prepare_gate, warmup_gate] if gate and gate.log_path]
+    mutators.append(
+        release_gates_controlled_mutator_item(
+            mutator_id="dependency-preparation",
+            title="Dependency preparation with marker and consent",
+            enabled=prepare_mode != "never" or bool(prepare_gate or warmup_gate),
+            status=prepare_gate.status if prepare_gate else ("planned" if result.dry_run and prepare_mode != "never" else "disabled"),
+            classification=prepare_gate.classification if prepare_gate else ("dry_run" if result.dry_run and prepare_mode != "never" else "disabled"),
+            side_effects=[
+                "may populate frontend/node_modules and npm cache according to prepare-deps mode",
+                "may populate Cargo build/dependency cache via cargo test --no-run",
+                "updates only devbootstrap install marker; source files and lockfiles remain read-only",
+            ] if prepare_mode != "never" or prepare_gate else [],
+            cleanup=[
+                "optional manual cleanup: remove frontend/node_modules to reclaim space",
+                "optional manual cleanup: remove backend/target or Cargo cache outside the project if desired",
+            ] if prepare_mode != "never" or prepare_gate else ["no dependency preparation cleanup required"],
+            rollback=["do not rollback package-lock/Cargo.lock; release-gates does not modify them"],
+            evidence=deps_evidence,
+            details={"prepareDepsMode": prepare_mode, "frontendPrepareGate": as_jsonable(prepare_gate) if prepare_gate else None, "backendWarmupGate": as_jsonable(warmup_gate) if warmup_gate else None},
+        )
+    )
+
+    playwright_gate = release_gates_find_gate(result, "playwright_install")
+    install_playwright_enabled = bool(profile_options.get("install_playwright_browsers")) or bool(playwright_gate)
+    mutators.append(
+        release_gates_controlled_mutator_item(
+            mutator_id="playwright-browser-install",
+            title="Optional Playwright browser install",
+            enabled=install_playwright_enabled,
+            status=playwright_gate.status if playwright_gate else ("planned" if result.dry_run and install_playwright_enabled else "disabled"),
+            classification=playwright_gate.classification if playwright_gate else ("dry_run" if result.dry_run and install_playwright_enabled else "disabled"),
+            side_effects=[
+                "runs npx playwright install chromium only after explicit --install-playwright-browsers/profile consent",
+                "may download Chromium into the Playwright browser cache",
+            ] if install_playwright_enabled else [],
+            cleanup=release_gates_playwright_cleanup_hints(project_root) if install_playwright_enabled else ["no Playwright browser install cleanup required"],
+            rollback=["remove only Playwright cache directories you intentionally own; do not remove project source files"],
+            evidence=[playwright_gate.log_path] if playwright_gate and playwright_gate.log_path else [],
+            details={"installPlaywrightBrowsers": bool(profile_options.get("install_playwright_browsers")), "gate": as_jsonable(playwright_gate) if playwright_gate else None},
+        )
+    )
+
+    clean_gate = release_gates_find_gate(result, "clean_machine_sandbox")
+    clean_enabled = bool(profile_options.get("include_clean_machine")) or bool(clean_gate and clean_gate.status not in {"skipped_optional"})
+    clean_cleanup: list[str] = []
+    clean_details = as_jsonable(clean_gate.details) if clean_gate else {}
+    if clean_gate and isinstance(clean_gate.details, dict):
+        command = clean_gate.details.get("cleanupCommand")
+        if isinstance(command, str) and command:
+            clean_cleanup.append(command)
+        elif clean_gate.details.get("kept") is False:
+            clean_cleanup.append("clean-machine sandbox was deleted automatically")
+    mutators.append(
+        release_gates_controlled_mutator_item(
+            mutator_id="clean-machine-sandbox",
+            title="Clean-machine sandbox copy",
+            enabled=clean_enabled,
+            status=clean_gate.status if clean_gate else ("planned" if result.dry_run and clean_enabled else "disabled"),
+            classification=clean_gate.classification if clean_gate else ("dry_run" if result.dry_run and clean_enabled else "disabled"),
+            side_effects=[
+                "copies the project to a temporary sandbox with generated/local state excluded",
+                "runs only the selected clean-machine profile commands inside that sandbox",
+                "retains or deletes the sandbox according to clean-machine retention policy",
+            ] if clean_enabled else [],
+            cleanup=clean_cleanup or (["dry-run only; no sandbox was copied"] if result.dry_run and clean_enabled else ["no clean-machine sandbox cleanup required"]),
+            rollback=["if retained, delete only the sandbox parent path recorded in clean-machine.json/report.md"],
+            evidence=[clean_gate.log_path] if clean_gate and clean_gate.log_path else [],
+            details=clean_details,
+        )
+    )
+
+    unsafe_mutations = [item for item in mutators if item.get("unsafe")]
+    enabled_mutators = [item for item in mutators if item.get("enabled")]
+    cleanup_missing = [item["mutatorId"] for item in enabled_mutators if not item.get("cleanup")]
+    return {
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "runId": result.run_id,
+        "contractVersion": RELEASE_GATES_AUTOPSY_CONTRACT_VERSION,
+        "phase": "phase-4-controlled-mutators-rollout",
+        "purpose": "Document every allowed release-gates mutation, consent source, side effects and cleanup/rollback instructions in one durable artifact.",
+        "profile": result.profile_plan.profile if result.profile_plan else None,
+        "dryRun": result.dry_run,
+        "allowedScopedSideEffects": result.profile_plan.allowed_side_effects if result.profile_plan else [],
+        "deniedUnscopedSideEffects": result.profile_plan.denied_side_effects if result.profile_plan else [],
+        "unsafeMutationCount": len(unsafe_mutations),
+        "cleanupCoverage": "ok" if not cleanup_missing else "incomplete",
+        "cleanupMissingFor": cleanup_missing,
+        "mutators": mutators,
+    }
+
+
+def render_release_gates_controlled_mutators_md(report: dict[str, Any]) -> str:
+    lines = ["# release-gates controlled mutators", ""]
+    lines.append(f"- Run ID: `{report.get('runId')}`")
+    lines.append(f"- Contract: `{report.get('contractVersion')}`")
+    lines.append(f"- Profile: `{report.get('profile')}`")
+    lines.append(f"- Dry run: `{report.get('dryRun')}`")
+    lines.append(f"- Unsafe mutation count: `{report.get('unsafeMutationCount')}`")
+    lines.append(f"- Cleanup coverage: `{report.get('cleanupCoverage')}`")
+    lines.append("")
+    lines.append("Phase 4 allows only scoped, explicit and logged mutators. Project source files, env files, lockfiles, foreign processes and unregistered databases remain out of scope.")
+    lines.append("")
+    lines.append("## Mutators")
+    lines.append("")
+    lines.append("| Mutator | Enabled | Status | Classification | Cleanup |")
+    lines.append("|---|---:|---|---|---|")
+    for item in report.get("mutators", []):
+        cleanup = "; ".join(str(value) for value in item.get("cleanup", [])) or "none"
+        cleanup = cleanup.replace("|", "\\|")
+        lines.append(f"| `{item.get('mutatorId')}` | `{item.get('enabled')}` | `{item.get('status')}` | `{item.get('classification')}` | {cleanup} |")
+    lines.append("")
+    lines.append("## Allowed scoped side effects")
+    lines.append("")
+    allowed = report.get("allowedScopedSideEffects") if isinstance(report.get("allowedScopedSideEffects"), list) else []
+    if allowed:
+        for item in allowed:
+            lines.append(f"- `{item.get('category')}` — {item.get('description')}")
+    else:
+        lines.append("- none")
+    lines.append("")
+    lines.append("## Denied unscoped side effects")
+    lines.append("")
+    denied = report.get("deniedUnscopedSideEffects") if isinstance(report.get("deniedUnscopedSideEffects"), list) else []
+    if denied:
+        for item in denied:
+            lines.append(f"- `{item.get('category')}` — {item.get('description')}")
+    else:
+        lines.append("- none")
+    lines.append("")
+    for item in report.get("mutators", []):
+        lines.append(f"## {item.get('title')}")
+        lines.append("")
+        lines.append(f"- ID: `{item.get('mutatorId')}`")
+        lines.append(f"- Enabled: `{item.get('enabled')}`")
+        lines.append(f"- Status: `{item.get('status')}`")
+        lines.append(f"- Classification: `{item.get('classification')}`")
+        side_effects = item.get("sideEffects") if isinstance(item.get("sideEffects"), list) else []
+        lines.append("- Side effects: " + ("; ".join(str(value) for value in side_effects) if side_effects else "none"))
+        cleanup = item.get("cleanup") if isinstance(item.get("cleanup"), list) else []
+        lines.append("- Cleanup: " + ("; ".join(str(value) for value in cleanup) if cleanup else "none"))
+        rollback = item.get("rollback") if isinstance(item.get("rollback"), list) else []
+        lines.append("- Rollback: " + ("; ".join(str(value) for value in rollback) if rollback else "none"))
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), list) else []
+        lines.append("- Evidence: " + ("; ".join(f"`{value}`" for value in evidence) if evidence else "none"))
+        lines.append("")
+    return "\n".join(lines)
+
 def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGatesResult, run_dir: Path) -> None:
     remediation_dir = run_dir / "remediation"
     remediation_dir.mkdir(parents=True, exist_ok=True)
@@ -9036,6 +9312,7 @@ def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGa
     probe_ledger = release_gates_probe_ledger(result)
     decision_template = release_gates_decision_ledger_template(result, problem_ledger)
     provocation_matrix = release_gates_provocation_matrix(project_root, result)
+    controlled_mutators = release_gates_controlled_mutators(project_root, result)
 
     write_json(remediation_dir / "gate-ledger.json", ledger)
     (remediation_dir / "gate-ledger.md").write_text(render_release_gates_gate_ledger_md(ledger), encoding="utf-8")
@@ -9047,6 +9324,8 @@ def write_release_gates_remediation_bundle(project_root: Path, result: ReleaseGa
     (remediation_dir / "decision-ledger-template.md").write_text(render_release_gates_decision_ledger_template_md(decision_template), encoding="utf-8")
     write_json(remediation_dir / "provocation-matrix.json", provocation_matrix)
     (remediation_dir / "provocation-matrix.md").write_text(render_release_gates_provocation_matrix_md(provocation_matrix), encoding="utf-8")
+    write_json(remediation_dir / "controlled-mutators.json", controlled_mutators)
+    (remediation_dir / "controlled-mutators.md").write_text(render_release_gates_controlled_mutators_md(controlled_mutators), encoding="utf-8")
     (remediation_dir / "prerequisites.md").write_text(render_release_gates_prerequisites_md(result, blockers), encoding="utf-8")
     (remediation_dir / "skipped-gates.md").write_text(render_release_gates_skipped_gates_md(unverified), encoding="utf-8")
     (remediation_dir / "next-actions.md").write_text(render_release_gates_next_actions_md(result), encoding="utf-8")
@@ -9168,6 +9447,7 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("- Probe ledger: `remediation/probe-ledger.md` / `remediation/probe-ledger.json`")
         lines.append("- Decision ledger template: `remediation/decision-ledger-template.md` / `remediation/decision-ledger-template.json`")
         lines.append("- Diagnostic provocation matrix: `remediation/provocation-matrix.md` / `remediation/provocation-matrix.json`")
+        lines.append("- Controlled mutators ledger: `remediation/controlled-mutators.md` / `remediation/controlled-mutators.json`")
         lines.append("- Prerequisites: `remediation/prerequisites.md`")
         lines.append("- Skipped gates: `remediation/skipped-gates.md`")
         lines.append("- Next actions: `remediation/next-actions.md`")
@@ -9176,7 +9456,7 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("")
     autopsy_paths = release_gates_autopsy_bundle_paths(result)
     if autopsy_paths:
-        lines.append("## Phase 2 autopsy bundle contract")
+        lines.append("## Release-gates autopsy bundle contract")
         lines.append("")
         lines.append("- Manifest: `bundle-manifest.json`")
         lines.append("- Artifact completeness: `artifact-completeness.json` / `artifact-completeness.md`")
@@ -9185,6 +9465,7 @@ def render_release_gates_report(result: ReleaseGatesResult) -> str:
         lines.append("- Redaction report: `redaction-report.json` / `redaction-report.md`")
         lines.append("- Ledgers: `remediation/problem-ledger.*`, `remediation/probe-ledger.*`, `remediation/decision-ledger-template.*`")
         lines.append("- Provocation matrix: `remediation/provocation-matrix.*`")
+        lines.append("- Controlled mutators: `remediation/controlled-mutators.*`")
         lines.append("")
     lines.append("## Findings")
     lines.append("")
@@ -10867,8 +11148,8 @@ def case_self_check_release_gates_keep_going_behavior() -> str:
 
 
 
-def case_self_check_release_gates_phase3_bundle_contract() -> str:
-    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase3-") as tmp:
+def case_self_check_release_gates_phase4_bundle_contract() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-phase4-") as tmp:
         root = Path(tmp)
         (root / "backend" / "migrations").mkdir(parents=True)
         (root / "frontend").mkdir(parents=True)
@@ -10880,7 +11161,7 @@ def case_self_check_release_gates_phase3_bundle_contract() -> str:
         (root / "frontend" / "package.json").write_text(json.dumps({"scripts": {"build": "vite build"}}), encoding="utf-8")
         (root / "frontend" / "package-lock.json").write_text("{}\n", encoding="utf-8")
         (root / "tools" / "devbootstrap.py").write_text("# fixture\n", encoding="utf-8")
-        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase3"
+        run_dir = root / BOOTSTRAP_DIR_NAME / "runs" / "selfcheck-release-gates-phase4"
         logs = run_dir / "logs"
         logs.mkdir(parents=True)
         (logs / "01_fixture_gate.log").write_text("status: ok\n", encoding="utf-8")
@@ -10889,13 +11170,24 @@ def case_self_check_release_gates_phase3_bundle_contract() -> str:
             tool_version=TOOL_VERSION,
             project_root=str(root),
             invoked_from=str(root),
-            run_id="selfcheck-release-gates-phase3",
+            run_id="selfcheck-release-gates-phase4",
             dry_run=False,
             timeout_seconds=123,
             overall_status="ok",
             classification="release_gates_ok",
             gates=[GateResult(name="fixture_gate", status="ok", classification="ok", message="gate completed", cwd=".", command=[sys.executable, "--version"], log_path="logs/01_fixture_gate.log")],
         )
+        result.profile_plan = ReleaseGatesProfilePlan(
+            profile=RELEASE_GATES_DEFAULT_PROFILE,
+            explicit_profile=False,
+            description=RELEASE_GATES_PROFILE_DESCRIPTIONS[RELEASE_GATES_DEFAULT_PROFILE],
+            dry_run=False,
+            effective_options=release_gates_profile_defaults(RELEASE_GATES_DEFAULT_PROFILE),
+            allowed_side_effects=[],
+            denied_side_effects=[{"category": "write-project-files", "description": "fixture denied side effect"}],
+            planned_gates=["fixture_gate"],
+        )
+        write_release_gates_profile_plan(root, run_dir, result.profile_plan)
         write_release_gates_reports(root, result, run_dir)
         manifest = read_json(run_dir / "bundle-manifest.json")
         completeness = read_json(run_dir / "artifact-completeness.json")
@@ -10921,9 +11213,11 @@ def case_self_check_release_gates_phase3_bundle_contract() -> str:
         "remediation/probe-ledger.json",
         "remediation/decision-ledger-template.json",
         "remediation/provocation-matrix.json",
+        "remediation/controlled-mutators.json",
+        "release-gates-consent.json",
     ]:
         assert required_name in names, f"missing {required_name} from archive"
-    return "release-gates phase 3 diagnostic provocation matrix and autopsy bundle contract checked"
+    return "release-gates phase 4 controlled mutators and autopsy bundle contract checked"
 
 
 
@@ -10978,7 +11272,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_remediation_bundle", case_self_check_release_gates_remediation_bundle)
     self_check_case(result, "release_gates_targeted_next_actions", case_self_check_release_gates_targeted_next_actions)
     self_check_case(result, "release_gates_keep_going_behavior", case_self_check_release_gates_keep_going_behavior)
-    self_check_case(result, "release_gates_phase3_bundle_contract", case_self_check_release_gates_phase3_bundle_contract)
+    self_check_case(result, "release_gates_phase4_bundle_contract", case_self_check_release_gates_phase4_bundle_contract)
     if result.failures:
         result.classification = "failed"
         result.next_actions.append("Fix failing self-check cases before using devbootstrap as the v1 routine entrypoint.")
