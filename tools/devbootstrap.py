@@ -3363,10 +3363,32 @@ def run_frontend_command_probe(
 
 
 
-def launch_frontend_process(project_root: Path, report_dir: Path, host: str, port: int) -> tuple[subprocess.Popen[Any], Path, list[str]]:
+def frontend_vite_entry_command(project_root: Path, host: str, port: int) -> list[str] | None:
+    package_data, package_error = read_frontend_package(project_root)
+    if package_error:
+        return None
+    dev_script = frontend_scripts_from_package(package_data).get("dev", "").strip()
+    vite_entry = project_root / "frontend" / "node_modules" / "vite" / "bin" / "vite.js"
+    if dev_script == "vite" and vite_entry.is_file():
+        return ["node", "node_modules/vite/bin/vite.js", "--host", host, "--port", str(port), "--strictPort"]
+    return None
+
+
+def frontend_dev_launch_command(project_root: Path, host: str, port: int) -> tuple[list[str], str, str]:
+    direct_vite = frontend_vite_entry_command(project_root, host, port)
+    if direct_vite is not None:
+        return direct_vite, "vite_direct", "Started Vite dev server directly through node."
+    return (
+        ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"],
+        "npm_run_dev",
+        "Started frontend process with npm run dev.",
+    )
+
+
+def launch_frontend_process(project_root: Path, report_dir: Path, host: str, port: int) -> tuple[subprocess.Popen[Any], Path, list[str], str, str]:
     frontend_dir = project_root / "frontend"
     log_path = report_dir / "frontend.log"
-    command = ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"]
+    command, action_code, action_message = frontend_dev_launch_command(project_root, host, port)
     execution_command = command_for_subprocess(command)
     with log_path.open("ab") as log_file:
         header = "\n".join(
@@ -3388,7 +3410,7 @@ def launch_frontend_process(project_root: Path, report_dir: Path, host: str, por
             stdin=subprocess.DEVNULL,
             **popen_process_group_kwargs(),
         )
-    return process, log_path, command
+    return process, log_path, command, action_code, action_message
 
 
 def frontend_ready(probe: HttpProbe | None) -> bool:
@@ -3518,19 +3540,19 @@ def command_start_frontend(args: argparse.Namespace) -> int:
             result.failures.append({"code": "frontend_port_conflict", "message": "Frontend port is open but the frontend root probe is not healthy. devbootstrap will not kill a foreign process."})
             result.next_actions.append("Inspect the process on the Vite port manually, or stop the old frontend you own and rerun start-frontend.")
         elif args.dry_run:
-            command = ["npm", "run", "dev", "--", "--host", result.frontend_host, "--port", str(result.frontend_port), "--strictPort"]
+            command, action_code, action_message = frontend_dev_launch_command(project_root, result.frontend_host, result.frontend_port)
             result.classification = "frontend_start_planned"
-            result.actions.append(FrontendAction("npm_run_dev", "planned", "Would start Vite dev server and wait for frontend root.", command_as_text(command)))
+            result.actions.append(FrontendAction(action_code, "planned", action_message.replace("Started", "Would start"), command_as_text(command)))
             result.next_actions.append("Run without --dry-run to start frontend.")
         else:
             run_id_value = run_id("start-frontend")
             try:
-                process, log_path, command = launch_frontend_process(project_root, report_dir or create_report_dir(project_root, "start-frontend"), result.frontend_host, result.frontend_port)
+                process, log_path, command, action_code, action_message = launch_frontend_process(project_root, report_dir or create_report_dir(project_root, "start-frontend"), result.frontend_host, result.frontend_port)
                 result.process_pid = process.pid
                 result.process_alive = pid_alive(process.pid)
                 result.run_id = run_id_value
                 result.log_path = rel(log_path, project_root)
-                result.actions.append(FrontendAction("npm_run_dev", "started", "Started frontend process with npm run dev.", command_as_text(command), f"pid={process.pid}"))
+                result.actions.append(FrontendAction(action_code, "started", action_message, command_as_text(command), f"pid={process.pid}"))
                 ready, probe, returncode = wait_for_frontend_root(process, result.frontend_url or frontend_root_url(result.frontend_host, result.frontend_port), timeout_seconds=args.timeout_seconds)
                 result.frontend_root_probe = probe
                 result.process_returncode = returncode
@@ -3556,7 +3578,7 @@ def command_start_frontend(args: argparse.Namespace) -> int:
                     default = "frontend_start_failed" if returncode is not None else "frontend_health_timeout"
                     result.classification = classify_frontend_failure(log_tail, default)
                     result.checks.append(FrontendCheck("frontend_root_wait", "fail", "Frontend root did not become reachable.", f"timeout={args.timeout_seconds}s"))
-                    result.failures.append({"code": result.classification, "message": "Frontend did not reach ready state after npm run dev."})
+                    result.failures.append({"code": result.classification, "message": "Frontend did not reach ready state after starting the dev server."})
                     if result.process_alive:
                         update_process_state(
                             project_root,
@@ -3574,10 +3596,10 @@ def command_start_frontend(args: argparse.Namespace) -> int:
                         result.next_actions.append("Inspect frontend.log for the classified failure before retrying.")
             except FileNotFoundError:
                 result.classification = "missing_prerequisite"
-                result.failures.append({"code": "missing_npm", "message": "npm run dev could not be started because npm was not found."})
+                result.failures.append({"code": "missing_npm", "message": "Frontend dev server could not be started because npm was not found."})
             except OSError as exc:
                 result.classification = "frontend_start_failed"
-                result.failures.append({"code": "frontend_start_failed", "message": f"Could not start npm run dev: {exc}"})
+                result.failures.append({"code": "frontend_start_failed", "message": f"Could not start frontend dev server: {exc}"})
     if project_root is not None and report_dir is not None:
         write_frontend_reports(project_root, result, "start-frontend", report_dir)
     print_frontend_summary(result)
@@ -9926,6 +9948,21 @@ def case_self_check_release_gates_keep_going_behavior() -> str:
     return "keep-going execution after a failed prerequisite checked"
 
 
+
+def case_self_check_frontend_direct_vite_launch_command() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-frontend-direct-vite-") as tmp:
+        root = Path(tmp)
+        frontend = root / "frontend"
+        vite_bin = frontend / "node_modules" / "vite" / "bin"
+        vite_bin.mkdir(parents=True)
+        (frontend / "package.json").write_text(json.dumps({"scripts": {"dev": "vite"}}), encoding="utf-8")
+        (vite_bin / "vite.js").write_text("console.log('vite')\n", encoding="utf-8")
+        command, action_code, action_message = frontend_dev_launch_command(root, "127.0.0.1", 5173)
+    assert command == ["node", "node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "5173", "--strictPort"], command
+    assert action_code == "vite_direct", action_code
+    assert "directly" in action_message, action_message
+    return "frontend direct Vite launch command checked"
+
 def build_self_check_result(project_root: Path | None, invoked_from: Path) -> SelfCheckResult:
     result = SelfCheckResult(
         generated_at=iso_now(),
@@ -9957,6 +9994,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "managed_runtime_dynamic_cors_origin", case_self_check_managed_runtime_dynamic_cors_origin)
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
     self_check_case(result, "frontend_prepare_modes", case_self_check_frontend_prepare_modes)
+    self_check_case(result, "frontend_direct_vite_launch_command", case_self_check_frontend_direct_vite_launch_command)
     self_check_case(result, "clean_machine_profiles", case_self_check_clean_machine_profiles)
     self_check_case(result, "release_gates_profiles_and_consent", case_self_check_release_gates_profiles_and_consent)
     self_check_case(result, "release_gates_remediation_bundle", case_self_check_release_gates_remediation_bundle)
