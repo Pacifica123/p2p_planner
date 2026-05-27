@@ -19,7 +19,7 @@
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
 - `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy.
-- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс и манифест радикального release autopsy: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem Ledger и цепочке тематических ремедиаций.
+- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy и каноническую release stabilization program: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, метрикам release confidence и цепочке тематических ремедиаций.
 
 ## Зафиксированные принципы
 
@@ -59,8 +59,10 @@
    `dev-bootstrap/deployment-pitfalls-catalog.md`,
    `dev-bootstrap/dev-autodeployer-v1-development-plan.md` и
    `dev-bootstrap/devbootstrap-v1-operations.md` для автоматизации локального разворачивания.
-7. Затем `development/systemic-release-stabilization-manifesto-v1.md` и
-   `development/accelerated-development-strategy-v1.md` для понимания рабочего режима стабилизации, patch/devctl-цикла и причин перехода от реактивных псевдофиксов к системному исследованию.
+7. Затем `development/systemic-release-stabilization-manifesto-v1.md`,
+   `development/release-stabilization-program-v1.md`,
+   `development/release-stabilization-plan-merge-notes-2026-05-27.md` и
+   `development/accelerated-development-strategy-v1.md` для понимания рабочего режима стабилизации, patch/devctl-цикла, метрик release confidence и причин перехода от реактивных псевдофиксов к системному исследованию.
 8. И только потом `api/openapi.yaml`, `sync/protocol.md` и
    `sync/conflict-resolution.md`.
 
@@ -110,4 +112,8 @@ local-first, sync и optional p2p.
 - `docs/dev-bootstrap/devbootstrap-v1-operations.md` — эксплуатационная памятка devbootstrap v1: quick commands, command responsibilities, report artifact contract, timeout policy, failure handling rules and cleanup rules.
 
 - `docs/development/systemic-release-stabilization-manifesto-v1.md` — манифест радикальной стабилизации release/dev lifecycle v2: Deep Release Autopsy, Problem Ledger, PostgreSQL authority ladder, controlled mutators, отдельную классификацию transport-failures и план тематической цепочки ремедиаций вместо бесконечного fix-after-fail цикла.
+
+- `docs/development/release-stabilization-program-v1.md` — каноническая программа достижения целей манифеста: supported reality v1, current product grounding, Problem/Probe/Decision ledgers, failure taxonomy, Release Confidence Score, metrics, workstreams, phased roadmap, risk register, patch-chain and whole-program definition of done.
+
+- `docs/development/release-stabilization-plan-merge-notes-2026-05-27.md` — merge notes по объединению free-form strategic response и не примененного `deep-release-autopsy-strategy` патча: сходства, различия, что оставлено/отброшено и какие слабые места найдены после объединения.
 
