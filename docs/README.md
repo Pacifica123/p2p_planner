@@ -109,5 +109,5 @@ local-first, sync и optional p2p.
 
 - `docs/dev-bootstrap/devbootstrap-v1-operations.md` — эксплуатационная памятка devbootstrap v1: quick commands, command responsibilities, report artifact contract, timeout policy, failure handling rules and cleanup rules.
 
-- `docs/development/systemic-release-stabilization-manifesto-v1.md` — манифест радикальной стабилизации release/dev lifecycle v2: Deep Release Autopsy, Problem Ledger, PostgreSQL authority ladder, controlled mutators и план тематической цепочки ремедиаций вместо бесконечного fix-after-fail цикла.
+- `docs/development/systemic-release-stabilization-manifesto-v1.md` — манифест радикальной стабилизации release/dev lifecycle v2: Deep Release Autopsy, Problem Ledger, PostgreSQL authority ladder, controlled mutators, отдельную классификацию transport-failures и план тематической цепочки ремедиаций вместо бесконечного fix-after-fail цикла.
 
