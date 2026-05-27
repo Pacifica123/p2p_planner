@@ -357,14 +357,16 @@ def command_for_subprocess(command: list[str], *, resolved_path: str | None = No
         return command
     resolved_command = [resolved, *command[1:]]
     if effective_platform == "nt" and resolved.lower().endswith((".cmd", ".bat")):
-        # Batch launchers such as npm.CMD are not regular executables on Windows.
-        # Run them through cmd.exe with the same conservative form that works
-        # reliably from PowerShell: cmd.exe /d /c call "C:\Program Files\...".
-        # Do not add `/s`: with a quoted .cmd path containing spaces, cmd's /s
-        # quote rewriting can make diagnostics fail even though `npm --version`
-        # works in the user's interactive shell.
-        cmdline = "call " + subprocess.list2cmdline([resolved, *command[1:]])
-        return ["cmd.exe", "/d", "/c", cmdline]
+        # Run batch launchers through cmd.exe, but keep `call`, the resolved
+        # .cmd/.bat path, and the user arguments as separate argv entries.
+        # Python will quote only the path-with-spaces in the final Windows
+        # command line:
+        #   cmd.exe /d /c call "C:\Program Files\nodejs\npm.CMD" --version
+        # Passing one pre-quoted `/c` string would force Python to escape the
+        # inner quotes as backslash-quote; cmd.exe does not treat backslash as a
+        # quote escape there, so the quotes can become part of the executable
+        # name and npm.cmd is reported as missing.
+        return ["cmd.exe", "/d", "/c", "call", resolved, *command[1:]]
     return resolved_command
 
 
@@ -9548,15 +9550,15 @@ def case_self_check_windows_command_resolution() -> str:
         resolved_path=r"C:\Program Files\nodejs\npm.CMD",
         platform_name="nt",
     )
-    assert command[:3] == ["cmd.exe", "/d", "/c"], command
+    assert command[:4] == ["cmd.exe", "/d", "/c", "call"], command
     assert "/s" not in command, command
-    assert command[3].startswith("call "), command
-    assert r'"C:\Program Files\nodejs\npm.CMD"' in command[3], command
-    assert command[3].endswith("--version"), command
+    assert command[4] == r"C:\Program Files\nodejs\npm.CMD", command
+    assert command[5:] == ["--version"], command
     display = command_as_text(command)
-    assert r'"call \"C:\Program Files\nodejs\npm.CMD\" --version"' in display, display
+    assert "/s" not in display, display
+    assert r'cmd.exe /d /c call "C:\Program Files\nodejs\npm.CMD" --version' in display, display
     direct = command_for_subprocess(["node", "--version"], resolved_path=r"C:\Program Files\nodejs\node.exe", platform_name="nt")
-    assert direct[0].endswith("node.exe"), direct
+    assert direct == [r"C:\Program Files\nodejs\node.exe", "--version"], direct
     return "Windows .cmd command resolution checked"
 
 
