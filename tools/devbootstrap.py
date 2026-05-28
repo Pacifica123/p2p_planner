@@ -72,6 +72,21 @@ DEFAULT_PORTS = {
     "backend": 18080,
     "frontend": 5173,
 }
+
+RELEASE_GATES_MANAGED_BACKEND_GATE_NAMES = {
+    "backend_python_smoke_first",
+    "backend_python_smoke_second",
+    "browser_real_backend_path",
+    "frontend_browser_smoke",
+    "frontend_uiux_boot",
+    "frontend_uiux_real_backend_core_flow",
+}
+RELEASE_GATES_MANAGED_FRONTEND_GATE_NAMES = {
+    "frontend_browser_smoke",
+    "browser_real_backend_path",
+    "frontend_uiux_boot",
+    "frontend_uiux_real_backend_core_flow",
+}
 REQUIRED_PROJECT_PATHS = [
     "backend",
     "frontend",
@@ -11273,8 +11288,8 @@ def command_release_gates(args: argparse.Namespace) -> int:
     managed_frontend: ReleaseGatesManagedRuntimeProcess | None = None
     managed_backend_start_failed: str | None = None
     managed_frontend_start_failed: str | None = None
-    managed_backend_gate_names = {"backend_python_smoke_first", "backend_python_smoke_second", "browser_real_backend_path", "frontend_browser_smoke", "frontend_uiux_real_backend_core_flow"}
-    managed_frontend_gate_names = {"frontend_browser_smoke", "browser_real_backend_path", "frontend_uiux_real_backend_core_flow"}
+    managed_backend_gate_names = RELEASE_GATES_MANAGED_BACKEND_GATE_NAMES
+    managed_frontend_gate_names = RELEASE_GATES_MANAGED_FRONTEND_GATE_NAMES
     frontend_prepare_downstream_gate_names = {
         "frontend_build",
         "frontend_unit_integration",
@@ -12394,6 +12409,13 @@ def case_self_check_managed_runtime_specs() -> str:
     return "release-gates managed runtime specs carry dynamic URL env overrides"
 
 
+def case_self_check_managed_runtime_uiux_boot_starts_frontend() -> str:
+    assert "frontend_uiux_boot" in RELEASE_GATES_MANAGED_BACKEND_GATE_NAMES
+    assert "frontend_uiux_boot" in RELEASE_GATES_MANAGED_FRONTEND_GATE_NAMES
+    assert "frontend_uiux_mocked_core_flow" not in RELEASE_GATES_MANAGED_FRONTEND_GATE_NAMES
+    return "managed-runtime UIX boot gate starts managed backend/frontend before opening managed URL"
+
+
 def case_self_check_managed_runtime_dynamic_cors_origin() -> str:
     with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-cors-") as tmp:
         root = Path(tmp)
@@ -12806,6 +12828,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "managed_test_db_url_derivation", case_self_check_managed_test_db_url_derivation)
     self_check_case(result, "managed_test_db_specs", case_self_check_managed_test_db_specs)
     self_check_case(result, "managed_runtime_specs", case_self_check_managed_runtime_specs)
+    self_check_case(result, "managed_runtime_uiux_boot_starts_frontend", case_self_check_managed_runtime_uiux_boot_starts_frontend)
     self_check_case(result, "managed_runtime_dynamic_cors_origin", case_self_check_managed_runtime_dynamic_cors_origin)
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
     self_check_case(result, "frontend_prepare_modes", case_self_check_frontend_prepare_modes)
