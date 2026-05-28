@@ -60,7 +60,7 @@ export function WorkspacesPage() {
   }
 
   return (
-    <div className="page-shell">
+    <div className="page-shell" data-testid="workspace-list-page">
       <section className="page-header">
         <div>
           <h2>Workspace list / switcher</h2>
@@ -76,17 +76,17 @@ export function WorkspacesPage() {
           </div>
         </div>
 
-        <form className="inline-form" onSubmit={handleCreate}>
+        <form className="inline-form" data-testid="workspace-create-form" onSubmit={handleCreate}>
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <TextField label="Название" value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, Personal" />
+            <TextField data-testid="workspace-name-input" label="Название" value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, Personal" />
             <SelectField label="Visibility" value={visibility} onChange={(event) => setVisibility(event.target.value as 'private' | 'shared')}>
               <option value="private">private</option>
               <option value="shared">shared</option>
             </SelectField>
           </div>
-          <TextAreaField label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Короткое описание workspace" />
+          <TextAreaField data-testid="workspace-description-input" label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Короткое описание workspace" />
           <div className="inline-actions">
-            <Button type="submit" variant="primary" disabled={createWorkspaceMutation.isPending}>
+            <Button data-testid="workspace-create-submit" type="submit" variant="primary" disabled={createWorkspaceMutation.isPending}>
               {createWorkspaceMutation.isPending ? 'Создаем…' : '＋ Workspace'}
             </Button>
           </div>
@@ -109,7 +109,7 @@ export function WorkspacesPage() {
         workspacesQuery.data?.items.length ? (
           <div className="grid grid--cards">
             {workspacesQuery.data.items.map((workspace) => (
-              <article key={workspace.id} className="workspace-card">
+              <article key={workspace.id} className="workspace-card" data-testid="workspace-card">
                 <div className="entity-header">
                   <div>
                     <h3>{workspace.name}</h3>
@@ -127,7 +127,7 @@ export function WorkspacesPage() {
                 </div>
 
                 <div className="page-header__actions" style={{ marginTop: 16 }}>
-                  <Button variant="primary" onClick={() => navigate(paths.workspaceBoards(workspace.id))}>
+                  <Button data-testid="workspace-open-boards" variant="primary" onClick={() => navigate(paths.workspaceBoards(workspace.id))}>
                     Открыть boards
                   </Button>
                   <Button

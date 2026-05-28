@@ -9,7 +9,7 @@ interface ErrorStateProps {
 
 export function ErrorState({ title, description, compact = false, onRetry }: ErrorStateProps) {
   return (
-    <div className={`error-state ${compact ? 'error-state--compact' : ''}`}>
+    <div className={`error-state ${compact ? 'error-state--compact' : ''}`} data-testid="error-state">
       <strong>{title}</strong>
       {description ? <p className="muted">{description}</p> : null}
       {onRetry ? <Button iconOnly onClick={onRetry} title="Повторить" aria-label="Повторить">↻</Button> : null}

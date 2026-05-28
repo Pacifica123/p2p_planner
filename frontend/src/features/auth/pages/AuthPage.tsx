@@ -46,13 +46,13 @@ export function AuthPage() {
   }
 
   return (
-    <div className="content-stack" style={{ maxWidth: 560, margin: '40px auto' }}>
+    <div className="content-stack" data-testid="auth-page" style={{ maxWidth: 560, margin: '40px auto' }}>
       <Panel title="Security baseline auth" description="Веб-клиент больше не опирается на X-User-Id как основной режим. Вход идет через server session + refresh cookie + short-lived bearer.">
         <div className="toolbar">
-          <Button variant={mode === 'sign_in' ? 'primary' : 'default'} onClick={() => setMode('sign_in')}>
+          <Button data-testid="auth-mode-sign-in" variant={mode === 'sign_in' ? 'primary' : 'default'} onClick={() => setMode('sign_in')}>
             Sign in
           </Button>
-          <Button variant={mode === 'sign_up' ? 'primary' : 'default'} onClick={() => setMode('sign_up')}>
+          <Button data-testid="auth-mode-sign-up" variant={mode === 'sign_up' ? 'primary' : 'default'} onClick={() => setMode('sign_up')}>
             Sign up
           </Button>
         </div>
@@ -60,16 +60,16 @@ export function AuthPage() {
 
       <Panel title={title} description="После входа access token хранится только в памяти вкладки, а refresh cookie ротируется сервером.">
         <form className="stack" onSubmit={onSubmit}>
-          <TextField label="Email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-          <TextField label="Password" type="password" autoComplete={mode === 'sign_in' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} required />
+          <TextField data-testid="auth-email" label="Email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+          <TextField data-testid="auth-password" label="Password" type="password" autoComplete={mode === 'sign_in' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} required />
           {mode === 'sign_up' ? (
-            <TextField label="Display name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
+            <TextField data-testid="auth-display-name" label="Display name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
           ) : null}
 
-          {submitError ? <p className="error-text">{submitError}</p> : null}
+          {submitError ? <p className="error-text" data-testid="auth-error">{submitError}</p> : null}
 
           <div className="toolbar">
-            <Button type="submit" variant="primary" disabled={isSubmitting}>
+            <Button data-testid="auth-submit" type="submit" variant="primary" disabled={isSubmitting}>
               {isSubmitting ? 'Working…' : mode === 'sign_in' ? 'Sign in' : 'Create account'}
             </Button>
           </div>

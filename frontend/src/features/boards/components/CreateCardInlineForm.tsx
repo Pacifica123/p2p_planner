@@ -35,12 +35,13 @@ export function CreateCardInlineForm({ boardId, columnId }: CreateCardInlineForm
     <form className="inline-form" onSubmit={handleSubmit}>
       <div className="inline-form__row inline-form__row--tight">
         <input
+          data-testid="card-create-input"
           className="field__input"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Новая карточка"
         />
-        <Button type="submit" iconOnly disabled={createCardMutation.isPending} title="Добавить карточку" aria-label="Добавить карточку">
+        <Button data-testid="card-create-submit" type="submit" iconOnly disabled={createCardMutation.isPending} title="Добавить карточку" aria-label="Добавить карточку">
           {createCardMutation.isPending || localFirst?.isFlushing ? '…' : '＋'}
         </Button>
       </div>

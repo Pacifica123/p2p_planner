@@ -4721,7 +4721,7 @@ RELEASE_GATES_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "start_db_if_needed": False,
         "dump_test_db_on_failure": False,
         "prepare_deps": DEFAULT_FRONTEND_PREPARE_DEP_MODE,
-        "install_playwright_browsers": True,
+        "install_playwright_browsers": False,
         "include_real_backend_browser": False,
         "include_clean_machine": False,
         "clean_machine_profile": DEFAULT_CLEAN_MACHINE_PROFILE,
@@ -4750,7 +4750,7 @@ RELEASE_GATES_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "dump_test_db_on_failure": True,
         "prepare_deps": "never",
         "install_playwright_browsers": False,
-        "include_real_backend_browser": True,
+        "include_real_backend_browser": False,
         "include_clean_machine": False,
         "clean_machine_profile": DEFAULT_CLEAN_MACHINE_PROFILE,
         "clean_machine_retention": DEFAULT_CLEAN_MACHINE_RETENTION,
@@ -4763,8 +4763,8 @@ RELEASE_GATES_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "start_db_if_needed": False,
         "dump_test_db_on_failure": True,
         "prepare_deps": DEFAULT_FRONTEND_PREPARE_DEP_MODE,
-        "install_playwright_browsers": True,
-        "include_real_backend_browser": True,
+        "install_playwright_browsers": False,
+        "include_real_backend_browser": False,
         "include_clean_machine": True,
         "clean_machine_profile": DEFAULT_CLEAN_MACHINE_PROFILE,
         "clean_machine_retention": DEFAULT_CLEAN_MACHINE_RETENTION,
@@ -4841,6 +4841,14 @@ def classify_gate_output(name: str, stdout: str, stderr: str, error: str | None,
         if "test result:" in lower and rust_test_output_has_ignored_tests(output):
             return "partial_pass", "critical_tests_ignored", "command exited 0, but one or more Rust tests were ignored"
         return "ok", "ok", "gate completed"
+    if name.startswith("frontend_uiux_"):
+        if returncode == 2 or '"status": "skipped_prerequisite"' in output:
+            classification = "REL-ENV" if "REL-ENV" in output or "browser" in lower else "REL-UIUX-PREREQ"
+            return "skipped_prerequisite", classification, "UIX prerequisite is unavailable; see evidence report"
+        for code in ["REL-SEC", "REL-FE", "REL-BE", "REL-DB", "REL-PROC", "REL-UIUX"]:
+            if code in output:
+                return "failed", code, "UIX evidence gate failed; see report"
+        return "failed", "REL-UIUX", "UIX evidence gate failed; see report"
     if name == "frontend_prepare_dependencies" and npm_missing_in_output(lower):
         return "infra_failed", "frontend_dependencies_missing", "npm is unavailable or could not be launched for frontend dependency preparation"
     if "playwright" in lower and playwright_browser_prerequisite_missing_in_output(lower):
@@ -6315,12 +6323,14 @@ def release_gate_frontend_dependency_skip_spec(
     reason: str,
     details: dict[str, Any],
     timeout_seconds: int = 600,
+    required: bool = True,
 ) -> GateSpec:
     return GateSpec(
         name=name,
         cwd="frontend",
         command=command,
         description=description,
+        required=required,
         timeout_seconds=timeout_seconds,
         skip_status="infra_failed",
         skip_classification="frontend_dependencies_missing",
@@ -7329,6 +7339,151 @@ def build_release_gate_specs(
             ]
         )
 
+    uiux_run_id = smoke_run_id or "manual-release-gates"
+    uiux_root = f".dev-bootstrap/runs/{uiux_run_id}/uiux-evidence"
+    specs.append(
+        GateSpec(
+            name="frontend_uiux_validate_scenarios",
+            cwd=".",
+            command=[sys.executable, "-B", "tools/uiux_evidence.py", "validate-scenarios", "--report-dir", f"{uiux_root}/validate-scenarios", "--json"],
+            description="Validate custom UI/UX Evidence Runner scenario JSON and frontend data-testid marker contract.",
+            timeout_seconds=120,
+            details={"evidenceDir": f"{uiux_root}/validate-scenarios", "runner": "tools/uiux_evidence.py"},
+        )
+    )
+    specs.append(
+        GateSpec(
+            name="frontend_uiux_browser_discovery",
+            cwd=".",
+            command=[sys.executable, "-B", "tools/uiux_evidence.py", "discover-browser", "--report-dir", f"{uiux_root}/browser-discovery", "--json"],
+            description="Discover a system Chromium-compatible browser without downloading Playwright browser revisions.",
+            timeout_seconds=120,
+            details={"evidenceDir": f"{uiux_root}/browser-discovery", "runner": "tools/uiux_evidence.py", "downloadsBrowser": False},
+        )
+    )
+
+    uiux_boot_command = [sys.executable, "-B", "tools/uiux_evidence.py", "boot", "--report-dir", f"{uiux_root}/boot", "--json"]
+    uiux_boot_details: dict[str, Any] = {"evidenceDir": f"{uiux_root}/boot", "runner": "tools/uiux_evidence.py", "managedRuntime": managed_runtime_requested}
+    if managed_frontend_url:
+        uiux_boot_command.extend(["--base-url", managed_frontend_url.rstrip("/") + "/"])
+        uiux_boot_details["frontendUrl"] = managed_frontend_url.rstrip("/") + "/"
+        if managed_backend_api_base_url:
+            uiux_boot_command.extend(["--api-base-url", managed_backend_api_base_url.rstrip("/")])
+            uiux_boot_details["apiBaseUrl"] = managed_backend_api_base_url.rstrip("/")
+    else:
+        uiux_boot_command.append("--start-frontend")
+        uiux_boot_details["startsOwnedFrontend"] = True
+    uiux_mocked_command = [sys.executable, "-B", "tools/uiux_evidence.py", "scenario", "--name", "mocked-core-flow", "--start-frontend", "--report-dir", f"{uiux_root}/mocked-core-flow", "--json"]
+    uiux_mocked_details: dict[str, Any] = {"evidenceDir": f"{uiux_root}/mocked-core-flow", "runner": "tools/uiux_evidence.py", "startsOwnedFrontend": True, "usesMockApi": True}
+    if frontend_deps_ready or dry_run:
+        if dry_run and not frontend_deps_ready:
+            uiux_boot_details["dryRunPrerequisiteBypassed"] = True
+            uiux_mocked_details["dryRunPrerequisiteBypassed"] = True
+        specs.append(
+            GateSpec(
+                name="frontend_uiux_boot",
+                cwd=".",
+                command=uiux_boot_command,
+                description="Open the web UI and capture DOM/console/storage/network boot evidence through the custom UIX runner.",
+                timeout_seconds=300,
+                details=uiux_boot_details,
+            )
+        )
+        specs.append(
+            GateSpec(
+                name="frontend_uiux_mocked_core_flow",
+                cwd=".",
+                command=uiux_mocked_command,
+                description="Run deterministic workspace→board→column→card UI flow against a runner-owned mock API without Playwright.",
+                timeout_seconds=420,
+                details=uiux_mocked_details,
+            )
+        )
+    else:
+        dependency_reason = frontend_deps_reason or "frontend dependencies are missing or stale; run `python tools/devbootstrap.py release-gates --prepare-deps` before UIX browser gates."
+        specs.append(
+            GateSpec(
+                name="frontend_uiux_boot",
+                cwd=".",
+                command=uiux_boot_command,
+                description="Open the web UI and capture DOM/console/storage/network boot evidence through the custom UIX runner.",
+                skip_status="infra_failed",
+                skip_classification="frontend_dependencies_missing",
+                skip_reason=dependency_reason,
+                details=uiux_boot_details,
+            )
+        )
+        specs.append(
+            GateSpec(
+                name="frontend_uiux_mocked_core_flow",
+                cwd=".",
+                command=uiux_mocked_command,
+                description="Run deterministic workspace→board→column→card UI flow against a runner-owned mock API without Playwright.",
+                skip_status="infra_failed",
+                skip_classification="frontend_dependencies_missing",
+                skip_reason=dependency_reason,
+                details=uiux_mocked_details,
+            )
+        )
+
+    uiux_real_allowed = bool(managed_runtime_requested and managed_backend_api_base_url and managed_frontend_url and managed_test_db_url)
+    uiux_real_details: dict[str, Any] = {
+        "evidenceDir": f"{uiux_root}/real-backend-core-flow",
+        "runner": "tools/uiux_evidence.py",
+        "managedRuntime": managed_runtime_requested,
+        "managedTestDb": bool(managed_test_db_url),
+        "requiresSafeDatabase": True,
+    }
+    uiux_real_command = [sys.executable, "-B", "tools/uiux_evidence.py", "scenario", "--name", "real-backend-core-flow", "--report-dir", f"{uiux_root}/real-backend-core-flow", "--json"]
+    if managed_frontend_url:
+        uiux_real_command.extend(["--base-url", managed_frontend_url.rstrip("/") + "/"])
+        uiux_real_details["frontendUrl"] = managed_frontend_url.rstrip("/") + "/"
+    if managed_backend_api_base_url:
+        uiux_real_command.extend(["--api-base-url", managed_backend_api_base_url.rstrip("/")])
+        uiux_real_details["apiBaseUrl"] = managed_backend_api_base_url.rstrip("/")
+    if managed_test_db_url:
+        uiux_real_details["maskedDatabaseUrl"] = mask_database_url(managed_test_db_url)
+    if uiux_real_allowed or dry_run:
+        if dry_run and not uiux_real_allowed:
+            uiux_real_details["dryRunPrerequisiteBypassed"] = True
+        specs.append(
+            GateSpec(
+                name="frontend_uiux_real_backend_core_flow",
+                cwd=".",
+                command=uiux_real_command,
+                description="Run real backend workspace→board→column→card UI evidence against managed frontend/backend/test DB.",
+                timeout_seconds=600,
+                details=uiux_real_details,
+            )
+        )
+    else:
+        uiux_real_required = True
+        uiux_real_skip_status = "skipped_prerequisite"
+        if not managed_runtime_requested:
+            uiux_real_required = False
+            uiux_real_skip_status = "skipped_optional"
+            uiux_real_reason = "real-backend UIX flow requires --managed-runtime so devbootstrap owns frontend/backend process state."
+            uiux_real_classification = "managed_runtime_required"
+        elif not managed_test_db_url:
+            uiux_real_reason = "real-backend UIX flow requires a managed or explicit safe test database."
+            uiux_real_classification = "managed_test_db_unavailable" if managed_test_db_requested else "real_backend_uiux_write_guard"
+        else:
+            uiux_real_reason = "managed frontend/backend URLs are unavailable for real-backend UIX flow."
+            uiux_real_classification = "managed_runtime_unavailable"
+        specs.append(
+            GateSpec(
+                name="frontend_uiux_real_backend_core_flow",
+                cwd=".",
+                command=uiux_real_command,
+                required=uiux_real_required,
+                description="Run real backend workspace→board→column→card UI evidence against managed frontend/backend/test DB.",
+                skip_status=uiux_real_skip_status,
+                skip_reason=uiux_real_reason,
+                skip_classification=uiux_real_classification,
+                details=uiux_real_details,
+            )
+        )
+
     package_data, package_error = read_frontend_package(project_root)
     scripts = frontend_scripts_from_package(package_data) if not package_error else {}
     playwright_dependency_present = bool(package_data) and frontend_package_has_dependency(package_data, "@playwright/test")
@@ -7362,9 +7517,10 @@ def build_release_gate_specs(
             release_gate_frontend_dependency_skip_spec(
                 name="frontend_browser_smoke",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke.",
+                description="Run legacy optional Playwright browser smoke during UIX transition.",
                 reason=frontend_deps_reason or "frontend dependencies are missing or stale; run `python tools/devbootstrap.py prepare-frontend --force-install` before release-gates.",
                 details=browser_details,
+                required=False,
             )
         )
     elif package_error:
@@ -7373,7 +7529,8 @@ def build_release_gate_specs(
                 name="frontend_browser_smoke",
                 cwd="frontend",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke.",
+                required=False,
+                description="Run legacy optional Playwright browser smoke during UIX transition.",
                 skip_status="infra_failed",
                 skip_classification="frontend_package_invalid",
                 skip_reason=package_error,
@@ -7386,7 +7543,8 @@ def build_release_gate_specs(
                 name="frontend_browser_smoke",
                 cwd="frontend",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke.",
+                required=False,
+                description="Run legacy optional Playwright browser smoke during UIX transition.",
                 skip_status="failed",
                 skip_classification="browser_smoke_script_missing",
                 skip_reason="frontend/package.json does not define scripts.test:browser",
@@ -7399,7 +7557,8 @@ def build_release_gate_specs(
                 name="frontend_browser_smoke",
                 cwd="frontend",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke.",
+                required=False,
+                description="Run legacy optional Playwright browser smoke during UIX transition.",
                 skip_status="infra_failed",
                 skip_classification="browser_smoke_prerequisite",
                 skip_reason="Playwright package is not declared in frontend/package.json; add @playwright/test before running browser smoke.",
@@ -7412,7 +7571,8 @@ def build_release_gate_specs(
                 name="frontend_browser_smoke",
                 cwd="frontend",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke.",
+                required=False,
+                description="Run legacy optional Playwright browser smoke during UIX transition.",
                 skip_status="infra_failed",
                 skip_classification="browser_smoke_prerequisite",
                 skip_reason="Playwright package is not installed in frontend/node_modules; run prepare-frontend or npm ci first.",
@@ -7431,6 +7591,7 @@ def build_release_gate_specs(
                 name="playwright_install",
                 cwd="frontend",
                 command=["npx", "playwright", "install", "chromium"],
+                required=False,
                 description="Ensure the Playwright Chromium browser revision required by the installed @playwright/test package is present.",
                 timeout_seconds=900,
                 details=install_details,
@@ -7443,7 +7604,8 @@ def build_release_gate_specs(
                 name="frontend_browser_smoke",
                 cwd="frontend",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke after explicit browser install/ensure attempt.",
+                required=False,
+                description="Run legacy optional Playwright browser smoke after explicit browser install/ensure attempt.",
                 timeout_seconds=600,
                 env_extra=browser_env,
                 details=browser_after_install_details,
@@ -7456,7 +7618,8 @@ def build_release_gate_specs(
                 name="frontend_browser_smoke",
                 cwd="frontend",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke.",
+                required=False,
+                description="Run legacy optional Playwright browser smoke during UIX transition.",
                 timeout_seconds=600,
                 env_extra=browser_env,
                 details=browser_details,
@@ -7468,7 +7631,8 @@ def build_release_gate_specs(
                 name="frontend_browser_smoke",
                 cwd="frontend",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke.",
+                required=False,
+                description="Run legacy optional Playwright browser smoke during UIX transition.",
                 skip_status="infra_failed",
                 skip_classification="browser_smoke_prerequisite",
                 skip_reason="Playwright Chromium browser executable is missing; rerun with --install-playwright-browsers or run npx playwright install manually.",
@@ -7481,7 +7645,8 @@ def build_release_gate_specs(
                 name="frontend_browser_smoke",
                 cwd="frontend",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke.",
+                required=False,
+                description="Run legacy optional Playwright browser smoke during UIX transition.",
                 timeout_seconds=600,
                 env_extra=browser_env,
                 details=browser_details,
@@ -7517,9 +7682,10 @@ def build_release_gate_specs(
             release_gate_frontend_dependency_skip_spec(
                 name="browser_real_backend_path",
                 command=["npm", "run", "test:browser:real-backend"],
-                description="Run the dedicated Playwright browser path against a live backend without page.route API mocks.",
+                description="Run legacy optional Playwright browser path against a live backend without page.route API mocks.",
                 reason=frontend_deps_reason or "frontend dependencies are missing or stale; run `python tools/devbootstrap.py prepare-frontend --install-mode=stale` before real-backend browser gates.",
                 details=real_backend_details,
+                required=False,
             )
         )
     elif real_backend_spec_project_path.exists() and (include_real_backend_browser or dry_run) and (real_backend_allowed or dry_run):
@@ -7530,7 +7696,8 @@ def build_release_gate_specs(
                 name="browser_real_backend_path",
                 cwd="frontend",
                 command=["npm", "run", "test:browser:real-backend"],
-                description="Run the dedicated Playwright browser path against a live backend without page.route API mocks.",
+                required=False,
+                description="Run legacy optional Playwright browser path against a live backend without page.route API mocks.",
                 timeout_seconds=900,
                 env_extra=browser_env,
                 details=real_backend_details,
@@ -7542,7 +7709,8 @@ def build_release_gate_specs(
                 name="browser_real_backend_path",
                 cwd="frontend",
                 command=["npm", "run", "test:browser:real-backend"],
-                description="Dedicated real-backend Playwright path exists but is opt-in because it writes through the live backend.",
+                required=False,
+                description="Legacy real-backend Playwright path exists but is opt-in during UIX transition.",
                 skip_reason="Pass --include-real-backend-browser plus TEST_DATABASE_URL or --allow-dev-db-write to execute this write-capable browser gate.",
                 skip_classification="real_backend_browser_opt_in_required",
                 details=real_backend_details,
@@ -7554,7 +7722,8 @@ def build_release_gate_specs(
                 name="browser_real_backend_path",
                 cwd="frontend",
                 command=["npm", "run", "test:browser:real-backend"],
-                description="Dedicated real-backend Playwright path exists but cannot run without explicit write permission.",
+                required=False,
+                description="Legacy real-backend Playwright path exists but cannot run without explicit write permission.",
                 skip_reason=real_backend_reason,
                 skip_classification="managed_test_db_unavailable" if managed_test_db_requested else "real_backend_browser_write_guard",
                 details=real_backend_details,
@@ -7566,7 +7735,8 @@ def build_release_gate_specs(
                 name="browser_real_backend_path",
                 cwd="frontend",
                 command=["npm", "run", "test:browser:real-backend"],
-                description="Dedicated real-backend Playwright path without API mocks.",
+                required=False,
+                description="Legacy dedicated real-backend Playwright path without API mocks.",
                 not_implemented_reason="Dedicated real-backend browser spec is missing; mocked browser smoke must not close this checklist item.",
                 details=real_backend_details,
             )
@@ -8527,8 +8697,12 @@ def release_gates_rerun_commands(result: ReleaseGatesResult, blockers: list[dict
         commands.append("python tools/devbootstrap.py release-gates")
     if any(code in codes for code in {"frontend_dependencies_missing", "frontend_dependencies_stale", "frontend_prepare_dependencies_failed"}):
         commands.append("python tools/devbootstrap.py prepare-frontend --install-mode=stale")
-    if any(code in codes for code in {"frontend_dependencies_missing", "frontend_dependencies_stale", "frontend_prepare_dependencies_failed", "browser_smoke_prerequisite"}):
+    if any(code in codes for code in {"frontend_dependencies_missing", "frontend_dependencies_stale", "frontend_prepare_dependencies_failed"}):
+        commands.append("python tools/devbootstrap.py release-gates --prepare-deps")
+    if "browser_smoke_prerequisite" in codes:
         commands.append("python tools/devbootstrap.py release-gates --prepare-deps --install-playwright-browsers")
+    if any(code in codes for code in {"REL-ENV", "REL-UIUX-PREREQ"}):
+        commands.append("python -B tools/uiux_evidence.py discover-browser")
     if any(code in codes for code in {"db_test_prerequisite_missing", "smoke_db_write_guard", "real_backend_browser_write_guard", "managed_runtime_db_unavailable"}):
         commands.append("python tools/devbootstrap.py release-gates --managed-test-db --managed-runtime")
     if "real_backend_browser_opt_in_required" in codes:
@@ -8601,6 +8775,14 @@ def release_gates_problem_id_for_code(code: str) -> str | None:
         "real_backend_browser_opt_in_required": "REL-BROWSER-001",
         "browser_smoke_prerequisite": "REL-BROWSER-002",
         "playwright_install_failed": "REL-BROWSER-002",
+        "REL-UIUX": "REL-UIUX-001",
+        "REL-FE": "REL-UIUX-001",
+        "REL-BE": "REL-UIUX-001",
+        "REL-DB": "REL-DB-001",
+        "REL-ENV": "REL-UIUX-PREREQ",
+        "REL-SEC": "REL-SEC-001",
+        "real_backend_uiux_write_guard": "REL-UIUX-001",
+        "managed_runtime_required": "REL-PROC-001",
         "runtime_unreachable": "REL-PROC-001",
         "frontend_port_conflict": "REL-PORT-001",
         "clean_machine_optional_not_requested": "REL-CLEAN-001",
@@ -8617,6 +8799,7 @@ def release_gates_problem_id_for_code(code: str) -> str | None:
     if code in exact:
         return exact[code]
     prefix_map = [
+        (("frontend_uiux_",), "REL-UIUX-001"),
         (("frontend_dependencies_", "frontend_prepare_", "frontend_lockfile_", "dependency_network_"), "REL-FE-001"),
         (("managed_test_db_", "postgres_", "db_capability_probe_"), "REL-DB-002"),
         (("managed_runtime_db_",), "REL-DB-001"),
@@ -11009,12 +11192,15 @@ def command_release_gates(args: argparse.Namespace) -> int:
     managed_frontend: ReleaseGatesManagedRuntimeProcess | None = None
     managed_backend_start_failed: str | None = None
     managed_frontend_start_failed: str | None = None
-    managed_backend_gate_names = {"backend_python_smoke_first", "backend_python_smoke_second", "browser_real_backend_path", "frontend_browser_smoke"}
-    managed_frontend_gate_names = {"frontend_browser_smoke", "browser_real_backend_path"}
+    managed_backend_gate_names = {"backend_python_smoke_first", "backend_python_smoke_second", "browser_real_backend_path", "frontend_browser_smoke", "frontend_uiux_real_backend_core_flow"}
+    managed_frontend_gate_names = {"frontend_browser_smoke", "browser_real_backend_path", "frontend_uiux_real_backend_core_flow"}
     frontend_prepare_downstream_gate_names = {
         "frontend_build",
         "frontend_unit_integration",
         "frontend_browser_smoke",
+        "frontend_uiux_boot",
+        "frontend_uiux_mocked_core_flow",
+        "frontend_uiux_real_backend_core_flow",
         "playwright_install",
         "browser_real_backend_path",
     }
@@ -12115,11 +12301,13 @@ def case_self_check_managed_runtime_specs() -> str:
         )
         by_name = {spec.name: spec for spec in specs}
     smoke_spec = by_name["backend_python_smoke_first"]
-    browser_spec = by_name["frontend_browser_smoke"]
+    uiux_spec = by_name["frontend_uiux_real_backend_core_flow"]
     assert smoke_spec.env_extra["BASE_URL"] == api_base
-    assert browser_spec.env_extra["VITE_API_BASE_URL"] == api_base
-    assert browser_spec.env_extra["PLAYWRIGHT_BASE_URL"] == frontend_url.rstrip("/")
-    assert browser_spec.env_extra["PLAYWRIGHT_FRONTEND_PORT"] == "39002"
+    assert "--api-base-url" in uiux_spec.command
+    assert api_base in uiux_spec.command
+    assert "--base-url" in uiux_spec.command
+    assert frontend_url in uiux_spec.command
+    assert by_name["frontend_browser_smoke"].required is False
     return "release-gates managed runtime specs carry dynamic URL env overrides"
 
 
@@ -12164,7 +12352,7 @@ def case_self_check_release_gates_frontend_dependency_preflight() -> str:
         (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
         specs = build_release_gate_specs(root)
         by_name = {spec.name: spec for spec in specs}
-    for name in ["frontend_build", "frontend_unit_integration", "frontend_browser_smoke"]:
+    for name in ["frontend_build", "frontend_unit_integration", "frontend_uiux_boot", "frontend_uiux_mocked_core_flow", "frontend_browser_smoke"]:
         spec = by_name[name]
         assert spec.skip_status == "infra_failed", name
         assert spec.skip_classification == "frontend_dependencies_missing", name
@@ -12222,11 +12410,11 @@ def case_self_check_release_gates_profiles_and_consent() -> str:
     assert args.managed_test_db is True
     assert args.managed_runtime is True
     assert args.prepare_deps == DEFAULT_FRONTEND_PREPARE_DEP_MODE
-    assert args.install_playwright_browsers is True
+    assert args.install_playwright_browsers is False
     assert args.include_real_backend_browser is False
     assert plan.explicit_overrides["include_real_backend_browser"] is False
     allowed_categories = {item["category"] for item in plan.allowed_side_effects}
-    assert {"create-database", "write-database", "start-process", "network-download"}.issubset(allowed_categories)
+    assert {"create-database", "write-database", "start-process"}.issubset(allowed_categories)
     rendered = render_release_gates_profile_plan(plan)
     assert "Dry-run guarantee" in rendered
     assert "fallback npm install" in rendered

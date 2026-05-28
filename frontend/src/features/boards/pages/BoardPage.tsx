@@ -312,6 +312,7 @@ export function BoardPage() {
           <article
             draggable={!hasPendingCardMove}
             className={`card-tile ${boardAppearance?.cardPreviewMode === 'compact' ? 'card-tile--compact' : ''} ${isDraggedCard ? 'card-tile--ghosted' : ''}`}
+            data-testid="card-tile"
             onDragStart={(event) => handleCardDragStart(card, cards, event)}
             onDragOver={(event) => handleCardDragOver(columnId, currentVisibleIndex, event)}
             onDragEnd={handleCardDragEnd}
@@ -365,10 +366,10 @@ export function BoardPage() {
 
   return (
     <LocalFirstBoardProvider value={localFirst}>
-      <div className="page-shell">
+      <div className="page-shell" data-testid="board-page">
         <section className="page-header">
         <div>
-          <h2>{localFirst.board?.name || 'Board screen'}</h2>
+          <h2 data-testid="board-title">{localFirst.board?.name || 'Board screen'}</h2>
           <p className="muted">Рабочая kanban-поверхность с колонками, карточками, drag-and-drop и activity feed.</p>
         </div>
         <div className="page-header__actions">
@@ -418,14 +419,15 @@ export function BoardPage() {
                   title="Create column"
                   description="Быстрое добавление новой колонки без ухода со страницы."
                 >
-                  <form className="inline-form__row inline-form__row--stackable" onSubmit={handleCreateColumn}>
+                  <form className="inline-form__row inline-form__row--stackable" data-testid="column-create-form" onSubmit={handleCreateColumn}>
                     <TextField
+                      data-testid="column-name-input"
                       label="Название колонки"
                       value={newColumnName}
                       onChange={(event) => setNewColumnName(event.target.value)}
                       placeholder="Например, Todo"
                     />
-                    <Button type="submit" variant="primary" disabled={createColumnMutation.isPending}>
+                    <Button data-testid="column-create-submit" type="submit" variant="primary" disabled={createColumnMutation.isPending}>
                       {createColumnMutation.isPending ? 'Создаем…' : '＋ Колонка'}
                     </Button>
                   </form>
@@ -461,7 +463,7 @@ export function BoardPage() {
               )}
             </div>
 
-            <section className="panel board-sidebar-panel">
+            <section className="panel board-sidebar-panel" data-testid="activity-feed">
               <div className="entity-header">
                 <div>
                   <h3>Board activity</h3>

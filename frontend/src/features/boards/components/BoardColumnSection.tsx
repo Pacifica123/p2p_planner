@@ -33,6 +33,7 @@ export function BoardColumnSection({
   return (
     <section
       className={`column-card ${isDropTarget ? 'column-card--drop-target' : ''}`}
+      data-testid="board-column"
       onDragOver={(event) => onColumnDragOver(column.id, cardsWithoutDragged.length, event)}
       onDrop={onDrop}
     >

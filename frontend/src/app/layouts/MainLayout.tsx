@@ -14,8 +14,8 @@ export function MainLayout() {
   const boardsQuery = useBoardsQuery(workspaceId);
 
   return (
-    <div className="app-shell">
-      <aside className="app-sidebar">
+    <div className="app-shell" data-testid="app-shell">
+      <aside className="app-sidebar" data-testid="main-nav">
         <div className="app-sidebar__brand">
           <NavLink to={paths.home} className="brand-link">
             P2P Planner
@@ -108,7 +108,7 @@ export function MainLayout() {
           </div>
         </header>
 
-        <main className="content-area">
+        <main className="content-area" data-testid="route-outlet">
           <Outlet />
         </main>
       </div>

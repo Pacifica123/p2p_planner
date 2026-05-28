@@ -16,7 +16,7 @@ export function SyncBaselineStatus({ runtime }: SyncBaselineStatusProps) {
   if (runtime.lastPulledAt) parts.push(`pulled: ${new Date(runtime.lastPulledAt).toLocaleTimeString()}`);
 
   return (
-    <div className={`inline-banner sync-baseline-banner ${runtime.state === 'error' ? 'inline-banner--error' : ''}`}>
+    <div className={`inline-banner sync-baseline-banner ${runtime.state === 'error' ? 'inline-banner--error' : ''}`} data-testid="sync-baseline-status">
       <div>
         <strong>Sync baseline</strong>
         <span>{parts.join(' · ')}</span>

@@ -3,8 +3,10 @@ import { AppRouter } from '@/app/router';
 
 export default function App() {
   return (
-    <AppProviders>
-      <AppRouter />
-    </AppProviders>
+    <div data-testid="app-root">
+      <AppProviders>
+        <AppRouter />
+      </AppProviders>
+    </div>
   );
 }

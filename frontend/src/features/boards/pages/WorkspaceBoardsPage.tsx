@@ -59,7 +59,7 @@ export function WorkspaceBoardsPage() {
   }
 
   return (
-    <div className="page-shell">
+    <div className="page-shell" data-testid="workspace-boards-page">
       <section className="page-header">
         <div>
           <h2>{workspace?.name || 'Boards'}</h2>
@@ -77,13 +77,13 @@ export function WorkspaceBoardsPage() {
             <p className="muted">Минимальное создание kanban board внутри выбранного workspace.</p>
           </div>
         </div>
-        <form className="inline-form" onSubmit={handleCreate}>
+        <form className="inline-form" data-testid="board-create-form" onSubmit={handleCreate}>
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <TextField label="Название" value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, Roadmap" />
-            <TextAreaField label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Необязательное описание board" />
+            <TextField data-testid="board-name-input" label="Название" value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, Roadmap" />
+            <TextAreaField data-testid="board-description-input" label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Необязательное описание board" />
           </div>
           <div className="inline-actions">
-            <Button type="submit" variant="primary" disabled={createBoardMutation.isPending}>
+            <Button data-testid="board-create-submit" type="submit" variant="primary" disabled={createBoardMutation.isPending}>
               {createBoardMutation.isPending ? 'Создаем…' : '＋ Board'}
             </Button>
           </div>
@@ -97,7 +97,7 @@ export function WorkspaceBoardsPage() {
         boardsQuery.data?.items.length ? (
           <div className="grid grid--cards">
             {boardsQuery.data.items.map((board) => (
-              <article key={board.id} className="board-card">
+              <article key={board.id} className="board-card" data-testid="board-card">
                 <div className="entity-header">
                   <div>
                     <h3>{board.name}</h3>
@@ -114,7 +114,7 @@ export function WorkspaceBoardsPage() {
                 </div>
 
                 <div className="page-header__actions" style={{ marginTop: 16 }}>
-                  <Button variant="primary" onClick={() => navigate(paths.board(workspaceId, board.id))}>
+                  <Button data-testid="board-open" variant="primary" onClick={() => navigate(paths.board(workspaceId, board.id))}>
                     Открыть board
                   </Button>
                   <Button

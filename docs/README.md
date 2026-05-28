@@ -40,6 +40,7 @@
    - `development/release-stabilization-profile-side-effects-v1.md`
    - `development/custom-uiux-evidence-manifesto-v1.md`
    - `development/custom-uiux-evidence-runner-development-plan-v1.md`
+   - `development/custom-uiux-evidence-runner-implementation-v1.md`
    - `development/documentation-weight-budget-v1.md`
 
 ## Current decisions

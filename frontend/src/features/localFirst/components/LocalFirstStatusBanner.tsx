@@ -21,7 +21,7 @@ export function LocalFirstStatusBanner({ runtime }: LocalFirstStatusBannerProps)
   if (hasFailed) statusParts.push(`${runtime.failedCount} sync failed`);
 
   return (
-    <div className={`inline-banner local-first-banner ${hasFailed ? 'inline-banner--error' : ''}`}>
+    <div className={`inline-banner local-first-banner ${hasFailed ? 'inline-banner--error' : ''}`} data-testid="local-first-status">
       <div>
         <strong>Local-first runtime</strong>
         <span>{statusParts.join(' · ')}</span>
