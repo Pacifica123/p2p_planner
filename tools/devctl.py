@@ -37,6 +37,10 @@ PATCH_FILENAME_RE = re.compile(r"patch_(\d{8})_(\d{6})(?:_.*)?\.zip$", re.IGNORE
 BANNED_PATH_PARTS = {".git", ".devctl", "target", "node_modules"}
 ARCHIVE_EXCLUDED_PARTS = {
     ".git",
+    ".devctl",
+    ".dev-bootstrap",
+    ".venv",
+    ".pytest_cache",
     "target",
     "node_modules",
     "dist",

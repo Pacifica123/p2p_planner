@@ -1,158 +1,85 @@
 # Документация проекта P2P Planner
 
-Этот каталог фиксирует базовые архитектурные решения и контракты проекта
-универсального **web-first local-first** планировщика задач в стиле Kanban.
+Этот каталог фиксирует текущие архитектурные, продуктовые и release/dev решения проекта web-first local-first Kanban planner.
 
-Важно различать два слоя:
-- **v1 / MVP** — то, что обязуемся довести до первой рабочей версии;
-- **future-ready architecture** — то, к чему готовим модель данных, контракты и
-  границы модулей, не обещая это в первом релизе.
+## Как читать
 
-## Назначение документов
+1. Product baseline:
+   - `product/v1-execution-roadmap.md`
+   - `product/mvp-scope-v1.md`
+   - `product/beta-scope-v1.md`
+   - `product/v1-known-limitations.md`
+2. Domain and sync vocabulary:
+   - `domain/`
+   - `sync/`
+   - `adr/`
+3. Architecture:
+   - `architecture/project-structure.md`
+   - `architecture/backend-modules.md`
+   - `architecture/database-structure-v2.md`
+   - `architecture/auth-and-identity-v1.md`
+   - `architecture/activity-history-audit-v1.md`
+   - `architecture/appearance-customization-v1.md`
+   - `architecture/local-first-data-layer-v1.md`
+   - `architecture/sync-model-implementation-plan-v1.md`
+   - `architecture/conflict-resolution-v1.md`
+   - `architecture/testing-strategy-v1.md`
+4. API contract:
+   - `api/openapi.yaml`
+5. Local dev automation:
+   - `dev-bootstrap/dev-autodeployer-manifesto.md`
+   - `dev-bootstrap/dev-autodeployer-v1-development-plan.md`
+   - `dev-bootstrap/devbootstrap-v1-operations.md`
+   - `dev-bootstrap/devbootstrap-v2-release-gates-plan.md`
+   - `dev-bootstrap/release-gates-test-database.md`
+6. Stabilization and development process:
+   - `development/release-stabilization-program-v1.md`
+   - `development/systemic-release-stabilization-manifesto-v1.md`
+   - `development/release-stabilization-problem-ledger.md`
+   - `development/release-confidence-scorecard-v1.md`
+   - `development/release-stabilization-profile-side-effects-v1.md`
+   - `development/custom-uiux-evidence-manifesto-v1.md`
+   - `development/documentation-weight-budget-v1.md`
 
-- `product/mvp-scope-v1.md` — продуктовые границы первой версии.
-- `product/beta-scope-v1.md` — beta backlog, must-have/nice-to-have границы, release gates и решение по mobile/release model.
-- `product/v1-execution-roadmap.md` — текущая правда о реализованном/частичном/stub surface и contract parity baseline перед v1.
-- `adr/` — принятые архитектурные решения.
-- `domain/` — доменная модель, инварианты, права доступа, жизненный цикл и термины.
-- `sync/` — glossary, протокол синхронизации и каноническая conflict policy.
-- `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
-- `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
-- `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy.
-- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy, каноническую release stabilization program и Phase 0–7 operating baseline: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, repeatability loop, automated release confidence gate, continuous regression memory, side-effect profiles, цепочке тематических ремедиаций и новой post-Phase-7 вехе отказа от Playwright в пользу кастомного UI/UX Evidence Runner.
+## Current decisions
 
-## Зафиксированные принципы
+| Area | Decision |
+|---|---|
+| Product | MVP is web-first Kanban with workspaces, boards, columns, cards, appearance and activity/audit surface. |
+| Local-first | Local-first architecture remains the target; backend remains required for MVP auth/API/sync coordination. |
+| P2P | Future-ready, not mandatory for v1 release. |
+| Devctl | Patch conveyor applies small reproducible devctl patches, not full project archives. |
+| Devbootstrap | Project-owned diagnostic/release-gates tool; generated `.dev-bootstrap` artifacts are not source. |
+| Release gates | Evidence-first bundle with ledgers, classifications, confidence gate and regression memory. |
+| UI evidence | Playwright is legacy transition; target is custom lightweight UI/UX Evidence Runner. |
+| Documentation size | Long manifestos are compacted after decisions are accepted; source archives should stay small. |
 
-1. Проект строится как **local-first** система.
-2. **Web-клиент — первый клиент** и основной носитель MVP.
-3. **Backend обязателен для MVP** как HTTP/API слой, auth/session слой и
-   координатор синхронизации.
-4. **P2P-синхронизация опциональна и не входит в MVP** как обязательный
-   пользовательский сценарий.
-5. Мобильный клиент откладывается до стабилизации core, а интеграции проектируются заранее как isolated adapter layer без hard dependency на MVP core flow.
-6. Архитектура сохраняет future-ready задел под реплики, change log,
-   tombstones, relay/bootstrap и внешние adapters.
+## Important commands
 
-## Как читать эти документы
+```bash
+python -B tools/devbootstrap.py self-check --no-write-report
+python -B tools/devbootstrap.py diagnose --no-write-report
+python -B tools/devbootstrap.py release-gates --dry-run
+python -B tools/devbootstrap.py release-gates --profile diagnostic --prepare-deps
+python -B tools/devbootstrap.py release-gates --managed-test-db --managed-runtime --prepare-deps
+```
 
-1. Сначала `product/v1-execution-roadmap.md`, затем `product/mvp-scope-v1.md` и `product/beta-scope-v1.md`.
-2. Затем `domain/terms.md` и `sync/glossary.md`.
-3. Затем `adr/`.
-4. После этого `domain/entities.md`, `domain/invariants.md`, `domain/permissions.md`.
-5. Затем `architecture/database.md`, `architecture/backend-modules.md`,
-   `architecture/auth-and-identity-v1.md`, `architecture/appearance-customization-v1.md`,
-   `architecture/activity-history-audit-v1.md`, `architecture/local-first-data-layer-v1.md`,
-   `architecture/sync-model-implementation-plan-v1.md`,
-   `architecture/sync-lifecycle-map-v1.md`,
-   `architecture/frontend-visible-sync-state-model-v1.md`,
-   `architecture/conflict-resolution-v1.md`,
-   `architecture/p2p-relay-bootstrap-abstraction-v1.md`,
-   `architecture/integrations-architecture-v1.md`,
-   `architecture/import-export-backup-v1.md`,
-   `architecture/security-privacy-threat-model-v1.1.md`,
-   `architecture/testing-strategy-v1.md`,
-   `architecture/testing-pyramid-v1.md`,
-   `architecture/testing-application-guide-v1.md`,
-   `architecture/deployment-packaging-v1.md`
-   и `architecture/project-structure.md`.
-6. Затем `dev-bootstrap/dev-autodeployer-manifesto.md`,
-   `dev-bootstrap/deployment-pitfalls-catalog.md`,
-   `dev-bootstrap/dev-autodeployer-v1-development-plan.md` и
-   `dev-bootstrap/devbootstrap-v1-operations.md` для автоматизации локального разворачивания.
-7. Затем `development/systemic-release-stabilization-manifesto-v1.md`,
-   `development/release-stabilization-program-v1.md`,
-   `development/release-stabilization-phase-0-baseline.md`,
-   `development/release-stabilization-phase-1-autopsy-bundle-contract.md`,
-   `development/release-stabilization-phase-2-ledgers-and-taxonomy.md`,
-   `development/release-stabilization-phase-3-diagnostic-provocation-matrix.md`,
-   `development/release-stabilization-phase-4-controlled-mutators-rollout.md`,
-   `development/release-stabilization-phase-5-repeatability-loop.md`,
-   `development/release-stabilization-phase-6-release-confidence-gate.md`,
-   `development/release-stabilization-phase-7-regression-memory.md`,
-   `development/release-stabilization-problem-ledger.md`,
-   `development/release-confidence-scorecard-v1.md`,
-   `development/release-stabilization-profile-side-effects-v1.md`,
-   `development/release-stabilization-plan-merge-notes-2026-05-27.md` и
-   `development/custom-uiux-evidence-manifesto-v1.md`,
-   `development/accelerated-development-strategy-v1.md` для понимания рабочего режима стабилизации, patch/devctl-цикла, метрик release confidence, side-effect profiles, причин перехода от реактивных псевдофиксов к системному исследованию и новой вехи замены Playwright на кастомный UI/UX evidence слой.
-8. И только потом `api/openapi.yaml`, `sync/protocol.md` и
-   `sync/conflict-resolution.md`.
+## Artifact policy
 
-## Статус
+Keep in source:
 
-Документы в этом каталоге являются **docs v2**: они уточняют границы между MVP и
-future-ready архитектурой, фиксируют термины и снимают двусмысленность вокруг
-local-first, sync и optional p2p.
+- architecture/product/process docs;
+- source code;
+- migrations;
+- OpenAPI;
+- examples and stable fixtures.
 
-- `docs/architecture/web-frontend-core-ui-v1.md` — web frontend core UI v1: app shell, screen composition, shared primitives, backend CRUD wiring.
+Keep out of source snapshots:
 
-- `docs/architecture/local-first-data-layer-v1.md` — local-first data layer v1: persistent local store, hydration, pending ops, optimistic updates и offline UX rules.
+- `.dev-bootstrap/` generated runs and state;
+- `node_modules/`, `target/`, `dist/`, `build/`;
+- logs, caches, bytecode;
+- env files and secrets;
+- large release/browser/test artifacts.
 
-- `docs/architecture/sync-model-implementation-plan-v1.md` — инженерный план MVP sync: actors, units, push/pull, reconciliation, batching, ordering, idempotency, snapshot vs incremental.
-
-- `docs/architecture/sync-lifecycle-map-v1.md` — сквозная lifecycle map для boot, local mutation, push, pull, reconciliation и snapshot recovery.
-
-- `docs/architecture/frontend-visible-sync-state-model-v1.md` — frontend-visible sync state: app-level, scope-level и entity-level surface model для local-first UX.
-
-- `docs/architecture/conflict-resolution-v1.md` — подробная conflict matrix v1: taxonomy, resolution rules, examples, edge-cases и user-facing UX policy.
-
-- `docs/architecture/p2p-relay-bootstrap-abstraction-v1.md` — transport-neutral P2P / relay / bootstrap abstraction: layered boundaries, discovery/bootstrap roles, relay-compatible design и phased rollout.
-
-- `docs/architecture/integrations-architecture-v1.md` — integrations architecture v1: provider registry, import/export touchpoints, webhooks, domain-event boundary и adapter isolation.
-
-- `docs/architecture/import-export-backup-v1.md` — import/export/backup v1: portable bundle format, backup semantics, restore expectations и preview/apply flow.
-
-- `docs/architecture/security-privacy-threat-model-v1.1.md` — security/privacy/threat model v1.1: trust boundaries, security invariants, auth/session semantics, logging/redaction policy, privacy lifecycle, operational security baseline и release gates.
-
-- `docs/architecture/testing-strategy-v1.md` — testing strategy v1: test layers, mandatory coverage, contract discipline, sync/conflict scenarios, fixture strategy, determinism and replayability.
-
-- `docs/architecture/testing-pyramid-v1.md` — testing pyramid v1: practical ratio of unit/integration/contract/smoke checks and expected quality gates.
-
-- `docs/architecture/testing-application-guide-v1.md` — practical local test guide: backend/frontend commands, browser smoke flow, prerequisites and recommended pre-commit order.
-
-- `docs/architecture/deployment-packaging-v1.md` — deployment/packaging v1: environment model, build profiles, self-host baseline, `.env` contract, docker/dev setup and local workflow.
-
-- `docs/product/beta-scope-v1.md` — beta scope v1: финальная release-plan граница для web-first beta без native mobile, с beta backlog, must-have/nice-to-have, release gates, demoable flows и mobile/repo/release решением.
-
-- `docs/product/v1-execution-roadmap.md` — execution roadmap перед v1: статусы Done/Partial/Blocker/Deferred, ручной testable path, baseline backend/frontend/OpenAPI parity sweep и очередь ближайших blockers.
-- `docs/dev-bootstrap/dev-autodeployer-manifesto.md` — философия будущего кастомного авторазвертывателя: проверяемая автоматизация вместо магического shell-скрипта.
-
-- `docs/dev-bootstrap/deployment-pitfalls-catalog.md` — каталог рисков локального разворачивания: ОС, инструменты, env, PostgreSQL, backend, frontend, smoke, процессы и cleanup.
-
-- `docs/dev-bootstrap/dev-autodeployer-v1-development-plan.md` — детальный план разработки авторазвертывателя до v1: команды, фазы, проверки, acceptance criteria и граница минимально полезного инструмента. Phase 1 baseline, Phase 2 env planner, Phase 3 PostgreSQL bootstrap, Phase 4 backend check/start, Phase 5 frontend prepare/start, Phase 6 one-command `up`, Phase 7 smoke gates, Phase 8 `status`/`stop` lifecycle cleanup и Phase 9 v1 hardening уже реализованы в `tools/devbootstrap.py`.
-
-- `docs/dev-bootstrap/devbootstrap-v1-operations.md` — эксплуатационная памятка devbootstrap v1: quick commands, command responsibilities, report artifact contract, timeout policy, failure handling rules and cleanup rules.
-
-
-- `docs/development/custom-uiux-evidence-manifesto-v1.md` — post-Phase-7 манифест отказа от Playwright как обязательного release-gates browser-smoke основания и перехода к легковесному кастомному UI/UX Evidence Runner.
-
-- `docs/development/release-stabilization-phase-7-regression-memory.md` — финальная фаза release stabilization: per-run regression memory, recurring REL-family counts, probe/ledger linkage and process-review triggers.
-
-- `docs/development/systemic-release-stabilization-manifesto-v1.md` — манифест радикальной стабилизации release/dev lifecycle v2: Deep Release Autopsy, Problem Ledger, PostgreSQL authority ladder, controlled mutators, отдельную классификацию transport-failures и план тематической цепочки ремедиаций вместо бесконечного fix-after-fail цикла.
-
-- `docs/development/release-stabilization-program-v1.md` — каноническая программа достижения целей манифеста: supported reality v1, current product grounding, Problem/Probe/Decision ledgers, failure taxonomy, Release Confidence Score, metrics, workstreams, phased roadmap, risk register, patch-chain and whole-program definition of done.
-
-- `docs/development/release-stabilization-plan-merge-notes-2026-05-27.md` — merge notes по объединению free-form strategic response и не примененного `deep-release-autopsy-strategy` патча: сходства, различия, что оставлено/отброшено и какие слабые места найдены после объединения.
-
-- `docs/development/release-stabilization-phase-0-baseline.md` — Phase 0 operating baseline: stabilization lane active, freeze rules, current product grounding, baseline inventory, exit criteria mapping and extraordinary findings.
-
-- `docs/development/release-stabilization-phase-1-autopsy-bundle-contract.md` — Phase 1 release-gates autopsy bundle contract: manifest, root environment fingerprint, command-resolution artifacts, redaction report and artifact completeness check.
-
-- `docs/development/release-stabilization-phase-2-ledgers-and-taxonomy.md` — Phase 2 release-gates ledgers and taxonomy: machine-readable Problem Ledger, Probe Ledger skeleton, Decision Ledger template, stable problem ID mapping and fallback rule for new classifications.
-
-- `docs/development/release-stabilization-phase-3-diagnostic-provocation-matrix.md` — Phase 3 diagnostic provocation matrix: low-risk port binder, launcher dry-run matrix, DB capability probes, dirty-state smoke probe and clean-machine dry planning in the release-gates autopsy bundle.
-
-- `docs/development/release-stabilization-phase-4-controlled-mutators-rollout.md` — Phase 4 controlled mutators rollout: managed DB/runtime/dependency/browser/clean-machine actions are explicit, consented and bundled with cleanup/rollback evidence.
-
-- `docs/development/release-stabilization-phase-5-repeatability-loop.md` — Phase 5 repeatability loop: release-gates now emits `remediation/repeatability-loop.*`, compares same-profile historical runs and separates real repeatability evidence from first-run/dry-run contract shape.
-
-- `docs/development/release-stabilization-problem-ledger.md` — initial human Problem Ledger with stable `REL-*` failure-mode IDs, owner layers, severity and required probes.
-
-- `docs/development/release-confidence-scorecard-v1.md` — manual Release Confidence Score calculation, classes, hard caps, provisional baseline and score update review questions.
-
-- `docs/development/release-stabilization-phase-6-release-confidence-gate.md` — Phase 6 operating contract: automated Release Confidence Score, Unknown Ratio, classification coverage, hard caps and `v1-release-readiness.md`.
-
-- `docs/development/release-stabilization-phase-7-regression-memory.md` — Phase 7 operating contract: continuous regression memory, recurring REL-family counts, probe/ledger linkage and process-review triggers.
-
-- `docs/development/release-stabilization-profile-side-effects-v1.md` — side-effect classes and profile consent matrix for diagnostic/prepared/isolated/managed/full/clean-machine profiles.
-
+Release-gates bundles should be shared separately when diagnosing a run.
