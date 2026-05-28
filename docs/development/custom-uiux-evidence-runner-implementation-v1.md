@@ -50,3 +50,12 @@ The runner never downloads browsers. Missing browsers or browser policies that b
 ## Current non-goals
 
 This first slice does not yet implement drag-and-drop, visual screenshots, accessibility tree checks, multi-tab flows or full Playwright dependency removal. Those remain follow-up slices after the new runner proves stable on boot/core-flow evidence.
+## Hardening follow-up: CDP input and console classification
+
+The first manual Linux run proved browser discovery and frontend startup, but exposed two runner-level issues rather than product regressions:
+
+- CDP `fill` initially assigned `element.value` directly. That updated the DOM value but could leave React controlled component state unchanged, so form submit handlers saw stale empty state. The runner now uses the native input/textarea value setter and dispatches a bubbling `InputEvent` plus `change`, which matches the React-controlled form contract more closely.
+- Chromium `Log.entryAdded` reports ordinary failed HTTP resources, such as expected unauthenticated refresh probes, with `level=error`. These events are now kept in console evidence but are not treated as JavaScript runtime crashes. Fatal evidence remains explicit `console.error`/`console.assert`, CDP `Runtime.exceptionThrown`, and browser `fatal` log entries. Network failures stay visible in `network.json` and the report counters.
+
+This keeps `boot` focused on “the app can open and React does not crash”, while `mocked-core-flow` and `real-backend-core-flow` remain responsible for proving the actual user path and API behavior.
+

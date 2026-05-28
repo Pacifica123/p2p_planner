@@ -87,8 +87,16 @@ class EventLog:
             self.runtime_errors.append({"text": details.get("text"), "url": details.get("url"), "line": details.get("lineNumber"), "column": details.get("columnNumber")})
         elif method == "Log.entryAdded":
             entry = params.get("entry") or {}
-            if entry.get("level") in {"error", "fatal"}:
-                self.runtime_errors.append({"text": entry.get("text"), "url": entry.get("url"), "level": entry.get("level")})
+            level = entry.get("level")
+            text = str(entry.get("text") or "")
+            payload = {"type": f"browser-log-{level or 'unknown'}", "text": text, "url": entry.get("url"), "timestamp": entry.get("timestamp")}
+            self.console.append(payload)
+            # Chromium reports HTTP 4xx/5xx and blocked resource loads through Log.entryAdded
+            # as level=error. Those are already captured in the network artifact and are not
+            # JavaScript crashes. Fatal UI evidence should stay focused on explicit
+            # console.error/assert and Runtime.exceptionThrown signals.
+            if level == "fatal":
+                self.runtime_errors.append({"text": text, "url": entry.get("url"), "level": level})
         elif method == "Network.requestWillBeSent":
             request = params.get("request") or {}
             request_id = params.get("requestId")
@@ -286,9 +294,22 @@ def fill_expression(selector: str, value: str) -> str:
 (() => {{
   const el = document.querySelector({js_string(selector)});
   if (!el) throw new Error('selector not found: ' + {js_string(selector)});
+
+  const value = {js_string(value)};
+  const prototype = Object.getPrototypeOf(el);
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+  const fallbackDescriptor = el instanceof HTMLTextAreaElement
+    ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
+    : Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  const setter = descriptor && descriptor.set ? descriptor.set : fallbackDescriptor && fallbackDescriptor.set;
+
   el.focus();
-  el.value = {js_string(value)};
-  el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+  if (setter) {{
+    setter.call(el, value);
+  }} else {{
+    el.value = value;
+  }}
+  el.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
   el.dispatchEvent(new Event('change', {{ bubbles: true }}));
   return true;
 }})()
