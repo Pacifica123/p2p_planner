@@ -198,17 +198,35 @@ class MockApiHandler(BaseHTTPRequestHandler):
                         "boardId": board_id,
                         "isCustomized": False,
                         "themePreset": "default",
-                        "wallpaperPreset": "none",
-                        "colorScheme": "system",
-                        "density": "comfortable",
+                        "wallpaper": {"kind": "none", "value": None},
+                        "columnDensity": "comfortable",
                         "cardPreviewMode": "comfortable",
                         "showCardDescription": True,
                         "showCardDates": True,
+                        "showChecklistProgress": True,
+                        "customProperties": {},
                         "createdAt": _now(),
                         "updatedAt": _now(),
                     }
                 ),
             )
+            return
+        match = re.fullmatch(r"/boards/([^/]+)/labels", route)
+        if match and method == "GET":
+            self._send(200, self._data({"items": []}))
+            return
+        if match and method == "POST":
+            board_id = match.group(1)
+            label = {
+                "id": state.new_id("label"),
+                "boardId": board_id,
+                "name": str(body.get("name") or "UIX Label"),
+                "color": str(body.get("color") or "blue"),
+                "description": body.get("description"),
+                "createdAt": _now(),
+                "updatedAt": _now(),
+            }
+            self._send(200, self._data(label))
             return
         match = re.fullmatch(r"/boards/([^/]+)/columns", route)
         if match and method == "GET":
