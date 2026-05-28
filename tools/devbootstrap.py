@@ -511,6 +511,27 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def procfs_process_details(pid: int) -> tuple[str | None, str | None, str | None]:
+    proc_dir = Path("/proc") / str(pid)
+    try:
+        cwd = str((proc_dir / "cwd").resolve())
+    except Exception as exc:
+        cwd = None
+        cwd_error = f"procfs cwd unavailable: {exc}"
+    else:
+        cwd_error = None
+    try:
+        raw_cmd = (proc_dir / "cmdline").read_bytes()
+        command = raw_cmd.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+    except Exception as exc:
+        command = None
+        cmd_error = f"procfs cmdline unavailable: {exc}"
+    else:
+        cmd_error = None
+    errors = "; ".join(part for part in [cwd_error, cmd_error] if part) or None
+    return cwd, command, errors
+
+
 def popen_process_group_kwargs() -> dict[str, Any]:
     """Return cross-platform kwargs that make later owned-process stop safer.
 
@@ -555,6 +576,20 @@ def summarize_state(project_root: Path) -> dict[str, Any]:
         "processes": process_summary,
         "lastReports": state.get("lastReports", []),
     }
+
+
+def process_table_state(project_root: Path) -> tuple[Path, dict[str, Any], dict[str, dict[str, Any]]]:
+    state_path = project_root / BOOTSTRAP_DIR_NAME / "state.json"
+    state = read_json(state_path)
+    if "_error" in state:
+        return state_path, state, {}
+    processes_raw = state.get("processes") if isinstance(state.get("processes"), dict) else {}
+    processes = {
+        str(name): dict(entry)
+        for name, entry in processes_raw.items()
+        if isinstance(entry, dict)
+    }
+    return state_path, state, processes
 
 
 def build_diagnose(project_root: Path | None, invoked_from: Path) -> DiagnoseResult:
@@ -4160,6 +4195,52 @@ class UpResult:
     warnings: list[dict[str, str]] = field(default_factory=list)
     next_actions: list[str] = field(default_factory=list)
     classification: str = "unknown"
+
+
+@dataclass
+class StopTarget:
+    name: str
+    pid: int | None
+    cwd: str | None = None
+    command: str | None = None
+    log_path: str | None = None
+    run_id: str | None = None
+    alive_before: bool = False
+    alive_after: bool | None = None
+    verification_status: str = "unknown"
+    verification_evidence: str | None = None
+    action: str = "pending"
+    error: str | None = None
+
+
+@dataclass
+class StopDbAction:
+    status: str
+    message: str
+    command: str | None = None
+    evidence: str | None = None
+
+
+@dataclass
+class StopResult:
+    generated_at: str
+    tool_version: str
+    project_root: str | None
+    invoked_from: str
+    dry_run: bool
+    include_db: bool
+    force: bool
+    timeout_seconds: int
+    run_id: str
+    report_dir: str | None = None
+    classification: str = "unknown"
+    targets: list[StopTarget] = field(default_factory=list)
+    db_action: StopDbAction | None = None
+    ports_after: list[PortProbe] = field(default_factory=list)
+    http_after: list[HttpProbe] = field(default_factory=list)
+    failures: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
 
 
 def append_report_to_state(project_root: Path, report_dir: Path, run_id_value: str) -> None:
@@ -11532,6 +11613,8 @@ def build_stop_result(project_root: Path | None, invoked_from: Path, args: argpa
         result.classification = "partial"
     elif args.dry_run:
         result.classification = "planned"
+    elif not result.targets and result.db_action and result.db_action.status in {"skipped", "unavailable"}:
+        result.classification = "idle"
     else:
         result.classification = "stopped"
     if any(t.action == "skipped" and t.verification_status == "mismatch" for t in result.targets):
@@ -12705,6 +12788,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "database_url_parse", case_self_check_database_url_parse)
     self_check_case(result, "failure_classifiers", case_self_check_failure_classifiers)
     self_check_case(result, "project_discovery", case_self_check_project_discovery)
+    self_check_case(result, "stop_without_state_is_safe", case_self_check_stop_without_state_is_safe)
     self_check_case(result, "env_diff", case_self_check_env_diff)
     self_check_case(result, "report_json_contract", case_self_check_report_json_contract)
     self_check_case(result, "report_markdown_contract", case_self_check_report_markdown_contract)
@@ -12797,6 +12881,23 @@ def print_self_check_summary(result: SelfCheckResult) -> None:
         print("\nNext actions:")
         for action in result.next_actions:
             print(f"  - {action}")
+
+
+def case_self_check_stop_without_state_is_safe() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-stop-") as tmp:
+        root = Path(tmp)
+        for relative in ["backend", "frontend", "docs", "tools"]:
+            (root / relative).mkdir(parents=True, exist_ok=True)
+        (root / "docker-compose.dev.yml").write_text("services: {}\n", encoding="utf-8")
+        args = argparse.Namespace(dry_run=False, include_db=False, no_force=False, timeout_seconds=1)
+        result = build_stop_result(root, root, args)
+        rendered = render_stop_report(result)
+    assert result.classification == "idle", result.classification
+    assert result.targets == []
+    assert result.db_action is not None
+    assert result.db_action.status == "skipped"
+    assert "no tracked processes" in rendered.lower()
+    return "stop without state/procs reports idle instead of raising"
 
 
 def command_self_check(args: argparse.Namespace) -> int:
