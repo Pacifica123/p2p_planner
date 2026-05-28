@@ -7367,19 +7367,6 @@ def build_release_gate_specs(
                 details=browser_details,
             )
         )
-    elif dry_run and not package_error and "test:browser" in scripts and playwright_dependency_present:
-        browser_details["dryRunPrerequisiteBypassed"] = not playwright_node_package_present or not chromium_present
-        specs.append(
-            GateSpec(
-                name="frontend_browser_smoke",
-                cwd="frontend",
-                command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke.",
-                timeout_seconds=600,
-                env_extra=browser_env,
-                details=browser_details,
-            )
-        )
     elif package_error:
         specs.append(
             GateSpec(
@@ -7406,7 +7393,20 @@ def build_release_gate_specs(
                 details=browser_details,
             )
         )
-    elif not playwright_dependency_present or not playwright_node_package_present:
+    elif not playwright_dependency_present:
+        specs.append(
+            GateSpec(
+                name="frontend_browser_smoke",
+                cwd="frontend",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke.",
+                skip_status="infra_failed",
+                skip_classification="browser_smoke_prerequisite",
+                skip_reason="Playwright package is not declared in frontend/package.json; add @playwright/test before running browser smoke.",
+                details=browser_details,
+            )
+        )
+    elif not playwright_node_package_present and not dry_run:
         specs.append(
             GateSpec(
                 name="frontend_browser_smoke",
@@ -7419,23 +7419,44 @@ def build_release_gate_specs(
                 details=browser_details,
             )
         )
-    elif not chromium_present and install_playwright_browsers:
+    elif install_playwright_browsers:
+        install_details = dict(browser_details)
+        install_details["playwrightInstallPolicy"] = "explicit_ensure_current_revision"
+        install_details["playwrightInstallReason"] = (
+            "--install-playwright-browsers was provided; run npx playwright install chromium even when an older "
+            "Chromium executable is present, because Playwright pins browser revisions and stale cache scans can be false positives."
+        )
         specs.append(
             GateSpec(
                 name="playwright_install",
                 cwd="frontend",
                 command=["npx", "playwright", "install", "chromium"],
-                description="Install Playwright Chromium browser binaries because --install-playwright-browsers was provided.",
+                description="Ensure the Playwright Chromium browser revision required by the installed @playwright/test package is present.",
                 timeout_seconds=900,
-                details=browser_details,
+                details=install_details,
             )
         )
+        browser_after_install_details = dict(browser_details)
+        browser_after_install_details["playwrightInstallGate"] = "playwright_install"
         specs.append(
             GateSpec(
                 name="frontend_browser_smoke",
                 cwd="frontend",
                 command=["npm", "run", "test:browser"],
-                description="Run Playwright browser smoke after explicit browser install attempt.",
+                description="Run Playwright browser smoke after explicit browser install/ensure attempt.",
+                timeout_seconds=600,
+                env_extra=browser_env,
+                details=browser_after_install_details,
+            )
+        )
+    elif dry_run and not package_error and "test:browser" in scripts and playwright_dependency_present:
+        browser_details["dryRunPrerequisiteBypassed"] = not playwright_node_package_present or not chromium_present
+        specs.append(
+            GateSpec(
+                name="frontend_browser_smoke",
+                cwd="frontend",
+                command=["npm", "run", "test:browser"],
+                description="Run Playwright browser smoke.",
                 timeout_seconds=600,
                 env_extra=browser_env,
                 details=browser_details,
@@ -7653,7 +7674,8 @@ def release_gates_next_action_for_code(code: str) -> str | None:
         "frontend_dependencies_stale": "Run `python tools/devbootstrap.py release-gates --prepare-deps` or `python tools/devbootstrap.py prepare-frontend --install-mode=stale` to refresh the frontend install marker after package/lockfile/runtime changes.",
         "frontend_lockfile_mismatch": "Fix frontend/package-lock.json in a separate patch, then rerun release-gates; release-gates will not silently update lockfiles.",
         "dependency_network_unavailable": "Restore network/package-cache access and rerun dependency preparation; this is an infrastructure failure, not a product test failure.",
-        "browser_smoke_prerequisite": "Install Playwright browser prerequisites by rerunning with `--install-playwright-browsers` or by running `cd frontend && npx playwright install chromium`.",
+        "browser_smoke_prerequisite": "Install/refresh the package-pinned Playwright browser revision by rerunning with `--install-playwright-browsers` or by running `cd frontend && npx playwright install chromium`.",
+        "playwright_install_failed": "Inspect the `playwright_install` gate log; Playwright browser installation was explicitly requested but did not complete.",
         "db_test_prerequisite_missing": "Prepare a write-safe test DB, export `TEST_DATABASE_URL`, or rerun with `python tools/devbootstrap.py release-gates --managed-test-db`; see `docs/dev-bootstrap/release-gates-test-database.md`.",
         "managed_test_db_source_missing": "Set backend `DATABASE__URL`/`DATABASE_URL` or copy `backend/.env.example` to `backend/.env`, then rerun `release-gates --managed-test-db`.",
         "managed_test_db_source_invalid": "Fix backend `DATABASE__URL`/`DATABASE_URL`; managed test DB needs a complete PostgreSQL URL with host, port, database and user.",
@@ -8577,7 +8599,8 @@ def release_gates_problem_id_for_code(code: str) -> str | None:
         "smoke_db_write_guard": "REL-SMOKE-001",
         "real_backend_browser_write_guard": "REL-BROWSER-001",
         "real_backend_browser_opt_in_required": "REL-BROWSER-001",
-        "browser_smoke_prerequisite": "REL-BROWSER-001",
+        "browser_smoke_prerequisite": "REL-BROWSER-002",
+        "playwright_install_failed": "REL-BROWSER-002",
         "runtime_unreachable": "REL-PROC-001",
         "frontend_port_conflict": "REL-PORT-001",
         "clean_machine_optional_not_requested": "REL-CLEAN-001",
@@ -12442,6 +12465,46 @@ def case_self_check_frontend_direct_vite_launch_command() -> str:
     assert "directly" in action_message, action_message
     return "frontend direct Vite launch command checked"
 
+
+def case_self_check_release_gates_playwright_install_force() -> str:
+    with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-playwright-install-") as tmp:
+        root = Path(tmp)
+        frontend = root / "frontend"
+        (root / "backend").mkdir()
+        (root / "docs").mkdir()
+        (frontend / "node_modules" / "@playwright" / "test").mkdir(parents=True)
+        (frontend / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {"test:browser": "playwright test"},
+                    "devDependencies": {"@playwright/test": "1.55.0"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+        fake_cache = root / "fake-ms-playwright"
+        fake_browser = fake_cache / "chromium-older" / "chrome-linux64" / "chrome"
+        fake_browser.parent.mkdir(parents=True)
+        fake_browser.write_text("stale browser placeholder\n", encoding="utf-8")
+        old_browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(fake_cache)
+        try:
+            specs = build_release_gate_specs(root, dry_run=True, install_playwright_browsers=True)
+        finally:
+            if old_browsers_path is None:
+                os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+            else:
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = old_browsers_path
+    names = [spec.name for spec in specs]
+    assert "playwright_install" in names, names
+    assert names.index("playwright_install") < names.index("frontend_browser_smoke"), names
+    install_spec = next(spec for spec in specs if spec.name == "playwright_install")
+    assert install_spec.command == ["npx", "playwright", "install", "chromium"], install_spec.command
+    assert install_spec.details.get("chromiumExecutablePresent") is True, install_spec.details
+    assert install_spec.details.get("playwrightInstallPolicy") == "explicit_ensure_current_revision", install_spec.details
+    return "explicit Playwright install flag forces browser revision ensure even with stale cache evidence"
+
 def build_self_check_result(project_root: Path | None, invoked_from: Path) -> SelfCheckResult:
     result = SelfCheckResult(
         generated_at=iso_now(),
@@ -12463,6 +12526,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "release_gates_ignored_classifier", case_self_check_release_gates_ignored_classifier)
     self_check_case(result, "release_gates_playwright_classifier", case_self_check_release_gates_playwright_classifier)
     self_check_case(result, "release_gates_playwright_assertion_classifier", case_self_check_release_gates_playwright_assertion_classifier)
+    self_check_case(result, "release_gates_playwright_install_force", case_self_check_release_gates_playwright_install_force)
     self_check_case(result, "release_gates_frontend_classifier_priority", case_self_check_release_gates_frontend_classifier_priority)
     self_check_case(result, "windows_command_resolution", case_self_check_windows_command_resolution)
     self_check_case(result, "frontend_prepare_blocker_converts_downstream_skip", case_self_check_frontend_prepare_blocker_converts_downstream_skip)

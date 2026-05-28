@@ -99,3 +99,10 @@ Exit criteria after this patch:
 ### 6.2. Process review threshold must not fail the first honest run
 
 Повторяющаяся family — это сигнал для процесса, а не автоматическое доказательство regression в текущем коде. Поэтому Phase 7 помечает `processReviewRequired`, но не превращает сам `release-gates` result в failed только из-за исторического повторения. Release decision остаётся в `release-confidence-gate.*`.
+
+
+### 6.3. Post-phase-7 gap: explicit browser install must not trust stale cache scans
+
+The first Linux acceptance pass after Phase 7 showed that operational memory was present, but the remediation action for `REL-BROWSER` was too weak. `release-gates --install-playwright-browsers` allowed network/cache side effects, yet `build_release_gate_specs()` skipped the `playwright_install` gate because a different cached Chromium executable existed. Playwright then failed at runtime because its installed package required a newer pinned browser revision.
+
+This is tracked as `REL-BROWSER-002`. The regression probe is a self-check fixture with stale browser-cache evidence and an explicit install flag; it requires `playwright_install` to appear before `frontend_browser_smoke`.

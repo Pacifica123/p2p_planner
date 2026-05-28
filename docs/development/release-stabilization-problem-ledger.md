@@ -56,6 +56,7 @@ A failure cannot move to `closed` unless it has:
 | `REL-PORT-001` | suspected | blocks_local_start | devbootstrap / runtime | Foreign process can occupy expected backend/frontend ports. | Supported reality includes occupied legacy ports; no current reproduced evidence in this phase. | Port owner classification; fixed-port conflict should be `REL-PORT`, not generic runtime failure. |
 | `REL-CFG-001` | suspected | blocks_release | frontend / backend config | Frontend can call an old/wrong backend or be blocked by CORS. | Supported reality and troubleshooting mention API base URL / origin mismatch. | API base URL + backend allowed-origin consistency artifact; managed URLs written to bundle. |
 | `REL-BROWSER-001` | suspected | hides_failure | frontend / devbootstrap | Mocked browser smoke can hide real backend integration gap. | Program separates mocked browser smoke from real-backend browser smoke. | Real-backend browser gate with safe DB/runtime; score treats mocked smoke as UI-only. |
+| `REL-BROWSER-002` | guarded | blocks_release | devbootstrap / Playwright | `--install-playwright-browsers` can be skipped by stale browser-cache heuristics even when the installed Playwright package needs a newer browser revision. | Linux diagnostic run on 2026-05-28 had `/home/noir/.cache/ms-playwright/chromium-1208/.../chrome`, but `frontend_browser_smoke` required `chromium_headless_shell-1217` and failed after the explicit install flag did not create a `playwright_install` gate. | Explicit install flag must always add `npx playwright install chromium` before browser smoke; self-check fixture keeps stale-cache evidence while requiring `playwright_install` before `frontend_browser_smoke`. |
 | `REL-CLEAN-001` | suspected | hides_failure | devbootstrap / packaging | Clean archive/checkout may not reproduce current dev setup. | Program requires clean-machine dry/deps/runtime profiles. | Clean-machine dry gate and optional runtime sandbox; exclusion report. |
 | `REL-ART-001` | guarded | degrades_signal | devbootstrap / devctl artifacts | Diagnostics can be incomplete or too large to share. | Phase 1 adds `bundle-manifest.json`, root fingerprint, command-resolution artifacts and `artifact-completeness.json/md`; self-check verifies archive inclusion. | Required artifact completeness check; archive size/exclusion policy. |
 | `REL-VCS-001` | observed | transport_only | devctl / Git remote | Remote push internal error after local apply/check/commit should not invalidate patch contents. | Previous `PUSH_FAILED` due remote internal server error. | Stage-separated devctl report showing validate/apply/check/commit/push; safe reissue protocol. |
@@ -70,10 +71,10 @@ A failure cannot move to `closed` unless it has:
 |---|---|
 | Backend / migrations | `REL-MIG-001` |
 | Backend tests / DB | `REL-DB-001`, `REL-SMOKE-001` |
-| Devbootstrap / release-gates | `REL-FE-001`, `REL-WIN-001`, `REL-DB-001`, `REL-DB-002`, `REL-PROC-001`, `REL-PORT-001`, `REL-CFG-001`, `REL-BROWSER-001`, `REL-CLEAN-001`, `REL-ART-001`, `REL-SEC-001` |
+| Devbootstrap / release-gates | `REL-FE-001`, `REL-WIN-001`, `REL-DB-001`, `REL-DB-002`, `REL-PROC-001`, `REL-PORT-001`, `REL-CFG-001`, `REL-BROWSER-001`, `REL-BROWSER-002`, `REL-CLEAN-001`, `REL-ART-001`, `REL-SEC-001` |
 | Devctl / Git transport | `REL-VCS-001` |
 | Docs | `REL-DOCS-001` |
-| Frontend | `REL-FE-001`, `REL-CFG-001`, `REL-BROWSER-001` |
+| Frontend | `REL-FE-001`, `REL-CFG-001`, `REL-BROWSER-001`, `REL-BROWSER-002` |
 
 ---
 
@@ -122,3 +123,12 @@ Phase 5 verification also exposed an extraction-tooling caveat for `REL-ART-001`
 Phase 6 now adds `release-confidence-gate.json` / `.md` and `v1-release-readiness.md` to every `release-gates` bundle. This gives `REL-ART-001`, `REL-SMOKE-001`, `REL-BROWSER-001` and `REL-CLEAN-001` an explicit decision surface: skipped prerequisites, missing repeatability and absent real-backend product-path evidence become hard caps instead of ambiguous “almost green” release results.
 
 Phase 7 now adds `remediation/regression-memory.json` / `.md` and `remediation/recurring-family-counts.json` / `.md` to every `release-gates` bundle. This turns the static taxonomy in this document into per-run operational memory: new failures must map to stable IDs, probes must keep links to IDs, repeated `REL-*` families become visible, and any family seen in three or more scanned runs becomes a process-review trigger instead of another tactical patch target.
+
+
+## 6. Post-phase-7 regression-memory patch notes
+
+### 6.1. `REL-BROWSER-002` — Playwright revision drift despite explicit install consent
+
+The first Linux acceptance cycle after Phase 7 exposed a process/tooling gap: browser cache detection treated any Chromium executable under the Playwright cache root as sufficient, but Playwright pins exact browser revisions. As a result, `--install-playwright-browsers` did not produce a `playwright_install` gate when an older `chromium-1208` executable existed, and the browser smoke later failed because the installed package required `chromium_headless_shell-1217`.
+
+The chosen remediation is intentionally conservative: an explicit browser-install flag now means “ensure the package-required Chromium revision”, not “install only if a heuristic finds no Chromium at all”. This keeps default diagnostic runs non-mutating, but makes opt-in dependency preparation reliable.
