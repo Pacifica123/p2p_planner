@@ -57,6 +57,8 @@ A failure cannot move to `closed` unless it has:
 | `REL-CFG-001` | suspected | blocks_release | frontend / backend config | Frontend can call an old/wrong backend or be blocked by CORS. | Supported reality and troubleshooting mention API base URL / origin mismatch. | API base URL + backend allowed-origin consistency artifact; managed URLs written to bundle. |
 | `REL-BROWSER-001` | suspected | hides_failure | frontend / devbootstrap | Mocked browser smoke can hide real backend integration gap. | Program separates mocked browser smoke from real-backend browser smoke. | Real-backend browser gate with safe DB/runtime; score treats mocked smoke as UI-only. |
 | `REL-BROWSER-002` | guarded | blocks_release | devbootstrap / Playwright | `--install-playwright-browsers` can be skipped by stale browser-cache heuristics even when the installed Playwright package needs a newer browser revision. | Linux diagnostic run on 2026-05-28 had `/home/noir/.cache/ms-playwright/chromium-1208/.../chrome`, but `frontend_browser_smoke` required `chromium_headless_shell-1217` and failed after the explicit install flag did not create a `playwright_install` gate. | Explicit install flag must always add `npx playwright install chromium` before browser smoke; self-check fixture keeps stale-cache evidence while requiring `playwright_install` before `frontend_browser_smoke`. |
+| `REL-BROWSER-003` | observed | blocks_release | devbootstrap / Playwright | Playwright browser install can time out and still leave release-gates without a usable browser-smoke signal. | Post-Phase-7 Linux follow-up after the force-install patch reported `playwright_install_timeout` followed by `browser_smoke_prerequisite`; this confirms that Playwright download/cache lifecycle itself can be the blocker. | Replace Playwright-dependent browser smoke with a custom UI/UX Evidence Runner that uses installed system browser evidence; keep Playwright removal blocked until custom runner reaches scenario parity. |
+| `REL-UIUX-001` | remediation_planned | blocks_release | frontend / devbootstrap | Browser confidence is currently coupled to a heavyweight external e2e stack instead of project-specific UI/UX evidence. | Repeated Playwright cache/revision/install failures produced infrastructure noise after backend/frontend code gates were already mostly healthy. | Add custom UI/UX probe phases: browser discovery, boot evidence, mocked scenario, real-backend scenario, release-gates integration, Playwright removal and repeatability proof. |
 | `REL-CLEAN-001` | suspected | hides_failure | devbootstrap / packaging | Clean archive/checkout may not reproduce current dev setup. | Program requires clean-machine dry/deps/runtime profiles. | Clean-machine dry gate and optional runtime sandbox; exclusion report. |
 | `REL-ART-001` | guarded | degrades_signal | devbootstrap / devctl artifacts | Diagnostics can be incomplete or too large to share. | Phase 1 adds `bundle-manifest.json`, root fingerprint, command-resolution artifacts and `artifact-completeness.json/md`; self-check verifies archive inclusion. | Required artifact completeness check; archive size/exclusion policy. |
 | `REL-VCS-001` | observed | transport_only | devctl / Git remote | Remote push internal error after local apply/check/commit should not invalidate patch contents. | Previous `PUSH_FAILED` due remote internal server error. | Stage-separated devctl report showing validate/apply/check/commit/push; safe reissue protocol. |
@@ -71,10 +73,10 @@ A failure cannot move to `closed` unless it has:
 |---|---|
 | Backend / migrations | `REL-MIG-001` |
 | Backend tests / DB | `REL-DB-001`, `REL-SMOKE-001` |
-| Devbootstrap / release-gates | `REL-FE-001`, `REL-WIN-001`, `REL-DB-001`, `REL-DB-002`, `REL-PROC-001`, `REL-PORT-001`, `REL-CFG-001`, `REL-BROWSER-001`, `REL-BROWSER-002`, `REL-CLEAN-001`, `REL-ART-001`, `REL-SEC-001` |
+| Devbootstrap / release-gates | `REL-FE-001`, `REL-WIN-001`, `REL-DB-001`, `REL-DB-002`, `REL-PROC-001`, `REL-PORT-001`, `REL-CFG-001`, `REL-BROWSER-001`, `REL-BROWSER-002`, `REL-BROWSER-003`, `REL-UIUX-001`, `REL-CLEAN-001`, `REL-ART-001`, `REL-SEC-001` |
 | Devctl / Git transport | `REL-VCS-001` |
 | Docs | `REL-DOCS-001` |
-| Frontend | `REL-FE-001`, `REL-CFG-001`, `REL-BROWSER-001`, `REL-BROWSER-002` |
+| Frontend | `REL-FE-001`, `REL-CFG-001`, `REL-BROWSER-001`, `REL-BROWSER-002`, `REL-BROWSER-003`, `REL-UIUX-001` |
 
 ---
 
@@ -132,3 +134,14 @@ Phase 7 now adds `remediation/regression-memory.json` / `.md` and `remediation/r
 The first Linux acceptance cycle after Phase 7 exposed a process/tooling gap: browser cache detection treated any Chromium executable under the Playwright cache root as sufficient, but Playwright pins exact browser revisions. As a result, `--install-playwright-browsers` did not produce a `playwright_install` gate when an older `chromium-1208` executable existed, and the browser smoke later failed because the installed package required `chromium_headless_shell-1217`.
 
 The chosen remediation is intentionally conservative: an explicit browser-install flag now means “ensure the package-required Chromium revision”, not “install only if a heuristic finds no Chromium at all”. This keeps default diagnostic runs non-mutating, but makes opt-in dependency preparation reliable.
+
+### 6.2. `REL-BROWSER-003` — Playwright install timeout as a release-gates blocker
+
+The next Linux follow-up changed the failure mode again: after the explicit install gate was forced into the plan, `playwright_install` itself timed out and `frontend_browser_smoke` still failed as a prerequisite. This is the point where the team no longer treats Playwright as merely misconfigured. The tool has become a recurrent source of release evidence noise.
+
+The strategic remediation is not another Playwright-specific patch. The new milestone is documented in `docs/development/custom-uiux-evidence-manifesto-v1.md`: build a constrained project-specific UI/UX Evidence Runner and then remove Playwright from release-gates, frontend scripts, dependencies and docs only after parity is proven.
+
+### 6.3. `REL-UIUX-001` — browser confidence must be evidence-based, not framework-based
+
+This is the umbrella problem ID for the custom runner milestone. The acceptance target is not “no Playwright errors”; it is stronger: release-gates must prove that the user can open the UI, boot the JS runtime, navigate the critical path, interact with actionable controls, submit the minimal form flow, and produce state/network/storage evidence without relying on Playwright browser revision management.
+

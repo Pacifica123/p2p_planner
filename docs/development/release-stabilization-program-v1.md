@@ -1447,3 +1447,18 @@ A new failure should add light to the map, not just produce the next patch.
 8. Add real-backend browser gate only against currently ready product surface.
 9. Add devctl transport failure classification.
 10. Produce `v1-release-readiness.md` only after repeatability loop has real evidence.
+
+## 23. Post-Phase-7 milestone: Playwright exit and UI/UX evidence runner
+
+Phase 0–7 produced the release autopsy machine, but the first Linux acceptance cycles exposed a new class of evidence noise: Playwright itself can block release-gates through browser revision drift, missing cache entries and install timeout. This is not treated as an ordinary dependency hiccup anymore. It is a signal that browser confidence should not depend on Playwright's bundled browser lifecycle.
+
+The next strategic milestone is therefore documented separately in `docs/development/custom-uiux-evidence-manifesto-v1.md`:
+
+```text
+Replace Playwright-dependent browser smoke with a project-specific UI/UX Evidence Runner.
+```
+
+This does not weaken the release bar. The replacement must still prove that a user can open the UI, boot the JS runtime, navigate, interact with actionable controls, submit the minimal scenario, and produce DOM/console/network/storage evidence. The change is about reducing framework/cache/download noise and increasing project-specific evidence quality.
+
+Playwright removal is not allowed until the custom runner has scenario parity and repeatability proof.
+

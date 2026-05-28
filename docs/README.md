@@ -19,7 +19,7 @@
 - `architecture/` — структура каталогов, карта backend-модулей, карта БД, auth/identity, appearance, activity/history/audit, local-first data layer, инженерный sync plan и transport/p2p abstraction.
 - `api/openapi.yaml` — черновой HTTP-контракт между backend и web-клиентом.
 - `dev-bootstrap/` — мотивация, каталог рисков и план разработки авторазвертывателя local dev-среды. Первая реализация CLI лежит в `tools/devbootstrap.py` и уже умеет `diagnose/status`, `plan/prepare-env`, PostgreSQL diagnostics / guarded compose `start-db`, backend `check-backend` / guarded `start-backend`, frontend `prepare-frontend` / guarded `start-frontend`, one-command `up` pipeline, Phase 7 smoke gates `smoke --level quick|standard|full`, Phase 8 lifecycle cleanup через enhanced `status` / safe `stop` и Phase 9 v1 hardening через `self-check`, общий JSON-envelope отчетов и timeout policy.
-- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy, каноническую release stabilization program и Phase 0–7 operating baseline: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, repeatability loop, automated release confidence gate, continuous regression memory, side-effect profiles и цепочке тематических ремедиаций.
+- `development/` — рабочие стратегии разработки, включая ускоренный patch/devctl-процесс, манифест радикального release autopsy, каноническую release stabilization program и Phase 0–7 operating baseline: переход от реактивных псевдофиксов к полному вскрытию release/dev контура, Problem/Probe/Decision ledgers, repeatability loop, automated release confidence gate, continuous regression memory, side-effect profiles, цепочке тематических ремедиаций и новой post-Phase-7 вехе отказа от Playwright в пользу кастомного UI/UX Evidence Runner.
 
 ## Зафиксированные принципы
 
@@ -73,7 +73,8 @@
    `development/release-confidence-scorecard-v1.md`,
    `development/release-stabilization-profile-side-effects-v1.md`,
    `development/release-stabilization-plan-merge-notes-2026-05-27.md` и
-   `development/accelerated-development-strategy-v1.md` для понимания рабочего режима стабилизации, patch/devctl-цикла, метрик release confidence, side-effect profiles и причин перехода от реактивных псевдофиксов к системному исследованию.
+   `development/custom-uiux-evidence-manifesto-v1.md`,
+   `development/accelerated-development-strategy-v1.md` для понимания рабочего режима стабилизации, patch/devctl-цикла, метрик release confidence, side-effect profiles, причин перехода от реактивных псевдофиксов к системному исследованию и новой вехи замены Playwright на кастомный UI/UX evidence слой.
 8. И только потом `api/openapi.yaml`, `sync/protocol.md` и
    `sync/conflict-resolution.md`.
 
@@ -121,6 +122,9 @@ local-first, sync и optional p2p.
 - `docs/dev-bootstrap/dev-autodeployer-v1-development-plan.md` — детальный план разработки авторазвертывателя до v1: команды, фазы, проверки, acceptance criteria и граница минимально полезного инструмента. Phase 1 baseline, Phase 2 env planner, Phase 3 PostgreSQL bootstrap, Phase 4 backend check/start, Phase 5 frontend prepare/start, Phase 6 one-command `up`, Phase 7 smoke gates, Phase 8 `status`/`stop` lifecycle cleanup и Phase 9 v1 hardening уже реализованы в `tools/devbootstrap.py`.
 
 - `docs/dev-bootstrap/devbootstrap-v1-operations.md` — эксплуатационная памятка devbootstrap v1: quick commands, command responsibilities, report artifact contract, timeout policy, failure handling rules and cleanup rules.
+
+
+- `docs/development/custom-uiux-evidence-manifesto-v1.md` — post-Phase-7 манифест отказа от Playwright как обязательного release-gates browser-smoke основания и перехода к легковесному кастомному UI/UX Evidence Runner.
 
 - `docs/development/release-stabilization-phase-7-regression-memory.md` — финальная фаза release stabilization: per-run regression memory, recurring REL-family counts, probe/ledger linkage and process-review triggers.
 

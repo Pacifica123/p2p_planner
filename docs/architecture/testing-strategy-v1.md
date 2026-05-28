@@ -123,6 +123,8 @@
 #### Frontend smoke / browser smoke
 Проверяют минимальный живой пользовательский путь в браузере.
 
+**Post-Phase-7 update: custom UI/UX evidence runner.** Playwright больше не считается долгосрочным обязательным основанием browser-smoke слоя. После повторных cache/revision/install-timeout failures стратегическая цель — заменить Playwright-зависимый smoke на легковесный кастомный UI/UX Evidence Runner, описанный в `docs/development/custom-uiux-evidence-manifesto-v1.md`. Пока replacement не достиг scenario parity, существующий Playwright smoke остается legacy/transition layer, а не финальная архитектурная норма.
+
 Минимум для MVP:
 - открыть приложение;
 - увидеть список рабочих пространств или пустое состояние;

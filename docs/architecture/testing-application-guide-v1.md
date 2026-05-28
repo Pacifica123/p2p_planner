@@ -20,7 +20,7 @@
 
 ### Frontend
 - Vitest unit/integration tests в `frontend/src/test/**/*.test.ts(x)`;
-- browser smoke на Playwright в `frontend/e2e/smoke/**/*.smoke.spec.ts`.
+- browser smoke сейчас находится в переходном состоянии: legacy Playwright specs в `frontend/e2e/smoke/**/*.smoke.spec.ts` должны быть заменены кастомным UI/UX Evidence Runner согласно `docs/development/custom-uiux-evidence-manifesto-v1.md`.
 
 ## 3. Предварительные условия
 
@@ -40,7 +40,7 @@ cd frontend
 npm install
 ```
 
-Для browser smoke дополнительно нужны браузеры Playwright:
+Legacy Playwright browser smoke временно требует браузеры Playwright. Целевая post-Phase-7 архитектура должна убрать это требование и заменить его системным browser discovery для кастомного UI/UX Evidence Runner:
 
 ```bash
 cd frontend
@@ -144,15 +144,21 @@ python tests/smoke_core_api.py
 - чисты ли assumptions внутри smoke;
 - не потерян ли CORS/auth wiring: `Authorization` header, refresh cookie credentials и allowlist origins.
 
-## 8. Frontend: browser smoke
+## 8. Frontend: browser smoke / UI/UX evidence
 
-Browser smoke держится маленьким и проверяет только критичный UI path.
+Browser smoke держится маленьким и проверяет только критичный UI path. Post-Phase-7 решение: Playwright является legacy transition layer, а целевым механизмом должен стать кастомный UI/UX Evidence Runner.
 
-### Запуск
+### Текущий legacy-запуск
 
 ```bash
 cd frontend
 npm run test:browser
+```
+
+### Целевой запуск после миграции
+
+```bash
+python tools/uiux_probe.py --base-url http://127.0.0.1:5173/ --scenario mocked-auth-workspace
 ```
 
 ### Что он делает сейчас
@@ -170,6 +176,18 @@ npm run test:browser
 - независимость от состояния dev-БД.
 
 Полный browser e2e против живого backend можно расширять позже, когда auth/session edge cases и local-first runtime станут стабильнее.
+
+
+
+### Почему Playwright должен быть удален из обязательного release-gates пути
+
+Playwright несколько раз становился источником инфраструктурных blocker-сигналов: browser revision drift, отсутствующий `chromium_headless_shell` и timeout на install. Поэтому дальнейшая стратегия — не расширять Playwright-слой, а перенести цели browser smoke в кастомный runner:
+
+- открыть UI в системном браузере;
+- собрать DOM/console/storage/network evidence;
+- проверить JS boot, router, actionable controls, form submit и state effects;
+- запускать real-backend путь только против managed runtime/write-safe DB;
+- удалить Playwright из deps/scripts/devbootstrap/docs только после acceptance parity.
 
 ## 9. Полезный минимальный сценарий перед коммитом
 
