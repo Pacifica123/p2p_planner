@@ -12,8 +12,8 @@
 | Backend | cargo default tests, DB ignored tests | Ignored DB tests are covered by separate DB-safe gate. |
 | Backend smoke | Python API smoke first/second run | Requires isolated DB/runtime or explicit disposable DB consent. |
 | Frontend | prepare deps, build, unit/integration | Missing deps are infra failures, not product failures. |
-| UI/browser | legacy browser smoke, future UI/UX Evidence Runner | Playwright is transitional; target runner uses system browser evidence. |
-| Real backend UI | frontend scenario against managed backend/test DB | Explicit opt-in until isolated runtime is stable. |
+| UI/browser | UIX boot/core-flow, legacy optional browser smoke | Playwright is transitional; the project-owned UIX runner uses system browser evidence without mandatory browser downloads. |
+| Real backend UI | `frontend_uiux_real_backend_core_flow` against managed frontend/backend/test DB | Preferred product-path proof for release confidence; legacy no-mock browser path remains optional transition evidence. |
 | Docs/release | README commands, known limitations, checklist | Low cost; always run. |
 | Clean-machine | sandbox dry/deps/runtime profiles | Optional until core gates are clean. |
 
@@ -54,11 +54,11 @@ v1-release-readiness.md
 | `prepared-local` | Prepare local caches/dependencies. |
 | `isolated-db` | Use managed/disposable DB for write-capable gates. |
 | `managed-runtime` | Start owned backend/frontend on dynamic ports against isolated DB. |
-| `full-local-release` | Highest local signal: deps, managed DB/runtime, real UI path, clean-machine dry. |
+| `full-local-release` | Highest local signal: deps, managed DB/runtime, UIX real-backend product path, clean-machine dry. |
 
 ## Playwright transition note
 
-The original v2 plan used Playwright as the browser-smoke implementation and added `playwright_install` as a controlled gate. After repeated browser revision/install failures, Playwright is considered a legacy transition layer. Future release-gates work should introduce `frontend_uiux_evidence` and retire Playwright from the mandatory path once parity is proven.
+The original v2 plan used Playwright as the browser-smoke implementation and added `playwright_install` as a controlled gate. After repeated browser revision/install failures, Playwright is considered a legacy transition layer. `frontend_uiux_real_backend_core_flow` is now accepted by the automated release-confidence scorecard as the preferred real-backend product-path proof; the legacy no-mock browser path remains optional until it is retired or kept only as supplemental evidence.
 
 ## Done criteria
 

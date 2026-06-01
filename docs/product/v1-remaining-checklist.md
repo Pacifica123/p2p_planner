@@ -124,14 +124,15 @@
 
 ## 7. Testing and release gates
 
-Автоматизация будущего полного прогона этого блока зафиксирована в `docs/dev-bootstrap/devbootstrap-v2-release-gates-plan.md`. До реализации v2 эти пункты остаются ручными gates; важно не считать mocked browser smoke заменой real backend browser path.
+Статус: in progress после release-evidence checkpoint. `frontend_uiux_real_backend_core_flow` теперь считается основным product-path доказательством в automated release-confidence scorecard, если проходит против managed frontend/backend/test DB. Полный свежий `release-gates` bundle всё ещё нужен; mocked UI/browser сигналы сами по себе не закрывают real-backend cap.
 
 - [ ] `cargo test`.
 - [ ] `python tests/smoke_core_api.py`.
 - [ ] `npm run build`.
 - [ ] `npm run test:run`.
 - [ ] `npm run test:browser`.
-- [ ] Browser smoke проверяет реальный backend path.
+- [x] Release confidence принимает UIX real-backend core flow как доказательство real backend product path.
+- [ ] Свежий `release-gates --profile full-local-release` bundle доказывает real backend product path на этой машине.
 - [ ] Smoke идемпотентен на повторных прогонах.
 - [ ] Clean-machine quickstart проверен.
 - [ ] README соответствует реальному запуску.

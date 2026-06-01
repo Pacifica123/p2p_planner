@@ -1,6 +1,6 @@
 # Release-gates test database
 
-`devbootstrap release-gates` deliberately treats DB-writing checks as unsafe unless a write-safe database target is explicit. This keeps regular dev data from being modified by backend smoke, DB integration tests, or the real-backend browser path.
+`devbootstrap release-gates` deliberately treats DB-writing checks as unsafe unless a write-safe database target is explicit. This keeps regular dev data from being modified by backend smoke, DB integration tests, UIX real-backend evidence, or the legacy real-backend browser path.
 
 
 
@@ -16,7 +16,7 @@ python tools/devbootstrap.py release-gates --profile managed-runtime
 python tools/devbootstrap.py release-gates --profile full-local-release --dry-run
 ```
 
-`diagnostic` is the safe baseline. `prepared-local` allows dependency/browser cache preparation. `isolated-db` creates a managed PostgreSQL test DB. `managed-runtime` combines managed DB plus owned backend/frontend processes on dynamic ports. `full-local-release` combines dependency preparation, managed DB/runtime, the real-backend browser path and a dry clean-machine sandbox.
+`diagnostic` is the safe baseline. `prepared-local` allows dependency/cache preparation. `isolated-db` creates a managed PostgreSQL test DB. `managed-runtime` combines managed DB plus owned backend/frontend processes on dynamic ports. `full-local-release` combines dependency preparation, managed DB/runtime, the UIX real-backend product path and a dry clean-machine sandbox. The legacy no-mock Playwright real-backend path remains an explicit optional transition gate.
 
 Profiles set defaults only. Explicit flags still win, including boolean opt-out forms such as:
 
@@ -149,7 +149,7 @@ export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/p2p_planner
 
 ## Live backend smoke
 
-The Python smoke and real-backend browser path talk to an already running backend. For a fully safe release signal, that backend must also be started against the test database.
+The Python smoke, UIX real-backend core flow and legacy real-backend browser path talk to an already running backend. For a fully safe release signal, that backend must also be started against the test database.
 
 A local env setup can look like this:
 
@@ -172,18 +172,15 @@ BASE_URL=http://127.0.0.1:18080/api/v1 TEST_DATABASE_URL=postgres://postgres:pos
 
 The second smoke run is intentional: release gates use it to catch non-idempotent smoke behavior.
 
-A fuller release review can then run:
+A fuller UIX-first release review can then run:
 
 ```bash
 python tools/devbootstrap.py release-gates \
-  --managed-test-db \
-  --managed-runtime \
-  --prepare-deps \
-  --install-playwright-browsers \
-  --include-real-backend-browser \
-  --include-clean-machine \
-  --clean-machine-profile=dry
+  --profile full-local-release \
+  --test-db-retention=keep-on-failure
 ```
+
+This profile prepares dependencies, creates a managed test DB, starts owned backend/frontend runtime, runs the UIX real-backend core flow and includes a dry clean-machine sandbox. To collect the legacy no-mock Playwright signal as supplemental transition evidence, add `--include-real-backend-browser` and, only when needed, `--install-playwright-browsers`.
 
 ## Clean-machine sandbox gate
 

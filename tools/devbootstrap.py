@@ -6488,7 +6488,7 @@ def release_gate_check_known_limitations(project_root: Path) -> tuple[str, str, 
         message = "No release notes / known limitations document with an explicit limitations marker was found."
         evidence.extend(["status: failed", message])
         return "failed", "release_notes_known_limitations_missing", message, evidence, details
-    important_markers = ["real backend browser", "clean-machine", "release-gates"]
+    important_markers = ["real backend product path", "clean-machine", "release-gates"]
     missing_markers = [marker for marker in important_markers if marker.lower() not in found_text.lower()]
     details["missingRecommendedMarkers"] = missing_markers
     if missing_markers:
@@ -6508,7 +6508,7 @@ def release_gate_check_v1_checklist(project_root: Path) -> tuple[str, str, str, 
         "`npm run build`",
         "`npm run test:run`",
         "`npm run test:browser`",
-        "Browser smoke проверяет реальный backend path",
+        "UIX real-backend core flow",
         "Clean-machine quickstart проверен",
     ]
     path = project_root / "docs" / "product" / "v1-remaining-checklist.md"
@@ -10195,14 +10195,26 @@ def release_confidence_cross_platform(command_resolution: dict[str, Any] | None,
 
 def release_confidence_product_path(result: ReleaseGatesResult) -> dict[str, Any]:
     by_name = {gate.name: gate for gate in result.gates}
+
     def passed(name: str) -> bool:
         gate = by_name.get(name)
         return bool(gate and release_gates_normalized_status(gate) == "passed")
+
     backend_smoke = passed("backend_python_smoke_first") or passed("backend_python_smoke_second")
     frontend_build = passed("frontend_build")
     frontend_unit = passed("frontend_unit_integration")
-    browser_mocked = passed("frontend_browser_smoke")
-    real_backend_browser = passed("browser_real_backend_path")
+    legacy_browser_mocked = passed("frontend_browser_smoke")
+    uiux_mocked_core_flow = passed("frontend_uiux_mocked_core_flow")
+    mocked_ui_path = legacy_browser_mocked or uiux_mocked_core_flow
+    legacy_real_backend_browser = passed("browser_real_backend_path")
+    uiux_real_backend_core_flow = passed("frontend_uiux_real_backend_core_flow")
+    real_backend_product_path = legacy_real_backend_browser or uiux_real_backend_core_flow
+    accepted_real_backend_gate = None
+    if uiux_real_backend_core_flow:
+        accepted_real_backend_gate = "frontend_uiux_real_backend_core_flow"
+    elif legacy_real_backend_browser:
+        accepted_real_backend_gate = "browser_real_backend_path"
+
     score = 0
     if backend_smoke:
         score += 5
@@ -10210,9 +10222,9 @@ def release_confidence_product_path(result: ReleaseGatesResult) -> dict[str, Any
         score += 3
     if frontend_unit:
         score += 2
-    if browser_mocked:
+    if mocked_ui_path:
         score += 2
-    if real_backend_browser:
+    if real_backend_product_path:
         score += 5
     if result.dry_run:
         score = min(score, 3)
@@ -10222,9 +10234,18 @@ def release_confidence_product_path(result: ReleaseGatesResult) -> dict[str, Any
         "backendSmokePassed": backend_smoke,
         "frontendBuildPassed": frontend_build,
         "frontendUnitPassed": frontend_unit,
-        "mockedBrowserSmokePassed": browser_mocked,
-        "realBackendBrowserPassed": real_backend_browser,
-        "reason": "Real backend product path is covered." if real_backend_browser else "Real-backend product path is not proven in this run.",
+        "mockedBrowserSmokePassed": legacy_browser_mocked,
+        "uiuxMockedCoreFlowPassed": uiux_mocked_core_flow,
+        "mockedUiPathPassed": mocked_ui_path,
+        "realBackendBrowserPassed": legacy_real_backend_browser,
+        "uiuxRealBackendCoreFlowPassed": uiux_real_backend_core_flow,
+        "realBackendProductPathPassed": real_backend_product_path,
+        "acceptedRealBackendGate": accepted_real_backend_gate,
+        "reason": (
+            f"Real backend product path is covered by `{accepted_real_backend_gate}`."
+            if accepted_real_backend_gate
+            else "Real-backend product path is not proven in this run."
+        ),
     }
 
 
@@ -10268,8 +10289,8 @@ def release_confidence_caps(
         caps.append({"id": "required-gate-failed", "maximumClass": "partial_signal", "active": True, "reason": "A required gate failed."})
     if float(repeatability.get("reproducibilityIndex") or 0.0) < 0.8:
         caps.append({"id": "repeatability-not-proven", "maximumClass": "internal_candidate", "active": True, "reason": "No accepted two-run/repeatability evidence at threshold 0.8."})
-    if not product_path.get("realBackendBrowserPassed"):
-        caps.append({"id": "real-backend-product-path-missing", "maximumClass": "internal_candidate", "active": True, "reason": "Real-backend product path was not proven."})
+    if not product_path.get("realBackendProductPathPassed"):
+        caps.append({"id": "real-backend-product-path-missing", "maximumClass": "internal_candidate", "active": True, "reason": "Real-backend product path was not proven by UIX or legacy no-mock browser evidence."})
     if artifact_quality.get("redactionStatus") != "ok" or artifact_quality.get("artifactCompletenessStatus") not in {"ok", "pending"}:
         caps.append({"id": "artifact-not-shareable", "maximumClass": "partial_signal", "active": True, "reason": "Redaction or artifact completeness is not accepted."})
     if result.dry_run:
@@ -12435,6 +12456,38 @@ def case_self_check_managed_runtime_dynamic_cors_origin() -> str:
     return "managed runtime backend CORS includes the dynamic frontend origin"
 
 
+def case_self_check_release_confidence_accepts_uiux_real_backend_path() -> str:
+    result = ReleaseGatesResult(
+        generated_at=iso_now(),
+        tool_version=TOOL_VERSION,
+        project_root=None,
+        invoked_from="self-check",
+        run_id="selfcheck",
+        dry_run=False,
+        timeout_seconds=TIMEOUT_POLICY["release_gate"],
+        gates=[
+            GateResult("backend_python_smoke_first", "ok", "ok", "gate completed", "backend"),
+            GateResult("frontend_build", "ok", "ok", "gate completed", "frontend"),
+            GateResult("frontend_unit_integration", "ok", "ok", "gate completed", "frontend"),
+            GateResult("frontend_uiux_mocked_core_flow", "ok", "ok", "gate completed", "."),
+            GateResult("frontend_uiux_real_backend_core_flow", "ok", "ok", "gate completed", "."),
+        ],
+    )
+    product_path = release_confidence_product_path(result)
+    caps = release_confidence_caps(
+        counts={"unknownRequiredGateCount": 0, "failedRequiredGateCount": 0},
+        repeatability={"reproducibilityIndex": 1.0},
+        product_path=product_path,
+        artifact_quality={"redactionStatus": "ok", "artifactCompletenessStatus": "ok"},
+        result=result,
+    )
+    assert product_path["realBackendProductPathPassed"] is True, product_path
+    assert product_path["uiuxRealBackendCoreFlowPassed"] is True, product_path
+    assert product_path["acceptedRealBackendGate"] == "frontend_uiux_real_backend_core_flow", product_path
+    assert not any(cap["id"] == "real-backend-product-path-missing" for cap in caps), caps
+    return "release confidence accepts UIX real-backend core flow as product-path evidence"
+
+
 def case_self_check_release_gates_frontend_dependency_preflight() -> str:
     with tempfile.TemporaryDirectory(prefix="devbootstrap-selfcheck-rg-frontend-") as tmp:
         root = Path(tmp)
@@ -12830,6 +12883,7 @@ def build_self_check_result(project_root: Path | None, invoked_from: Path) -> Se
     self_check_case(result, "managed_runtime_specs", case_self_check_managed_runtime_specs)
     self_check_case(result, "managed_runtime_uiux_boot_starts_frontend", case_self_check_managed_runtime_uiux_boot_starts_frontend)
     self_check_case(result, "managed_runtime_dynamic_cors_origin", case_self_check_managed_runtime_dynamic_cors_origin)
+    self_check_case(result, "release_confidence_accepts_uiux_real_backend_path", case_self_check_release_confidence_accepts_uiux_real_backend_path)
     self_check_case(result, "release_gates_frontend_dependency_preflight", case_self_check_release_gates_frontend_dependency_preflight)
     self_check_case(result, "frontend_prepare_modes", case_self_check_frontend_prepare_modes)
     self_check_case(result, "frontend_direct_vite_launch_command", case_self_check_frontend_direct_vite_launch_command)

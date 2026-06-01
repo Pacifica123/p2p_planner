@@ -7,7 +7,7 @@ Freshness note: текущий implementation-status см. в `docs/product/v1-e
 ## Ограничающие условия release-gates
 
 - `python tools/devbootstrap.py release-gates` агрегирует backend, frontend, browser, docs и optional clean-machine checks, но результат нельзя считать полным v1 release signal, если есть `skipped_prerequisite`, `infra_failed`, `partial_pass` или `not_implemented` gates.
-- Mocked browser smoke проверяет boot/auth/workspace rendering, но не закрывает real backend browser path. Для этого есть отдельный gate `browser_real_backend_path`, который запускается через `--include-real-backend-browser` и требует live backend + write-safe DB permission.
+- Mocked browser/UIX smoke проверяет boot/auth/workspace rendering, но не закрывает real backend product path. Основной gate для этого теперь `frontend_uiux_real_backend_core_flow` в managed runtime/test DB; legacy `browser_real_backend_path` остается optional transition signal через `--include-real-backend-browser`.
 - Clean-machine quickstart сделан optional: его нужно включать явно через `--include-clean-machine`, потому что он копирует проект во временный каталог и прогоняет safe bootstrap sequence.
 - DB-writing smoke/browser gates не должны писать в обычную dev-БД без явного `TEST_DATABASE_URL` или `--allow-dev-db-write`.
 - Playwright browser binaries считаются infrastructure prerequisite. Их отсутствие классифицируется отдельно и не должно маскироваться как frontend regression.

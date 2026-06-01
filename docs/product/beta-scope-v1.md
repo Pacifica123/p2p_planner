@@ -108,7 +108,7 @@ Beta **не должна** пытаться одновременно стать:
 
 Следующие зоны нельзя выпускать как будто они полностью готовы, даже после закрытых baseline-патчей:
 
-- release confidence без актуального `release-gates`/UIX bundle, который доказывает real backend browser path;
+- release confidence без актуального `release-gates`/UIX bundle, который доказывает real backend product path;
 - invite-grade remote beta без account-management UX, password recovery/invite policy, rate limits and deployment-profile evidence;
 - import execution/restore без отдельного import-as-copy или restore-safety patch;
 - integrations/webhooks как готовые пользовательские интеграции;
@@ -543,7 +543,7 @@ Mobile-чат имеет смысл открывать после выполне
 
 | Area | Что сделать | Почему blocker |
 |---|---|---|
-| Release evidence | Прогнать или честно классифицировать `release-gates`/UIX real backend browser path на managed runtime/test DB | Без свежего bundle нельзя отличить готовый user path от старой надежды в документах |
+| Release evidence | Прогнать или честно классифицировать `release-gates`/UIX real backend product path на managed runtime/test DB | Без свежего bundle нельзя отличить готовый user path от старой надежды в документах |
 | Contract parity guard | Подтвердить, что OpenAPI, backend routes и frontend API calls не разошлись после закрытых baseline slices | Beta не должна содержать UI-кнопки, ведущие в 404/501/not_implemented |
 | Auth/account beta profile | Решить, достаточно ли `beta-local-self-host`, или нужен `beta-invite-preview`; для invite-preview закрыть account recovery/invite/rate-limit evidence | Нельзя случайно назвать local-dev posture internet-facing beta |
 | Import boundary | Явно оставить v1 на export + preview или реализовать import-as-copy execution отдельным патчем | Пользовательские данные нельзя подвергать destructive/ambiguous restore behavior |

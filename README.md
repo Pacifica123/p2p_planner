@@ -206,7 +206,7 @@ curl -X POST http://127.0.0.1:18080/api/v1/integrations/import-export/imports/pr
 
 По новым принципам следующий путь после truth-sync начинается с evidence, а не с очередной широкой фичи:
 
-1. доказать через `release-gates`/UIX real-backend browser/core flow на managed runtime/test DB или честно классифицировать отсутствующие prerequisites;
+1. прогнать свежий `release-gates --profile full-local-release` bundle: scorecard уже принимает `frontend_uiux_real_backend_core_flow` как основной real-backend product-path proof;
 2. после этого выбрать один узкий slice: account-management/auth UX hardening, import-as-copy/apply flow после preview или release notes/known limitations refresh по фактическому gate bundle;
 3. не планировать старые blocker/stub labels как будущие работы, если `docs/product/v1-execution-roadmap.md` уже помечает соответствующий baseline как закрытый.
 

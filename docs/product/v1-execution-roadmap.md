@@ -18,7 +18,7 @@ The next development path should not start with another product feature. The pro
 Path from here:
 
 1. **Truth-sync checkpoint** — align active docs so old blocker labels no longer drive planning. This is the first patch on the path.
-2. **Release evidence checkpoint** — make `release-gates`/UIX prove the real backend browser path and repeatable smoke assumptions, or classify remaining prerequisites honestly.
+2. **Release evidence checkpoint** — make `release-gates`/UIX prove the real backend product path and repeatable smoke assumptions, or classify remaining prerequisites honestly.
 3. **Beta hardening slices** — only after the evidence checkpoint, choose the next narrow product/safety slice: account-management/auth UX hardening or import-as-copy execution after preview.
 4. **Release review** — update release notes/known limitations after the gates produce a trustworthy bundle.
 
@@ -51,7 +51,7 @@ After the patch, active docs agree that labels/checklists/comments, local-first 
 | Sync baseline | `Done baseline` | Backend registers replicas, accepts idempotent push events, exposes pull by cursor and records tombstone-aware core delete/archive events; frontend has visible sync baseline state. | Keep as backend-coordinated sync baseline. Full P2P, merge UI and automatic projection replay are not v1 promises. |
 | Export / backup safety net | `Partial` | Board/workspace backup export returns a versioned application-level JSON bundle; import preview validates manifest and stays non-destructive. | Keep export and preview in v1. Do not promise destructive restore. Import-as-copy execution is a later slice if selected. |
 | Integrations/webhooks | `Deferred` | Provider registry and webhook/import/export job boundaries exist mostly as adapter/stub surfaces. | Do not market as user-ready v1 integrations. |
-| Release gates / UI evidence | `Needs evidence` | `devbootstrap release-gates`, managed runtime/test DB and UIX gates exist, but the next release-relevant fact must be proven through a current real-backend evidence run. | Next practical safety patch should make the real backend browser path and repeatability status explicit. |
+| Release gates / UI evidence | `Needs evidence` | `devbootstrap release-gates`, managed runtime/test DB and UIX gates exist, but the next release-relevant fact must be proven through a current real-backend evidence run. | Next practical safety patch should make the real backend product path and repeatability status explicit. |
 | P2P / relay / bootstrap | `Out of v1` | Architecture remains future-ready; no mandatory user-facing p2p runtime is promised for v1. | Do not block v1 on full p2p. |
 | Mobile | `Out of v1` | Native mobile is a later product line after web/local-first/sync stabilization. | Do not include in v1 gates. |
 
@@ -115,7 +115,7 @@ The next patch after this truth-sync update should be a **safety/evidence patch*
 Recommended verified fact:
 
 ```text
-After the patch, release-gates can prove the real backend browser core flow against a managed runtime/test DB, or the report classifies every missing prerequisite without counting it as product success.
+After the patch, release-gates can prove the real backend product path against a managed runtime/test DB, or the report classifies every missing prerequisite without counting it as product success.
 ```
 
 Cheapest sufficient evidence for that patch:

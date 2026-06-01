@@ -59,3 +59,10 @@ The first manual Linux run proved browser discovery and frontend startup, but ex
 
 This keeps `boot` focused on “the app can open and React does not crash”, while `mocked-core-flow` and `real-backend-core-flow` remain responsible for proving the actual user path and API behavior.
 
+
+
+## Release confidence checkpoint
+
+`frontend_uiux_real_backend_core_flow` is now the primary release-confidence proof for the real backend product path. When it passes inside `release-gates` against managed frontend/backend/test DB, `release-confidence-gate.json/md` may count the run as having real-backend product-path evidence and lift the `real-backend-product-path-missing` cap.
+
+The legacy Playwright `browser_real_backend_path` gate remains optional and can still provide equivalent transitional evidence, but release confidence is no longer coupled exclusively to Playwright. This matches the project-owned UIX direction: behavior-first evidence, no mandatory browser downloads, and explicit prerequisite classification when a system browser or safe DB/runtime is unavailable.
