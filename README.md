@@ -204,9 +204,11 @@ curl -X POST http://127.0.0.1:18080/api/v1/integrations/import-export/imports/pr
 
 ## Что имеет смысл делать дальше
 
-- провести production-hardening auth/session flow и account-management UX;
-- довести import-as-copy/apply flow после preview;
-- расширить release gates и browser smoke на real backend path.
+По новым принципам следующий путь после truth-sync начинается с evidence, а не с очередной широкой фичи:
+
+1. доказать через `release-gates`/UIX real-backend browser/core flow на managed runtime/test DB или честно классифицировать отсутствующие prerequisites;
+2. после этого выбрать один узкий slice: account-management/auth UX hardening, import-as-copy/apply flow после preview или release notes/known limitations refresh по фактическому gate bundle;
+3. не планировать старые blocker/stub labels как будущие работы, если `docs/product/v1-execution-roadmap.md` уже помечает соответствующий baseline как закрытый.
 
 ## Тестирование
 

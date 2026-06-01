@@ -48,8 +48,9 @@
 
 | Area | Decision |
 |---|---|
-| Product | MVP is web-first Kanban with workspaces, boards, columns, cards, appearance and activity/audit surface. |
-| Local-first | Local-first architecture remains the target; backend remains required for MVP auth/API/sync coordination. |
+| Product | MVP is web-first Kanban with workspaces, boards, columns, cards, labels/checklists/comments, appearance, activity/audit and backup/export preview surface. |
+| Current v1 status | Read `product/v1-execution-roadmap.md` first; it is the active truth surface for done/partial/deferred/out-of-scope status. |
+| Local-first | Local-first runtime and backend-coordinated sync are baseline-implemented for core web flow, but release evidence must still prove the final beta claim. |
 | P2P | Future-ready, not mandatory for v1 release. |
 | Development planning | Current mode is verified product acceleration: one user/release/truth fact per patch, cheapest sufficient evidence, no ownerless debt. |
 | Devctl | Patch conveyor applies small reproducible devctl patches, not full project archives. |

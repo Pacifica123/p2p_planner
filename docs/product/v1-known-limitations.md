@@ -2,6 +2,8 @@
 
 Этот документ фиксирует known limitations для v1/beta перед финальным release review. Он нужен не как маркетинговые release notes, а как честная граница того, что release-gates должны подсветить перед выпуском.
 
+Freshness note: текущий implementation-status см. в `docs/product/v1-execution-roadmap.md`. Закрытые baseline-slices не исчезают из limitations: они становятся зонами, которые release-gates должны доказать или честно классифицировать, а не будущими blocker-работами сами по себе.
+
 ## Ограничающие условия release-gates
 
 - `python tools/devbootstrap.py release-gates` агрегирует backend, frontend, browser, docs и optional clean-machine checks, но результат нельзя считать полным v1 release signal, если есть `skipped_prerequisite`, `infra_failed`, `partial_pass` или `not_implemented` gates.

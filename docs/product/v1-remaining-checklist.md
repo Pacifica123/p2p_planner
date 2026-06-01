@@ -159,14 +159,22 @@ v1.0.0-beta.1
 v1.0.0-web-preview.1
 ```
 
-## Короткая формула продолжения
+## Короткая формула продолжения после truth-sync
 
-1. remaining contract parity;
-2. minimal card enrichment;
-3. local-first runtime;
-4. sync baseline;
-5. export/backup;
-6. security hardening;
-7. tests/release gates.
+Закрытые product/runtime baseline больше не должны планироваться как будущие блокеры:
 
-Самый первый следующий практический патч: **minimal card enrichment slice** — labels/checklists/comments вместо backend-заглушек.
+1. contract parity baseline — закрыто;
+2. minimal card enrichment — закрыто;
+3. local-first runtime baseline — закрыто;
+4. sync baseline — закрыто;
+5. export/backup safety net — закрыто;
+6. auth/security hardening baseline — закрыто.
+
+Следующий практический патч по новым принципам: **release evidence checkpoint** — доказать real-backend browser/core flow через `release-gates`/UIX на managed runtime/test DB или честно классифицировать отсутствующие prerequisites, не считая их product success.
+
+После этого выбирать только один следующий slice:
+
+- account-management/auth UX hardening для выбранного beta profile;
+- import-as-copy execution после безопасного preview;
+- Playwright retirement/optionalization после принятого UIX parity;
+- release notes / known limitations refresh по фактическому gate bundle.

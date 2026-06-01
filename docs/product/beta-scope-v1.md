@@ -6,6 +6,16 @@
 
 > Этот документ дополняет `docs/product/mvp-scope-v1.md`. MVP scope описывает желаемую первую рабочую версию в широком смысле, а beta scope отвечает на более жесткий вопрос: **что именно должно быть доведено, проверено и упаковано, чтобы это можно было честно назвать v1 beta**.
 
+## Freshness note
+
+Этот документ задает beta-scope и release expectations. Текущий implementation-status теперь нужно читать через `docs/product/v1-execution-roadmap.md`: старые формулировки про labels/checklists/comments, local-first, sync, export и auth/security как еще не реализованные блокеры были superseded последующими baseline-патчами.
+
+Активная граница после truth-sync:
+
+- labels/checklists/comments, local-first runtime, backend-coordinated sync baseline, export backup preview и auth/security baseline считаются baseline-implemented;
+- release-gates/real-backend browser evidence, invite-grade account UX и import-as-copy execution остаются отдельными decision points;
+- p2p/relay, native mobile, destructive restore, rich conflict UI and production SaaS posture остаются вне v1 unless a later scope patch changes that explicitly.
+
 ---
 
 ## 1. Зачем нужен beta scope
@@ -96,18 +106,18 @@ Beta **не должна** пытаться одновременно стать:
 
 ### 4.2. Что нельзя считать beta-ready
 
-Следующие зоны пока нельзя выпускать как будто они готовы:
+Следующие зоны нельзя выпускать как будто они полностью готовы, даже после закрытых baseline-патчей:
 
-- `labels`, `checklists`, `comments` имеют зарезервированные backend modules/routes, но фактически остаются `not_implemented` surface;
-- `sync` routes зарезервированы, но `replicas / status / push / pull` не являются рабочим sync pipeline;
-- persistent local store еще не является runtime source of truth для web UI;
-- import/export/backup endpoints пока manifest/stub-oriented и не дают полноценного пользовательского backup/restore;
-- integrations/webhooks являются adapter boundary, а не готовыми интеграциями;
-- mobile отсутствует;
-- production-grade security posture нельзя считать закрытой только потому, что базовый auth уже работает;
-- OpenAPI/backend/frontend parity нужно отдельно прогнать, потому что такие расхождения уже появлялись в процессе разработки.
+- release confidence без актуального `release-gates`/UIX bundle, который доказывает real backend browser path;
+- invite-grade remote beta без account-management UX, password recovery/invite policy, rate limits and deployment-profile evidence;
+- import execution/restore без отдельного import-as-copy или restore-safety patch;
+- integrations/webhooks как готовые пользовательские интеграции;
+- full p2p/relay/bootstrap runtime;
+- full conflict-resolution/merge UI;
+- native mobile;
+- production SaaS security posture.
 
-Beta scope должен относиться к этим пунктам как к release blockers или explicit out-of-scope, но не как к “почти готово”.
+Labels/checklists/comments, local-first runtime, sync baseline, export backup preview and auth/security baseline are no longer current blockers by themselves; they remain areas that release-gates must prove or honestly classify before beta naming.
 
 ---
 
@@ -529,20 +539,17 @@ Mobile-чат имеет смысл открывать после выполне
 
 ## 10. Beta backlog
 
-### 10.1. P0 — release blockers
+### 10.1. P0 — release blockers after baseline patches
 
 | Area | Что сделать | Почему blocker |
 |---|---|---|
-| Contract parity | Сверить OpenAPI, backend routes и frontend API calls | Beta не должна содержать UI-кнопки, ведущие в 404/501 |
-| Reachable stubs | Убрать, скрыть или реализовать reachable `not_implemented` labels/checklists/comments/sync paths | Нельзя выпускать зарезервированный surface как готовую фичу |
-| Core archive/delete semantics | Выровнять workspace/board/card archive/delete routes и UI behavior | Lifecycle должен быть понятным и тестируемым |
-| Labels/checklists/comments | Реализовать minimal useful slice или убрать из beta UI/docs | Иначе карточка не соответствует product promise |
-| Local-first runtime | Ввести persistent local store, pending ops и offline status для core flow | Без этого beta не доказывает local-first |
-| Sync baseline | Реализовать replica/push/pull/cursor/idempotency для core sync | Без этого local-first остается одиночным client cache |
-| Auth/security gates | Проверить dev header disabled, CORS/CSRF, rate limits, refresh/session behavior | Без этого remote beta небезопасна |
-| Tests | Backend smoke, frontend build/tests/browser smoke, auth negative cases, contract checks | Beta должна быть воспроизводимо проверяемой |
-| Data export | Реализовать минимальный workspace/board export or explicitly mark no-real-data beta | Пользовательские данные должны иметь путь выхода |
-| Docs | README + beta runbook + release notes отражают реальное состояние | Нельзя выпускать по устаревшим инструкциям |
+| Release evidence | Прогнать или честно классифицировать `release-gates`/UIX real backend browser path на managed runtime/test DB | Без свежего bundle нельзя отличить готовый user path от старой надежды в документах |
+| Contract parity guard | Подтвердить, что OpenAPI, backend routes и frontend API calls не разошлись после закрытых baseline slices | Beta не должна содержать UI-кнопки, ведущие в 404/501/not_implemented |
+| Auth/account beta profile | Решить, достаточно ли `beta-local-self-host`, или нужен `beta-invite-preview`; для invite-preview закрыть account recovery/invite/rate-limit evidence | Нельзя случайно назвать local-dev posture internet-facing beta |
+| Import boundary | Явно оставить v1 на export + preview или реализовать import-as-copy execution отдельным патчем | Пользовательские данные нельзя подвергать destructive/ambiguous restore behavior |
+| Release notes / limitations | Обновить known limitations по фактическому gate bundle | Release должен честно сказать, что проверено, что skipped и что deferred |
+
+Baseline-implemented areas such as labels/checklists/comments, local-first runtime, sync baseline, export backup preview and auth/security guards are no longer backlog items by themselves; they become release-evidence requirements.
 
 ### 10.2. P1 — beta completeness
 
@@ -551,8 +558,8 @@ Mobile-чат имеет смысл открывать после выполне
 | Appearance polish | Проверить темы/обои/плотность на основных экранах | Это часть “личного” ощущения приложения |
 | Activity copy | Сделать activity текст понятным пользователю | История должна помогать, а не быть raw log |
 | Member UI | Минимальный UI members/roles, если beta обещает small-team use | Иначе beta лучше позиционировать как personal-first |
-| Import preview | Добавить preview/dry-run для import-as-copy | Снижает риск порчи данных |
-| Browser smoke on real backend | Один короткий real backend e2e помимо mocked Playwright | Ловит CORS/session/runtime расхождения |
+| Import-as-copy UX | Если v1 обещает import execution, реализовать apply-as-copy после preview | Снижает риск порчи данных |
+| Real-backend browser confidence | Расширять сценарии после P0 release evidence checkpoint | Ловит CORS/session/runtime расхождения |
 | Error UX | Причесать 401/403/409/offline/sync failed states | Пользователь должен понимать, что происходит |
 
 ### 10.3. P2 — post-beta
@@ -580,9 +587,9 @@ Beta нельзя выпускать, если:
 - card drag-and-drop может привести к white screen;
 - frontend показывает действия, которых нет в backend;
 - reachable backend route возвращает `not_implemented` для заявленной beta-фичи;
-- labels/checklists/comments находятся в промежуточном состоянии “видно, но не работает”;
+- labels/checklists/comments регрессируют в состояние “видно, но не работает”;
 - local-first/offline status не работает для core flow;
-- sync baseline не может безопасно flush/pull core changes;
+- sync baseline не может безопасно flush/pull core changes or release evidence cannot prove/classify it;
 - export/backup promise заявлен, но пользователь не может получить реальный переносимый bundle.
 
 ### 11.2. Security gates

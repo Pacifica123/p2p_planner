@@ -1,278 +1,132 @@
-# v1 execution roadmap и contract parity baseline
+# v1 execution roadmap and current truth surface
 
-Документ фиксирует не идеальную архитектурную картину, а текущее фактическое состояние проекта перед добиванием v1/beta. Его задача — не дать перепутать:
+- Status: canonical planning snapshot after `development-principles-v2`
+- Scope: current v1/beta readiness, next safe patches and release naming guardrails
+- Supersedes: older blocker/stub notes in this file before the card enrichment, local-first, sync, export and auth-hardening slices were closed
+- Related docs: `docs/development/development-planning-and-engineering-principles-v2.md`, `docs/product/v1-remaining-checklist.md`, `docs/product/v1-known-limitations.md`, `docs/product/beta-scope-v1.md`, root `README.md`
 
-- **реализованную рабочую фичу**;
-- **частично рабочий вертикальный срез**;
-- **API/модуль, который уже заведен, но внутри все еще stub/not implemented**;
-- **future-ready контракт, который не должен выглядеть как обещанная v1-фича**.
+This document is not an aspirational architecture map. It is the active answer to:
 
-Этот файл должен быть первой точкой входа для следующих патчей по v1: сначала сверяемся с ним, потом меняем код/контракты/docs.
+```text
+What can we honestly say is implemented now, what remains partial, and what should the next patch prove?
+```
 
-## Статусы
+## Planning decision
 
-| Статус | Значение |
+The next development path should not start with another product feature. The project already closed several product/runtime baselines in a row: card enrichment, local-first runtime, sync baseline, export safety net and auth/security hardening. Under the v2 principles this creates a truth/evidence checkpoint.
+
+Path from here:
+
+1. **Truth-sync checkpoint** — align active docs so old blocker labels no longer drive planning. This is the first patch on the path.
+2. **Release evidence checkpoint** — make `release-gates`/UIX prove the real backend browser path and repeatable smoke assumptions, or classify remaining prerequisites honestly.
+3. **Beta hardening slices** — only after the evidence checkpoint, choose the next narrow product/safety slice: account-management/auth UX hardening or import-as-copy execution after preview.
+4. **Release review** — update release notes/known limitations after the gates produce a trustworthy bundle.
+
+Outcome for this truth-sync patch:
+
+```text
+After the patch, active docs agree that labels/checklists/comments, local-first runtime, sync baseline, export backup preview and auth/security hardening are baseline-implemented, while release-gates evidence, invite-grade auth/account UX and destructive/non-destructive import execution remain the next decision points.
+```
+
+## Status vocabulary
+
+| Status | Meaning |
 | --- | --- |
-| `Done` | Фича есть в backend/frontend/docs и может использоваться в текущем ручном сценарии. |
-| `Partial` | Есть рабочий slice, но границы или hardening еще не закрыты. |
-| `Blocker` | Нельзя обещать v1/beta без реализации, скрытия из UI или явного изменения scope. |
-| `Contract mismatch` | Backend, frontend и/или OpenAPI описывают разные маршруты/семантику. |
-| `Deferred` | Осознанно отложено после v1 и не должно быть видимой пользовательской фичей. |
-| `Internal stub` | Контракт/модуль существует для будущего, но текущий ответ stub-only/manifest-only/not implemented. |
-| `Out of v1` | Не входит в v1 даже как must-have beta path. |
+| `Done baseline` | The v1 slice is implemented enough for the declared beta path and has source-level evidence, but may still have known v1 limitations. |
+| `Partial` | A useful slice exists, but release confidence or product semantics are not complete enough to treat as fully closed. |
+| `Needs evidence` | Code/docs suggest the path exists, but the next patch must prove it with the appropriate gate before dependent work continues. |
+| `Deferred` | Intentionally post-v1 or future-ready only. It must not be presented as a ready user feature. |
+| `Out of v1` | Not part of the v1 release promise. |
 
-## Текущая правда о состоянии проекта
+## Current v1 truth table
 
-| Область | Статус | Что считать правдой сейчас | Решение для v1 |
+| Area | Status | Current truth | v1 decision |
 | --- | --- | --- | --- |
-| Auth/session | `Partial` | Frontend использует sign-up/sign-in/refresh/session/sign-out и `Authorization: Bearer ...`. `X-User-Id` остается legacy/dev-test fallback за флагом. | Довести security gates, negative auth smoke и production/dev profile boundaries. |
-| Workspace/board/column/card core CRUD | `Partial` | Основной flow уже рабочий: создать workspace, board, columns, cards; открыть board; редактировать card; move между columns. | Закрыть route mismatches вокруг archive/delete и reorder. |
-| Card DnD между columns | `Done` | Межколоночное перемещение использует `POST /cards/{cardId}/move`, backend route есть. | Оставить в v1 path. |
-| Card DnD внутри одной column | `Done` | Frontend вызывает `POST /columns/{columnId}/cards/reorder`; backend route теперь реализован и возвращает список карточек колонки в `position asc`. | Оставить в v1 path и покрывать smoke/checks. |
-| Workspace/board archive buttons | `Done` | UI вызывает `POST /workspaces/{workspaceId}/archive` и `POST /boards/{boardId}/archive`; backend routes теперь реализованы через `archived_at`, а `DELETE` остается отдельной soft-delete/deletion семантикой. | Оставить archive как пользовательскую lifecycle-операцию v1; delete не смешивать с archive. |
-| Card archive/unarchive | `Done` | Backend, frontend и OpenAPI используют `POST /cards/{cardId}/archive` и `/unarchive`. | Оставить в v1 path. |
-| Appearance/customization | `Done` | User appearance и board appearance заведены, есть backend/frontend/API wiring и smoke/integration контекст. | Оставить в v1 path. |
-| Activity/history/audit | `Partial` | Board activity, card activity, workspace audit log заведены и наполняются core mutation-flow. | Оставить в v1 path, но помнить: labels/checklists/comments пока не пишут activity, потому что сами не реализованы. |
-| Labels | `Blocker` | Backend routes заведены, но repo возвращает `not_implemented`; OpenAPI path shape отличается от backend. Видимого frontend UI сейчас нет. | Для v1 либо реализовать минимальный slice, либо явно скрыть/отложить. Рекомендация: реализовать минимальный slice. |
-| Checklists | `Blocker` | Backend routes заведены, но repo возвращает `not_implemented`; есть path mismatch по checklist item routes. Видимого frontend UI сейчас нет. | Для v1 либо реализовать минимальный slice, либо явно скрыть/отложить. Рекомендация: реализовать минимальный slice. |
-| Comments | `Blocker` | Backend routes заведены, но repo возвращает `not_implemented`; видимого frontend UI сейчас нет. | Для v1 либо реализовать минимальный slice, либо явно скрыть/отложить. Рекомендация: реализовать минимальный slice. |
-| Local-first runtime | `Blocker` | Docs есть, но в frontend runtime пока нет persistent local store, pending ops, offline/reconnect queue или visible sync state. | Нужен отдельный implementation patch до beta, если релиз называется local-first beta. |
-| Sync routes | `Blocker` | Routes заведены, repo возвращает `not_implemented`; OpenAPI не полностью совпадает с backend methods. | Нужен backend-coordinated sync baseline или честное переименование релиза в web-preview. |
-| Import/export/backup | `Internal stub` | Есть provider/capabilities/import-export endpoints. Portable export возвращает manifest-oriented stub, import/restore не мутирует domain state. | Для v1 нужен минимальный реальный export bundle или пометка как preview/internal. |
-| Integrations/webhooks | `Deferred` / `Internal stub` | Provider registry и webhook boundary заведены, но orchestration/signature verification/command translation не реализованы. | Не показывать как пользовательскую v1-фичу. Оставить как internal future-ready boundary. |
-| P2P/full relay/bootstrap | `Out of v1` | Архитектурные docs есть, обязательного пользовательского runtime нет. | Не блокирует v1, если sync baseline идет через backend. |
-| Mobile | `Out of v1` | Отложено до стабилизации web/backend/sync. | Не учитывать в v1 release gate. |
+| Auth/session | `Partial` | Sign-up/sign-in/refresh/session/sign-out/sign-out-all exist; beta profile guards restrict dev-header auth, default secrets and CORS/cookie posture. | Keep in beta-local path. Next hardening is account-management/invite-preview UX and release evidence, not basic auth existence. |
+| Workspace/board/column/card core CRUD | `Done baseline` | Main web flow supports workspace, board, columns, cards, card drawer edits, archive/delete semantics, move/reorder and activity-visible mutations. | Keep as core v1 path and protect with release-gates/UIX evidence. |
+| Card details enrichment | `Done baseline` | Labels, checklists and comments are no longer `not_implemented` stubs: backend CRUD/assignment flows, OpenAPI `real_v1` markers and `CardDetailsDrawer` UI exist. | Keep in v1 path. Known limitation: labels/checklists/comments for a locally-created unsynced card unlock after that card syncs. |
+| Appearance/customization | `Done baseline` | User appearance and board appearance have backend/frontend/API wiring and smoke/integration context. | Keep in v1 path. Uploaded wallpapers and arbitrary theme editor remain out of v1. |
+| Activity/history/audit | `Done baseline` | Board activity, card activity and workspace audit log exist; core mutations and card enrichment events write user-facing history/audit entries. | Keep in v1 path. Rich diff/compliance dashboard remains post-v1. |
+| Local-first runtime | `Done baseline` | Frontend has persistent board snapshot, pending card operations queue, warm/offline read, offline card edits and visible `synced/pending/failed` states for core entities. | Keep as v1 baseline, not as final sync architecture. IndexedDB replacement and richer local model remain future hardening. |
+| Sync baseline | `Done baseline` | Backend registers replicas, accepts idempotent push events, exposes pull by cursor and records tombstone-aware core delete/archive events; frontend has visible sync baseline state. | Keep as backend-coordinated sync baseline. Full P2P, merge UI and automatic projection replay are not v1 promises. |
+| Export / backup safety net | `Partial` | Board/workspace backup export returns a versioned application-level JSON bundle; import preview validates manifest and stays non-destructive. | Keep export and preview in v1. Do not promise destructive restore. Import-as-copy execution is a later slice if selected. |
+| Integrations/webhooks | `Deferred` | Provider registry and webhook/import/export job boundaries exist mostly as adapter/stub surfaces. | Do not market as user-ready v1 integrations. |
+| Release gates / UI evidence | `Needs evidence` | `devbootstrap release-gates`, managed runtime/test DB and UIX gates exist, but the next release-relevant fact must be proven through a current real-backend evidence run. | Next practical safety patch should make the real backend browser path and repeatability status explicit. |
+| P2P / relay / bootstrap | `Out of v1` | Architecture remains future-ready; no mandatory user-facing p2p runtime is promised for v1. | Do not block v1 on full p2p. |
+| Mobile | `Out of v1` | Native mobile is a later product line after web/local-first/sync stabilization. | Do not include in v1 gates. |
 
-## Что сейчас можно тестить руками
+## Current manual happy path
 
-Минимальный ручной happy-path, который соответствует текущей реальности:
+The current realistic manual path is:
 
-1. Поднять PostgreSQL через `docker-compose.dev.yml` или локальный PostgreSQL.
-2. Запустить backend:
-   ```bash
-   cd backend
-   cargo run
-   ```
-3. Запустить frontend:
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-4. В web UI пройти auth-flow через sign-up/sign-in.
-5. Создать workspace.
-6. Создать board.
-7. Создать columns.
-8. Создать cards.
-9. Открыть card details drawer.
-10. Изменить title/description/status/priority.
-11. Переместить card в другую column.
-12. Проверить card history / board activity.
-13. Проверить user appearance и board appearance.
+1. start PostgreSQL/backend/frontend;
+2. sign up or sign in;
+3. create workspace;
+4. create board;
+5. create columns;
+6. create cards;
+7. open card details drawer;
+8. edit title/description/status/priority/dates;
+9. move/reorder cards;
+10. use labels/checklists/comments;
+11. view card history and board activity;
+12. change user/board appearance;
+13. use local-first visible states during core card work;
+14. download board-level backup bundle;
+15. run import preview without destructive restore.
 
-Что **пока не считать надежным ручным сценарием**:
+Do not present these as finished v1 user promises without release evidence:
 
-- labels/checklists/comments;
-- реальный offline/local-first runtime;
-- sync push/pull;
-- реальный import/restore;
-- production-like security hardening.
+- real-backend browser release gate for the full happy path;
+- invite-grade auth/account-management UX;
+- import-as-copy/apply execution;
+- full conflict-resolution UI;
+- p2p/relay/bootstrap runtime;
+- integrations/webhook delivery.
 
-## Contract parity sweep: текущий baseline
+## API/OpenAPI contract notes
 
-### Backend routes, которые существуют фактически
+Current OpenAPI already marks the implemented labels/checklists/comments/sync/import-export paths as `real_v1` where applicable. The route inventory should now be treated as follows:
 
-Core/auth/appearance/activity/audit routes:
+- core CRUD, appearance, activity/audit, labels/checklists/comments and sync baseline routes are active v1 surfaces;
+- import/export backup creation and import preview are active preview/safety-net surfaces;
+- import execution is a non-destructive boundary until a later import-as-copy slice proves mutation behavior;
+- legacy import/export jobs, provider registry and webhooks are adapter/future surfaces;
+- raw `not_implemented` responses for declared v1 user features should be treated as regressions, not as expected baseline behavior.
+
+## Remaining release blockers and decision points
+
+### Blocker before release confidence
+
+- A current `release-gates`/UIX bundle must prove or honestly classify backend smoke, frontend build/unit, browser boot and real-backend browser path.
+- Smoke/idempotency assumptions must not rely on dirty shared dev state.
+- README, known limitations and release notes must match the final gate result.
+
+### Decision points after release evidence
+
+- Whether `beta-local-self-host` is enough for the first beta, or whether `beta-invite-preview` hardening is required first.
+- Whether import preview is sufficient for v1, or whether import-as-copy execution must be implemented before release.
+- Whether remaining Playwright scripts stay as legacy optional coverage or are retired after UIX parity is accepted.
+
+## Next safe patch
+
+The next patch after this truth-sync update should be a **safety/evidence patch**, not another broad feature patch.
+
+Recommended verified fact:
 
 ```text
-POST   /auth/sign-up
-POST   /auth/sign-in
-POST   /auth/refresh
-POST   /auth/sign-out
-POST   /auth/sign-out-all
-GET    /auth/session
-POST   /auth/dev-bootstrap
-GET    /me
-GET    /me/devices
-DELETE /me/devices/{deviceId}
-GET    /me/appearance
-PUT    /me/appearance
-GET    /workspaces
-POST   /workspaces
-GET    /workspaces/{workspaceId}
-PATCH  /workspaces/{workspaceId}
-DELETE /workspaces/{workspaceId}
-GET    /workspaces/{workspaceId}/members
-POST   /workspaces/{workspaceId}/members
-PATCH  /workspaces/{workspaceId}/members/{memberId}
-DELETE /workspaces/{workspaceId}/members/{memberId}
-GET    /workspaces/{workspaceId}/boards
-POST   /workspaces/{workspaceId}/boards
-GET    /workspaces/{workspaceId}/audit-log
-GET    /boards/{boardId}
-PATCH  /boards/{boardId}
-DELETE /boards/{boardId}
-GET    /boards/{boardId}/columns
-POST   /boards/{boardId}/columns
-PATCH  /columns/{columnId}
-DELETE /columns/{columnId}
-PATCH  /boards/{boardId}/columns/{columnId}
-DELETE /boards/{boardId}/columns/{columnId}
-GET    /boards/{boardId}/cards
-POST   /boards/{boardId}/cards
-GET    /cards/{cardId}
-PATCH  /cards/{cardId}
-DELETE /cards/{cardId}
-POST   /cards/{cardId}/move
-POST   /cards/{cardId}/archive
-POST   /cards/{cardId}/unarchive
-GET    /boards/{boardId}/activity
-GET    /cards/{cardId}/activity
-GET    /boards/{boardId}/appearance
-PUT    /boards/{boardId}/appearance
+After the patch, release-gates can prove the real backend browser core flow against a managed runtime/test DB, or the report classifies every missing prerequisite without counting it as product success.
 ```
 
-Routes that are wired but not implemented or stub-only:
+Cheapest sufficient evidence for that patch:
+
+- `python -B tools/devbootstrap.py release-gates --dry-run` for plan shape;
+- targeted `release-gates` profile with managed runtime/test DB if the environment supports it;
+- UIX scenario report for the real backend core flow, or an explicit prerequisite classification if browser/runtime dependencies are absent.
+
+## Release naming guardrail
 
 ```text
-GET    /boards/{boardId}/labels                  -> repo not_implemented
-POST   /boards/{boardId}/labels                  -> repo not_implemented
-PATCH  /labels/{labelId}                         -> repo not_implemented
-DELETE /labels/{labelId}                         -> repo not_implemented
-PUT    /cards/{cardId}/labels                    -> repo not_implemented
-GET    /cards/{cardId}/checklists                -> repo not_implemented
-POST   /cards/{cardId}/checklists                -> repo not_implemented
-PATCH  /checklists/{checklistId}                 -> repo not_implemented
-DELETE /checklists/{checklistId}                 -> repo not_implemented
-POST   /checklists/{checklistId}/items           -> repo not_implemented
-PATCH  /checklist-items/{itemId}                 -> repo not_implemented
-DELETE /checklist-items/{itemId}                 -> repo not_implemented
-GET    /cards/{cardId}/comments                  -> repo not_implemented
-POST   /cards/{cardId}/comments                  -> repo not_implemented
-PATCH  /comments/{commentId}                     -> repo not_implemented
-DELETE /comments/{commentId}                     -> repo not_implemented
-GET    /sync/status                              -> repo not_implemented
-GET    /sync/replicas                            -> repo not_implemented
-POST   /sync/replicas                            -> repo not_implemented
-POST   /sync/push                                -> repo not_implemented
-GET    /sync/pull                                -> repo not_implemented
-POST   /integrations/import-jobs                 -> stub_only
-POST   /integrations/export-jobs                 -> stub_only
-POST   /integrations/import-export/exports       -> ready_stub, manifest only
-POST   /integrations/import-export/imports/preview -> preview_stub
-POST   /integrations/import-export/imports       -> accepted_stub, no mutation
-POST   /integrations/webhooks/{providerKey}      -> stub_only
-```
-
-### Frontend API calls, которые сейчас есть
-
-Known-good or mostly-good calls:
-
-```text
-POST   /auth/sign-in
-POST   /auth/sign-up
-POST   /auth/refresh
-GET    /auth/session
-POST   /auth/sign-out
-POST   /auth/sign-out-all
-GET    /workspaces
-POST   /workspaces
-PATCH  /workspaces/{workspaceId}
-GET    /workspaces/{workspaceId}/boards
-POST   /workspaces/{workspaceId}/boards
-GET    /boards/{boardId}
-PATCH  /boards/{boardId}
-GET    /boards/{boardId}/columns
-POST   /boards/{boardId}/columns
-PATCH  /boards/{boardId}/columns/{columnId}
-DELETE /boards/{boardId}/columns/{columnId}
-GET    /boards/{boardId}/cards
-POST   /boards/{boardId}/cards
-GET    /cards/{cardId}
-PATCH  /cards/{cardId}
-DELETE /cards/{cardId}
-POST   /cards/{cardId}/move
-POST   /cards/{cardId}/archive
-POST   /cards/{cardId}/unarchive
-GET    /boards/{boardId}/activity
-GET    /cards/{cardId}/activity
-GET    /me/appearance
-PUT    /me/appearance
-GET    /boards/{boardId}/appearance
-PUT    /boards/{boardId}/appearance
-```
-
-Frontend calls requiring a fix before v1:
-
-```text
-POST   /workspaces/{workspaceId}/archive         -> visible UI button, backend route missing
-POST   /boards/{boardId}/archive                 -> visible UI button, backend route missing
-POST   /columns/{columnId}/cards/reorder         -> DnD same-column reorder, backend route missing
-```
-
-Frontend integration/import-export API helpers exist, but should remain internal/not surfaced as a v1 user feature until real export/import behavior is implemented.
-
-### OpenAPI mismatches found in this sweep
-
-| Area | OpenAPI says | Backend/frontend reality | v1 decision needed |
-| --- | --- | --- | --- |
-| Current user update | `PATCH /me` | Backend has `GET /me`, no `PATCH /me`. | Add backend route or remove/defer OpenAPI path. |
-| Device revoke | `POST /me/devices/{deviceId}/revoke` | Backend has `DELETE /me/devices/{deviceId}`. | Pick one canonical route. |
-| Workspace archive | `POST /workspaces/{workspaceId}/archive` | Frontend, backend and OpenAPI now match; archive sets `archived_at`. | Keep as v1 lifecycle route. |
-| Board archive | `POST /boards/{boardId}/archive` | Frontend, backend and OpenAPI now match; archive sets `archived_at`. | Keep as v1 lifecycle route. |
-| Column reorder | `POST /boards/{boardId}/columns/reorder` | Backend route absent; frontend does not currently call this exact route. | Implement or remove from beta OpenAPI. |
-| Card same-column reorder | `POST /columns/{columnId}/cards/reorder` | Frontend, backend and OpenAPI now match; backend validates that all cards belong to the target column. | Keep as v1 route and cover with smoke. |
-| Card lifecycle | `POST /cards/{cardId}/archive`, `POST /cards/{cardId}/unarchive` | Backend, frontend and OpenAPI now match. | Keep archive/unarchive terminology for v1. |
-| Labels | `/boards/{boardId}/labels/{labelId}`, `POST /cards/{cardId}/labels`, `DELETE /cards/{cardId}/labels/{labelId}` | Backend uses `/labels/{labelId}` and `PUT /cards/{cardId}/labels`; repo not implemented. | Implement minimal slice and align paths. |
-| Checklist item routes | `/checklists/items/{itemId}` | Backend uses `/checklist-items/{itemId}`; repo not implemented. | Pick canonical route while implementing. |
-| Sync pull | `POST /sync/pull` | Backend has `GET /sync/pull`; repo not implemented. | Pick canonical method before sync implementation. |
-| Sync replicas | OpenAPI has `POST /sync/replicas`; backend also has `GET /sync/replicas`. | `GET /sync/replicas` missing from OpenAPI. | Add to OpenAPI or remove route. |
-
-## v1 execution checklist from this point
-
-### 0. Truth document and README alignment
-
-- [x] Add `docs/product/v1-execution-roadmap.md`.
-- [x] Define status vocabulary: `Done`, `Partial`, `Blocker`, `Deferred`, `Internal stub`, `Out of v1`, `Contract mismatch`.
-- [x] Mark labels/checklists/comments as `Blocker` unless scope is reduced.
-- [x] Mark sync routes as `Blocker` for a real local-first beta.
-- [x] Mark integrations/webhooks as `Deferred` / `Internal stub`.
-- [x] Mark mobile and full p2p/relay/bootstrap as `Out of v1`.
-- [x] Add a short “what can be tested manually now” section.
-- [ ] Keep root README in sync after each v1 blocker is closed.
-
-### 1. Contract parity sweep
-
-- [x] Inventory backend routes from `backend/src/**/mod.rs`.
-- [x] Inventory frontend API calls from `frontend/src/features/**/api/*.ts`.
-- [x] Inventory OpenAPI paths from `docs/api/openapi.yaml`.
-- [x] Identify routes returning `not_implemented` or stub-only responses.
-- [x] Identify visible UI paths that can currently call missing backend routes.
-- [x] Decide canonical route semantics for archive/delete/reorder/lifecycle.
-- [x] Update backend/frontend/OpenAPI for archive/reorder/card lifecycle baseline.
-- [ ] Add contract parity smoke/check so these mismatches do not silently return.
-
-### 2. Immediate blocker queue
-
-Recommended next patch order:
-
-1. **Remaining OpenAPI alignment**: user/device routes, labels/checklists/comments canonical paths, sync method shape.
-2. **Card enrichment minimal slice**: labels/checklists/comments backend + frontend or explicit deferral/hiding.
-3. **Local-first runtime baseline**: local store, pending ops, offline/reconnect surface.
-4. **Sync baseline**: replicas, push/pull, idempotency, cursors.
-5. **Real export safety net**: at least one real portable export bundle path.
-6. **Security/release gates**: auth negative smoke, profile boundaries, CORS/JWT/session hardening.
-
-## Release naming rule
-
-Use this rule until blockers are closed:
-
-- If local-first runtime and sync baseline are not implemented, call the next demo release `web-preview`, not `local-first beta`.
-- If local-first runtime and backend-coordinated sync baseline are implemented and tested, `v1.0.0-beta.1` is a fair name.
-
-Suggested gate:
-
-```text
-v1.0.0-web-preview.1  -> web core flow is usable, but local-first/sync are not real yet
-v1.0.0-beta.1         -> web core + local-first runtime + sync baseline + export safety net
+v1.0.0-beta.1        -> fair only after current release evidence proves web core + card enrichment + local-first baseline + sync baseline + export safety net.
+v1.0.0-web-preview.1 -> use if release evidence cannot prove local-first/sync/export as user-relevant beta facts.
 ```
