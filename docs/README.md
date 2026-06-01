@@ -33,6 +33,7 @@
    - `dev-bootstrap/devbootstrap-v2-release-gates-plan.md`
    - `dev-bootstrap/release-gates-test-database.md`
 6. Stabilization and development process:
+   - `development/development-planning-and-engineering-principles-v2.md`
    - `development/release-stabilization-program-v1.md`
    - `development/systemic-release-stabilization-manifesto-v1.md`
    - `development/release-stabilization-problem-ledger.md`
@@ -50,6 +51,7 @@
 | Product | MVP is web-first Kanban with workspaces, boards, columns, cards, appearance and activity/audit surface. |
 | Local-first | Local-first architecture remains the target; backend remains required for MVP auth/API/sync coordination. |
 | P2P | Future-ready, not mandatory for v1 release. |
+| Development planning | Current mode is verified product acceleration: one user/release/truth fact per patch, cheapest sufficient evidence, no ownerless debt. |
 | Devctl | Patch conveyor applies small reproducible devctl patches, not full project archives. |
 | Devbootstrap | Project-owned diagnostic/release-gates tool; generated `.dev-bootstrap` artifacts are not source. |
 | Release gates | Evidence-first bundle with ledgers, classifications, confidence gate and regression memory. |

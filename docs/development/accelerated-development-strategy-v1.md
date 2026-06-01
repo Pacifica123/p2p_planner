@@ -1,5 +1,12 @@
 # Accelerated development strategy v1
 
+> Status: historical / superseded for day-to-day planning.
+>
+> The devctl patch-conveyor principles in this document remain useful, but current planning should use
+> `docs/development/development-planning-and-engineering-principles-v2.md`. The v2 document reflects the
+> newer project state: devbootstrap, release-gates, managed DB/runtime, UIX evidence, truth-sync lanes and
+> verified product acceleration.
+
 ## Назначение
 
 Этот документ фиксирует рабочую стратегию ускоренной разработки `p2p_planner` после beta-prerelease. Его задача — не заменить архитектурные документы, а задать практический режим разработки, который помогает быстрее двигаться к v1 release без потери качества, контекста и состояния между чатами, локальными машинами, архивами и GitHub.

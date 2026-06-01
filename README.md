@@ -135,6 +135,7 @@ VITE_ENABLE_PROJECT_ROADMAP_SEED=true
 ## Где смотреть документацию
 
 - `docs/README.md` — карта документов;
+- `docs/development/development-planning-and-engineering-principles-v2.md` — текущие правила планирования и разработки: verified product acceleration, evidence budget, problem fate policy и truth-sync;
 - `docs/product/v1-execution-roadmap.md` — текущая правда перед v1 и contract parity baseline;
 - `docs/product/mvp-scope-v1.md` — границы MVP;
 - `docs/architecture/backend-modules.md` — карта backend-модулей;
