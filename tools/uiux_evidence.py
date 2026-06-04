@@ -18,7 +18,12 @@ def default_report_dir(name: str) -> Path:
 
 
 def print_json(payload: dict) -> None:
-    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    # Keep stdout ASCII-safe for Windows release-gates captures that may use
+    # legacy console encodings such as cp1251. Human-readable UTF-8 copies are
+    # still written to report artifacts by write_json().
+    text = json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True)
+    sys.stdout.write(text)
+    sys.stdout.write("\n")
 
 
 def command_discover_browser(args: argparse.Namespace) -> int:
