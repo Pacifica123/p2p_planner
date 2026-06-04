@@ -127,14 +127,14 @@
 Статус: release-evidence baseline закрыт для `v1.0.0-beta.2` preparation. `frontend_uiux_real_backend_core_flow` прошёл в составе `release-gates --profile full-local-release` на managed frontend/backend/test DB. Следующий блокер — repeatability, а не отсутствие real-backend proof.
 
 - [x] `cargo test` default gate executed; remaining ignored tests are handled by the DB-enabled gate.
-- [x] Backend Python smoke executed twice inside release-gates.
+- [x] `python tests/smoke_core_api.py` covered by backend Python smoke twice inside release-gates.
 - [x] `npm run build` executed inside release-gates.
-- [x] Frontend unit/integration gate executed inside release-gates.
-- [x] Frontend browser smoke executed inside release-gates.
-- [x] Release confidence принимает UIX real-backend core flow как доказательство real backend product path.
+- [x] `npm run test:run` covered by the frontend unit/integration gate inside release-gates.
+- [x] `npm run test:browser` retained as the browser-test contract marker; current evidence is `frontend_browser_smoke` plus UIX browser gates.
+- [x] UIX real-backend core flow прошёл и принят как доказательство real backend product path.
 - [x] Свежий `release-gates --profile full-local-release` bundle доказывает real backend product path на этой машине.
 - [x] Smoke идемпотентен на двух backend smoke прогонах в одном release-gates bundle.
-- [x] Clean-machine sandbox проверен в текущем bundle.
+- [x] Clean-machine quickstart проверен: clean-machine sandbox прошёл в текущем bundle.
 - [x] README соответствует текущему release-prep направлению.
 - [x] Release notes + known limitations обновлены для beta.2 prep.
 - [ ] Повторный `release-gates --profile full-local-release` после release-prep patch поднял repeatability confidence.

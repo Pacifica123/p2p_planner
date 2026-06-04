@@ -7,6 +7,7 @@ Freshness note: текущий implementation-status см. в `docs/product/v1-e
 ## Ограничающие условия release-gates
 
 - `python tools/devbootstrap.py release-gates --profile full-local-release` прошёл на 2026-06-04, но stable `v1.0.0` нельзя объявлять до repeatability checkpoint.
+- `clean-machine` evidence остаётся обязательным маркером release-gates docs: clean-machine sandbox/quickstart должен проходить и быть сохранён в финальном release-gates bundle.
 - Mocked browser/UIX smoke проверяет frontend behavior, но real backend product path закрывается только `frontend_uiux_real_backend_core_flow`; в принятом checkpoint этот gate прошёл.
 - Legacy `browser_real_backend_path` остается optional transition signal через `--include-real-backend-browser`, но не является обязательным beta.2 blocker.
 - DB-writing smoke/browser gates не должны писать в обычную dev-БД без явного `TEST_DATABASE_URL` или managed test DB.
