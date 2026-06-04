@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -172,23 +173,56 @@ def wait_for_url(url: str, process: subprocess.Popen[Any] | None = None, timeout
     raise RuntimeError(f"frontend URL did not become reachable: {url} ({last_error})")
 
 
+def resolve_executable_path(executable: str) -> str | None:
+    if not executable:
+        return None
+    if os.path.isabs(executable) or os.sep in executable or (os.altsep and os.altsep in executable):
+        return executable if Path(executable).exists() else None
+    return shutil.which(executable)
+
+
+def command_for_subprocess(command: list[str], *, resolved_path: str | None = None, platform_name: str | None = None) -> list[str]:
+    if not command:
+        return command
+    effective_platform = platform_name or os.name
+    resolved = resolved_path if resolved_path is not None else resolve_executable_path(command[0])
+    if not resolved:
+        return command
+    if effective_platform == "nt" and resolved.lower().endswith((".cmd", ".bat")):
+        # Windows package-manager launchers such as npm.cmd are batch files.
+        # CreateProcess cannot execute them directly when shell=False, so run
+        # them through cmd.exe while keeping args separate for Python quoting.
+        return ["cmd.exe", "/d", "/c", "call", resolved, *command[1:]]
+    return [resolved, *command[1:]]
+
+
 def start_frontend(project_root: Path, report_dir: Path, *, api_base_url: str, host: str = "127.0.0.1") -> FrontendRuntime:
     port = free_port(host)
     url = f"http://{host}:{port}/"
     log_path = report_dir / "frontend.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_handle = log_path.open("w", encoding="utf-8")
     env = os.environ.copy()
     env.update({"VITE_API_BASE_URL": api_base_url.rstrip("/"), "VITE_ENABLE_PROJECT_ROADMAP_SEED": "false"})
-    command = ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"]
-    process = subprocess.Popen(command, cwd=project_root / "frontend", env=env, stdout=log_handle, stderr=subprocess.STDOUT, text=True)
+    requested_command = ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"]
+    launch_command = command_for_subprocess(requested_command)
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        log_handle.write(f"requested: {requested_command!r}\n")
+        log_handle.write(f"launch: {launch_command!r}\n")
+        log_handle.flush()
+        try:
+            process = subprocess.Popen(launch_command, cwd=project_root / "frontend", env=env, stdout=log_handle, stderr=subprocess.STDOUT, text=True)
+        except FileNotFoundError as exc:
+            log_handle.write(f"launch failed: {exc.__class__.__name__}: {exc}\n")
+            raise RuntimeError(f"frontend launch command not found: {launch_command[0]!r} (requested {requested_command[0]!r})") from exc
+        except OSError as exc:
+            log_handle.write(f"launch failed: {exc.__class__.__name__}: {exc}\n")
+            raise
     try:
         wait_for_url(url, process, timeout=80.0)
         return FrontendRuntime(process=process, url=url, log_path=log_path)
     except Exception:
         if process.poll() is None:
             process.terminate()
-        log_handle.close()
         raise
 
 
@@ -722,6 +756,7 @@ def finalize_report(
         "network": "network.json",
         "storageBefore": "storage-before.json",
         "storageAfter": "storage-after.json",
+        "frontendLog": "frontend.log",
     }
     report = {
         "schemaVersion": 1,
