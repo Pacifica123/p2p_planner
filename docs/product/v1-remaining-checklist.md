@@ -120,26 +120,26 @@
 
 - MFA/passkeys/E2EE не входят в v1 hardening;
 - local-first snapshot encryption не реализован;
-- real-backend UIX product path прошёл в release-gates; повторяемость same-profile прогона остается следующим evidence-блоком.
+- browser smoke по реальному backend остается частью следующего release-gates блока.
 
 ## 7. Testing and release gates
 
-Статус: first evidence checkpoint accepted. `frontend_uiux_real_backend_core_flow` прошёл в `release-gates --profile full-local-release` на 2026-06-04 и считается основным product-path доказательством. Scorecard дал `89/100`: raw `beta_candidate`, effective `internal_candidate` из-за hard cap `repeatability-not-proven`.
+Статус: release-evidence baseline закрыт для `v1.0.0-beta.2` preparation. `frontend_uiux_real_backend_core_flow` прошёл в составе `release-gates --profile full-local-release` на managed frontend/backend/test DB. Следующий блокер — repeatability, а не отсутствие real-backend proof.
 
-- [x] `cargo test` запущен в full-local-release; default pass остался `partial_pass`, потому что ignored DB tests отдельно прогоняются следующим gate.
-- [x] `cargo test -- --include-ignored` прошёл против managed test DB.
-- [x] `python tests/smoke_core_api.py` прошёл дважды в одном release-gates run.
-- [x] `npm run build`.
-- [x] `npm run test:run`.
-- [x] `npm run test:browser`.
+- [x] `cargo test` default gate executed; remaining ignored tests are handled by the DB-enabled gate.
+- [x] Backend Python smoke executed twice inside release-gates.
+- [x] `npm run build` executed inside release-gates.
+- [x] Frontend unit/integration gate executed inside release-gates.
+- [x] Frontend browser smoke executed inside release-gates.
 - [x] Release confidence принимает UIX real-backend core flow как доказательство real backend product path.
-- [x] Свежий `release-gates --profile full-local-release` bundle доказал real backend product path на этой машине.
-- [x] Smoke идемпотентен на двух последовательных прогонах внутри managed runtime.
-- [x] Clean-machine quickstart проверен.
-- [x] README соответствует реальному запуску на уровне команд и next path.
-- [x] Known limitations обновлены по фактическому gate bundle.
-- [ ] Повторный same-profile release-gates run закрывает или честно оставляет `repeatability-not-proven`.
-- [ ] Release notes / beta naming обновлены после repeatability decision.
+- [x] Свежий `release-gates --profile full-local-release` bundle доказывает real backend product path на этой машине.
+- [x] Smoke идемпотентен на двух backend smoke прогонах в одном release-gates bundle.
+- [x] Clean-machine sandbox проверен в текущем bundle.
+- [x] README соответствует текущему release-prep направлению.
+- [x] Release notes + known limitations обновлены для beta.2 prep.
+- [ ] Повторный `release-gates --profile full-local-release` после release-prep patch поднял repeatability confidence.
+- [ ] Windows release artifact smoke-tested after unzip.
+- [ ] Linux AppImage smoke-tested as normal user.
 
 ## 8. Devctl / packaging hygiene
 
@@ -151,17 +151,13 @@
 
 ## Release decision
 
-Если готовы local-first + sync baseline:
+Текущий целевой тег:
 
 ```text
-v1.0.0-beta.1
+v1.0.0-beta.2
 ```
 
-Если есть только web/core без полноценного local-first/sync:
-
-```text
-v1.0.0-web-preview.1
-```
+`v1.0.0-beta.1` уже был первым опубликованным beta-релизом, поэтому новая GitHub Pre-release линия должна идти как beta.2. Stable `v1.0.0` откладывается до repeatability checkpoint и artifact-level smoke.
 
 ## Короткая формула продолжения после truth-sync
 
@@ -174,11 +170,16 @@ v1.0.0-web-preview.1
 5. export/backup safety net — закрыто;
 6. auth/security hardening baseline — закрыто.
 
-Следующий практический патч по новым принципам: **repeatability evidence checkpoint** — повторить same-profile `release-gates --profile full-local-release`, чтобы закрыть или честно оставить `repeatability-not-proven`.
+Следующий практический патч по новым принципам уже не release-evidence, а **release-prep for beta.2**:
 
-После repeatability decision выбирать только один следующий slice:
+- зафиксировать `v1.0.0-beta.2` как тег GitHub Pre-release;
+- подготовить release notes / known limitations по фактическому gate bundle;
+- описать обязательные release assets: Windows `.exe` bundle, Linux `.AppImage`, `SHA256SUMS.txt`, final release-gates bundle;
+- после patch application повторить full-local-release для repeatability signal.
 
-- account-management/auth UX hardening для выбранного beta profile;
+После этого выбирать только один следующий slice:
+
+- publish beta.2 after artifact smoke;
+- account-management/auth UX hardening для следующего beta profile;
 - import-as-copy execution после безопасного preview;
-- Playwright retirement/optionalization после принятого UIX parity;
-- release notes / known limitations refresh по фактическому gate bundle.
+- Playwright retirement/optionalization после принятого UIX parity.

@@ -543,15 +543,13 @@ Mobile-чат имеет смысл открывать после выполне
 
 | Area | Что сделать | Почему blocker |
 |---|---|---|
-| Release evidence | Done for first checkpoint: 2026-06-04 `full-local-release` passed with UIX real-backend product path and score `89/100`; repeatability cap remains | Fresh bundle now exists, but external beta still needs repeatability or an explicit decision accepting the cap |
+| Release evidence | Прогнать или честно классифицировать `release-gates`/UIX real backend product path на managed runtime/test DB | Без свежего bundle нельзя отличить готовый user path от старой надежды в документах |
 | Contract parity guard | Подтвердить, что OpenAPI, backend routes и frontend API calls не разошлись после закрытых baseline slices | Beta не должна содержать UI-кнопки, ведущие в 404/501/not_implemented |
 | Auth/account beta profile | Решить, достаточно ли `beta-local-self-host`, или нужен `beta-invite-preview`; для invite-preview закрыть account recovery/invite/rate-limit evidence | Нельзя случайно назвать local-dev posture internet-facing beta |
 | Import boundary | Явно оставить v1 на export + preview или реализовать import-as-copy execution отдельным патчем | Пользовательские данные нельзя подвергать destructive/ambiguous restore behavior |
 | Release notes / limitations | Обновить known limitations по фактическому gate bundle | Release должен честно сказать, что проверено, что skipped и что deferred |
 
 Baseline-implemented areas such as labels/checklists/comments, local-first runtime, sync baseline, export backup preview and auth/security guards are no longer backlog items by themselves; they become release-evidence requirements.
-
-Checkpoint note: the first accepted `full-local-release` run moved this area from "missing evidence" to "repeatability decision". The next release blocker is the active `repeatability-not-proven` hard cap, not product-path absence.
 
 ### 10.2. P1 — beta completeness
 
@@ -644,17 +642,20 @@ npm run test:browser
 - no hidden requirement вроде “надо помнить локальный патч с другой машины”;
 - version/tag naming policy.
 
-Рекомендуемое имя первого beta tag:
+Рекомендуемое имя текущего beta tag:
 
 ```text
-v1.0.0-beta.1
+v1.0.0-beta.2
 ```
 
-Если beta еще не имеет real local-first/sync, тег должен честно отражать preview status, например:
+`v1.0.0-beta.1` уже был первым beta release, поэтому следующая GitHub Pre-release линия должна быть beta.2. Если repeatability или artifact smoke сорвут packaging claims, публикацию beta.2 нужно задержать, а не откатывать название к web-preview.
 
-```text
-v1.0.0-web-preview.1
-```
+Обязательные beta.2 artifacts:
+
+- Windows self-host bundle with backend `.exe`;
+- Linux `x86_64` `.AppImage`;
+- final `release-gates_*.zip` evidence bundle;
+- `SHA256SUMS.txt`.
 
 ---
 

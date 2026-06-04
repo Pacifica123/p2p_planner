@@ -17,16 +17,16 @@ The next development path should not start with another product feature. The pro
 
 Path from here:
 
-1. **Truth-sync checkpoint** — done; active docs no longer let old blocker labels drive planning.
-2. **Release evidence checkpoint** — done for the first accepted run: `full-local-release` on 2026-06-04 passed with UIX real-backend product-path evidence.
-3. **Repeatability checkpoint** — rerun the same profile and inspect `remediation/repeatability-loop.*`; the current hard cap is `repeatability-not-proven`.
-4. **Beta hardening slices** — only after the repeatability decision, choose the next narrow product/safety slice: account-management/auth UX hardening or import-as-copy execution after preview.
-5. **Release review** — update release notes/known limitations after the gates and repeatability decision produce a trustworthy bundle.
+1. **Truth-sync checkpoint** — align active docs so old blocker labels no longer drive planning. This is the first patch on the path.
+2. **Release evidence checkpoint** — completed on 2026-06-04: `release-gates --profile full-local-release` passed `Overall: ok`, including UIX mocked and real-backend core flows.
+3. **Beta.2 release-prep** — current step: prepare GitHub Pre-release notes and platform artifact contract for Windows `.exe` bundle and Linux AppImage.
+4. **Repeatability checkpoint** — rerun the same profile after release-prep; stable `v1.0.0` remains blocked until repeatability evidence is accepted.
+5. **Beta hardening slices** — after beta.2 release prep, choose one narrow product/safety slice: account-management/auth UX hardening or import-as-copy execution after preview.
 
-Outcome after the first evidence checkpoint:
+Outcome for this truth-sync patch:
 
 ```text
-Active docs agree that labels/checklists/comments, local-first runtime, sync baseline, export backup preview and auth/security hardening are baseline-implemented. The 2026-06-04 full-local-release run proved the preferred UIX real-backend product path and moved the next release blocker from missing evidence to repeatability. Invite-grade auth/account UX and import-as-copy execution remain product decision points after repeatability.
+After the patch, active docs agree that labels/checklists/comments, local-first runtime, sync baseline, export backup preview and auth/security hardening are baseline-implemented, while release-gates evidence, invite-grade auth/account UX and destructive/non-destructive import execution remain the next decision points.
 ```
 
 ## Status vocabulary
@@ -52,7 +52,7 @@ Active docs agree that labels/checklists/comments, local-first runtime, sync bas
 | Sync baseline | `Done baseline` | Backend registers replicas, accepts idempotent push events, exposes pull by cursor and records tombstone-aware core delete/archive events; frontend has visible sync baseline state. | Keep as backend-coordinated sync baseline. Full P2P, merge UI and automatic projection replay are not v1 promises. |
 | Export / backup safety net | `Partial` | Board/workspace backup export returns a versioned application-level JSON bundle; import preview validates manifest and stays non-destructive. | Keep export and preview in v1. Do not promise destructive restore. Import-as-copy execution is a later slice if selected. |
 | Integrations/webhooks | `Deferred` | Provider registry and webhook/import/export job boundaries exist mostly as adapter/stub surfaces. | Do not market as user-ready v1 integrations. |
-| Release gates / UI evidence | `Partial` | `full-local-release` passed on 2026-06-04 with managed DB/runtime, backend smoke twice, frontend build/unit, UIX mocked core flow, UIX real-backend core flow, legacy browser smoke and clean-machine sandbox. Score `89/100`; raw class `beta_candidate`, effective class `internal_candidate`. | Real-backend product-path evidence is accepted. External beta remains capped by `repeatability-not-proven`; rerun the same profile before beta naming. |
+| Release gates / UI evidence | `Done baseline` | `release-gates --profile full-local-release` passed on 2026-06-04 with managed DB/runtime, backend smoke twice, frontend build/tests, UIX mocked flow, UIX real-backend core flow, browser smoke and clean-machine sandbox. | Use as beta.2 release evidence. Stable release still needs repeatability evidence. |
 | P2P / relay / bootstrap | `Out of v1` | Architecture remains future-ready; no mandatory user-facing p2p runtime is promised for v1. | Do not block v1 on full p2p. |
 | Mobile | `Out of v1` | Native mobile is a later product line after web/local-first/sync stabilization. | Do not include in v1 gates. |
 
@@ -76,9 +76,9 @@ The current realistic manual path is:
 14. download board-level backup bundle;
 15. run import preview without destructive restore.
 
-Do not present these as finished v1 user promises beyond the accepted evidence:
+Do not present these as finished v1 user promises without release evidence:
 
-- repeatability across same-profile `full-local-release` runs;
+- real-backend browser release gate for the full happy path;
 - invite-grade auth/account-management UX;
 - import-as-copy/apply execution;
 - full conflict-resolution UI;
@@ -97,36 +97,40 @@ Current OpenAPI already marks the implemented labels/checklists/comments/sync/im
 
 ## Remaining release blockers and decision points
 
-### Remaining blocker before external beta confidence
+### Blocker before stable release confidence
 
-- Repeatability is not yet proven at the accepted threshold: the 2026-06-04 scorecard is capped by `repeatability-not-proven`.
-- README, known limitations and release notes must match the final repeatability/beta decision.
+- The current release-evidence blocker is lifted for beta.2 by `20260604_050815_release-gates`.
+- The active hard cap is now `repeatability-not-proven`; rerun the same `full-local-release` profile after release-prep.
+- README, known limitations, release notes and platform artifact docs must match the final gate result.
+- Every uploaded Windows/Linux release artifact needs artifact-level smoke, not only source-level gates.
 
-### Decision points after release evidence
+### Decision points after beta.2 release-prep
 
-- Whether `beta-local-self-host` is enough for the first beta, or whether `beta-invite-preview` hardening is required first.
-- Whether import preview is sufficient for v1, or whether import-as-copy execution must be implemented before release.
+- Whether another repeatability run is enough for publishing `v1.0.0-beta.2`, or whether artifact-level smoke reveals packaging defects first.
+- Whether `beta-local-self-host` remains the release profile, or whether `beta-invite-preview` hardening is required for the next beta.
+- Whether import preview is sufficient for v1, or whether import-as-copy execution must be implemented before a later release.
 - Whether remaining Playwright scripts stay as legacy optional coverage or are retired after UIX parity is accepted.
 
 ## Next safe patch
 
-The next patch after the accepted 2026-06-04 evidence checkpoint should be a **repeatability evidence patch**, not another broad feature patch.
+The next patch after the accepted release-evidence checkpoint should be a **release-prep patch**, not another broad feature patch.
 
 Recommended verified fact:
 
 ```text
-A second same-profile `release-gates --profile full-local-release` run either lifts the repeatability hard cap or produces a precise unstable family to fix.
+After the patch, active docs and release templates agree that the next GitHub release line is v1.0.0-beta.2 and that required assets are a Windows self-host executable bundle, a Linux x86_64 AppImage, SHA256SUMS and the final release-gates evidence bundle.
 ```
 
 Cheapest sufficient evidence for that patch:
 
-- rerun `python tools/devbootstrap.py release-gates --profile full-local-release` from the same source state;
-- inspect `release-confidence-gate.md` and `remediation/repeatability-loop.*`;
-- update release notes/known limitations only after the repeatability decision is clear.
+- docs sanity check for `v1.0.0-beta.2` naming;
+- artifact contract check for Windows `.exe` bundle and Linux `.AppImage`;
+- repeat `python tools/devbootstrap.py release-gates --profile full-local-release` after release-prep changes.
 
 ## Release naming guardrail
 
 ```text
-v1.0.0-beta.1        -> fair only after the accepted evidence checkpoint also has repeatability or an explicit decision accepting the cap.
-v1.0.0-web-preview.1 -> use if repeatability or beta-profile hardening stays insufficient for external beta naming.
+v1.0.0-beta.2        -> current target; beta.1 already existed, and current evidence proves web core + card enrichment + local-first baseline + sync baseline + export safety net.
+v1.0.0-beta.2-prep   -> acceptable local working name before platform artifacts are smoke-tested and uploaded.
+v1.0.0-web-preview.* -> fallback only if repeatability or artifact smoke invalidates beta packaging claims.
 ```

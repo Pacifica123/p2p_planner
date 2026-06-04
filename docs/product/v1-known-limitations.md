@@ -1,19 +1,16 @@
 # v1 known limitations
 
-Этот документ фиксирует known limitations для v1/beta перед финальным release review. Он нужен не как маркетинговые release notes, а как честная граница того, что release-gates должны подсветить перед выпуском.
+Этот документ фиксирует known limitations для v1/beta перед GitHub Pre-release `v1.0.0-beta.2`. Он нужен не как маркетинговые release notes, а как честная граница того, что release-gates и artifact smoke должны подсветить перед выпуском.
 
-Freshness note: текущий implementation-status см. в `docs/product/v1-execution-roadmap.md`. Закрытые baseline-slices не исчезают из limitations: они становятся зонами, которые release-gates должны доказать или честно классифицировать, а не будущими blocker-работами сами по себе.
-
-Evidence note: первый accepted checkpoint зафиксирован в `docs/product/release-evidence-checkpoint-2026-06-04.md`. `full-local-release` прошёл `ok` со score `89/100`; внешний beta всё ещё ограничен hard cap `repeatability-not-proven`.
+Freshness note: текущий implementation-status см. в `docs/product/v1-execution-roadmap.md`. Release-evidence checkpoint от 2026-06-04 прошёл `Overall: ok`; оставшийся hard cap перед stable release — `repeatability-not-proven`.
 
 ## Ограничающие условия release-gates
 
-- `python tools/devbootstrap.py release-gates` агрегирует backend, frontend, browser, docs и optional clean-machine checks; для внешней beta важно смотреть не только `Overall`, но и `release-confidence-gate.md`.
-- На 2026-06-04 `frontend_uiux_real_backend_core_flow` прошёл и закрыл real-backend product-path cap; legacy `browser_real_backend_path` остается optional transition signal через `--include-real-backend-browser`.
-- Текущий главный release-confidence cap — `repeatability-not-proven`: один успешный `full-local-release` run достаточен для internal candidate, но не для внешнего beta claim.
-- Clean-machine quickstart в `full-local-release` прошёл как dry sandbox signal; более строгие clean-machine/deps/runtime профили можно запускать отдельно, если release review требует большего.
-- DB-writing smoke/browser gates не должны писать в обычную dev-БД без явного `TEST_DATABASE_URL`, managed test DB или `--allow-dev-db-write`.
-- Playwright browser binaries считаются infrastructure prerequisite. Их отсутствие классифицируется отдельно и не должно маскироваться как frontend regression.
+- `python tools/devbootstrap.py release-gates --profile full-local-release` прошёл на 2026-06-04, но stable `v1.0.0` нельзя объявлять до repeatability checkpoint.
+- Mocked browser/UIX smoke проверяет frontend behavior, но real backend product path закрывается только `frontend_uiux_real_backend_core_flow`; в принятом checkpoint этот gate прошёл.
+- Legacy `browser_real_backend_path` остается optional transition signal через `--include-real-backend-browser`, но не является обязательным beta.2 blocker.
+- DB-writing smoke/browser gates не должны писать в обычную dev-БД без явного `TEST_DATABASE_URL` или managed test DB.
+- Playwright/browser binaries считаются infrastructure prerequisite. Их отсутствие классифицируется отдельно и не должно маскироваться как frontend regression.
 
 ## Продуктовые ограничения v1/beta
 
@@ -22,3 +19,13 @@ Evidence note: первый accepted checkpoint зафиксирован в `doc
 - Import execution остается non-destructive boundary; destructive restore не входит в v1.
 - MFA/passkeys/E2EE и local snapshot encryption не входят в v1 hardening.
 - Attachment blobs зарезервированы, но не экспортируются в baseline backup bundle.
+
+
+## Ограничения release artifacts для beta.2
+
+- GitHub release должен быть отмечен как **Pre-release**.
+- Windows `.exe` должен попадать в self-host bundle, а не выкладываться как одинокий бинарник без `README_RELEASE.md`, `.env.example`, frontend build и DB instructions.
+- Linux `.AppImage` является обязательным beta.2 asset candidate, но его готовность должна подтверждаться artifact-level smoke на Linux, а не только source-level `release-gates`.
+- AppImage должен явно документировать, что именно он запускает и какие внешние prerequisites остаются, особенно PostgreSQL, если он не включён в packaged runtime story.
+- `SHA256SUMS.txt` обязателен для всех загружаемых binary/archive assets; GPG signature опциональна.
+- Devctl snapshots/patches не должны включать большие `.zip`, `.exe`, `.AppImage` payloads; такие файлы загружаются только в GitHub Release assets.

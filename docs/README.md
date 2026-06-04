@@ -10,6 +10,8 @@
    - `product/beta-scope-v1.md`
    - `product/v1-known-limitations.md`
    - `product/release-evidence-checkpoint-2026-06-04.md`
+   - `product/v1.0.0-beta.2-release-notes.md`
+   - `product/v1.0.0-beta.2-release-artifacts.md`
 2. Domain and sync vocabulary:
    - `domain/`
    - `sync/`
@@ -51,12 +53,12 @@
 |---|---|
 | Product | MVP is web-first Kanban with workspaces, boards, columns, cards, labels/checklists/comments, appearance, activity/audit and backup/export preview surface. |
 | Current v1 status | Read `product/v1-execution-roadmap.md` first; it is the active truth surface for done/partial/deferred/out-of-scope status. |
-| Local-first | Local-first runtime and backend-coordinated sync are baseline-implemented for core web flow, but release evidence must still prove the final beta claim. |
+| Local-first | Local-first runtime and backend-coordinated sync are baseline-implemented for core web flow; `20260604_050815_release-gates` proved the beta.2 real-backend product path, while stable release still needs repeatability evidence. |
 | P2P | Future-ready, not mandatory for v1 release. |
 | Development planning | Current mode is verified product acceleration: one user/release/truth fact per patch, cheapest sufficient evidence, no ownerless debt. |
 | Devctl | Patch conveyor applies small reproducible devctl patches, not full project archives. |
 | Devbootstrap | Project-owned diagnostic/release-gates tool; generated `.dev-bootstrap` artifacts are not source. |
-| Release gates | Evidence-first bundle with ledgers, classifications, confidence gate and regression memory; the 2026-06-04 `full-local-release` checkpoint is accepted as internal evidence, still capped by repeatability. |
+| Release gates | Evidence-first bundle with ledgers, classifications, confidence gate and regression memory; current beta.2 checkpoint passed `full-local-release` with effective cap `repeatability-not-proven`. |
 | UI evidence | Playwright is legacy transition; target is custom lightweight UI/UX Evidence Runner. |
 | Documentation size | Long manifestos are compacted after decisions are accepted; source archives should stay small. |
 
