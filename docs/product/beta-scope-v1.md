@@ -543,13 +543,15 @@ Mobile-чат имеет смысл открывать после выполне
 
 | Area | Что сделать | Почему blocker |
 |---|---|---|
-| Release evidence | Прогнать или честно классифицировать `release-gates`/UIX real backend product path на managed runtime/test DB | Без свежего bundle нельзя отличить готовый user path от старой надежды в документах |
+| Release evidence | Done for first checkpoint: 2026-06-04 `full-local-release` passed with UIX real-backend product path and score `89/100`; repeatability cap remains | Fresh bundle now exists, but external beta still needs repeatability or an explicit decision accepting the cap |
 | Contract parity guard | Подтвердить, что OpenAPI, backend routes и frontend API calls не разошлись после закрытых baseline slices | Beta не должна содержать UI-кнопки, ведущие в 404/501/not_implemented |
 | Auth/account beta profile | Решить, достаточно ли `beta-local-self-host`, или нужен `beta-invite-preview`; для invite-preview закрыть account recovery/invite/rate-limit evidence | Нельзя случайно назвать local-dev posture internet-facing beta |
 | Import boundary | Явно оставить v1 на export + preview или реализовать import-as-copy execution отдельным патчем | Пользовательские данные нельзя подвергать destructive/ambiguous restore behavior |
 | Release notes / limitations | Обновить known limitations по фактическому gate bundle | Release должен честно сказать, что проверено, что skipped и что deferred |
 
 Baseline-implemented areas such as labels/checklists/comments, local-first runtime, sync baseline, export backup preview and auth/security guards are no longer backlog items by themselves; they become release-evidence requirements.
+
+Checkpoint note: the first accepted `full-local-release` run moved this area from "missing evidence" to "repeatability decision". The next release blocker is the active `repeatability-not-proven` hard cap, not product-path absence.
 
 ### 10.2. P1 — beta completeness
 

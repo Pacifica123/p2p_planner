@@ -9,6 +9,7 @@
    - `product/mvp-scope-v1.md`
    - `product/beta-scope-v1.md`
    - `product/v1-known-limitations.md`
+   - `product/release-evidence-checkpoint-2026-06-04.md`
 2. Domain and sync vocabulary:
    - `domain/`
    - `sync/`
@@ -55,7 +56,7 @@
 | Development planning | Current mode is verified product acceleration: one user/release/truth fact per patch, cheapest sufficient evidence, no ownerless debt. |
 | Devctl | Patch conveyor applies small reproducible devctl patches, not full project archives. |
 | Devbootstrap | Project-owned diagnostic/release-gates tool; generated `.dev-bootstrap` artifacts are not source. |
-| Release gates | Evidence-first bundle with ledgers, classifications, confidence gate and regression memory. |
+| Release gates | Evidence-first bundle with ledgers, classifications, confidence gate and regression memory; the 2026-06-04 `full-local-release` checkpoint is accepted as internal evidence, still capped by repeatability. |
 | UI evidence | Playwright is legacy transition; target is custom lightweight UI/UX Evidence Runner. |
 | Documentation size | Long manifestos are compacted after decisions are accepted; source archives should stay small. |
 

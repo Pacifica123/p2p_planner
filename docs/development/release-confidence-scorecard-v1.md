@@ -2,6 +2,7 @@
 
 - Статус: Automated by Phase 6 release confidence gate and preserved by Phase 7 regression memory; manual policy remains canonical
 - Дата: 2026-05-27
+- Последний зафиксированный checkpoint: 2026-06-04 `full-local-release`, score `89/100`, effective `internal_candidate`
 - Родительский документ: `docs/development/release-stabilization-program-v1.md`
 - Назначение: зафиксировать политику release confidence; с Phase 6 она считается автоматически в `release-confidence-gate.json/md`.
 
@@ -133,3 +134,27 @@ Accepted product-path evidence must still be write-safe and runtime-owned:
 - preserved UIX report artifacts under the `release-gates` bundle.
 
 Mocked UIX evidence and legacy mocked browser smoke are useful frontend signals, but they do not lift the real-backend cap by themselves.
+
+
+## 7. Current checkpoint snapshot: 2026-06-04
+
+The first accepted post-truth-sync evidence checkpoint is documented in `docs/product/release-evidence-checkpoint-2026-06-04.md`. It ran:
+
+```text
+python tools/devbootstrap.py release-gates --profile full-local-release
+```
+
+Result:
+
+```text
+Overall: ok
+Classification: release_gates_ok
+Score: 89/100
+Raw class: beta_candidate
+Effective class: internal_candidate
+Unknown ratio: 0.0
+Accepted real-backend gate: frontend_uiux_real_backend_core_flow
+Active hard cap: repeatability-not-proven
+```
+
+Policy interpretation: the real-backend product-path cap is lifted for this source state, but external beta remains blocked until the repeatability cap is lifted or explicitly accepted by release review.

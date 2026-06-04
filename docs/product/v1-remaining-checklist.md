@@ -120,23 +120,26 @@
 
 - MFA/passkeys/E2EE не входят в v1 hardening;
 - local-first snapshot encryption не реализован;
-- browser smoke по реальному backend остается частью следующего release-gates блока.
+- real-backend UIX product path прошёл в release-gates; повторяемость same-profile прогона остается следующим evidence-блоком.
 
 ## 7. Testing and release gates
 
-Статус: in progress после release-evidence checkpoint. `frontend_uiux_real_backend_core_flow` теперь считается основным product-path доказательством в automated release-confidence scorecard, если проходит против managed frontend/backend/test DB. Полный свежий `release-gates` bundle всё ещё нужен; mocked UI/browser сигналы сами по себе не закрывают real-backend cap.
+Статус: first evidence checkpoint accepted. `frontend_uiux_real_backend_core_flow` прошёл в `release-gates --profile full-local-release` на 2026-06-04 и считается основным product-path доказательством. Scorecard дал `89/100`: raw `beta_candidate`, effective `internal_candidate` из-за hard cap `repeatability-not-proven`.
 
-- [ ] `cargo test`.
-- [ ] `python tests/smoke_core_api.py`.
-- [ ] `npm run build`.
-- [ ] `npm run test:run`.
-- [ ] `npm run test:browser`.
+- [x] `cargo test` запущен в full-local-release; default pass остался `partial_pass`, потому что ignored DB tests отдельно прогоняются следующим gate.
+- [x] `cargo test -- --include-ignored` прошёл против managed test DB.
+- [x] `python tests/smoke_core_api.py` прошёл дважды в одном release-gates run.
+- [x] `npm run build`.
+- [x] `npm run test:run`.
+- [x] `npm run test:browser`.
 - [x] Release confidence принимает UIX real-backend core flow как доказательство real backend product path.
-- [ ] Свежий `release-gates --profile full-local-release` bundle доказывает real backend product path на этой машине.
-- [ ] Smoke идемпотентен на повторных прогонах.
-- [ ] Clean-machine quickstart проверен.
-- [ ] README соответствует реальному запуску.
-- [ ] Release notes + known limitations обновлены.
+- [x] Свежий `release-gates --profile full-local-release` bundle доказал real backend product path на этой машине.
+- [x] Smoke идемпотентен на двух последовательных прогонах внутри managed runtime.
+- [x] Clean-machine quickstart проверен.
+- [x] README соответствует реальному запуску на уровне команд и next path.
+- [x] Known limitations обновлены по фактическому gate bundle.
+- [ ] Повторный same-profile release-gates run закрывает или честно оставляет `repeatability-not-proven`.
+- [ ] Release notes / beta naming обновлены после repeatability decision.
 
 ## 8. Devctl / packaging hygiene
 
@@ -171,9 +174,9 @@ v1.0.0-web-preview.1
 5. export/backup safety net — закрыто;
 6. auth/security hardening baseline — закрыто.
 
-Следующий практический патч по новым принципам: **release evidence checkpoint** — доказать real-backend browser/core flow через `release-gates`/UIX на managed runtime/test DB или честно классифицировать отсутствующие prerequisites, не считая их product success.
+Следующий практический патч по новым принципам: **repeatability evidence checkpoint** — повторить same-profile `release-gates --profile full-local-release`, чтобы закрыть или честно оставить `repeatability-not-proven`.
 
-После этого выбирать только один следующий slice:
+После repeatability decision выбирать только один следующий slice:
 
 - account-management/auth UX hardening для выбранного beta profile;
 - import-as-copy execution после безопасного preview;

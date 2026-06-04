@@ -204,11 +204,13 @@ curl -X POST http://127.0.0.1:18080/api/v1/integrations/import-export/imports/pr
 
 ## Что имеет смысл делать дальше
 
-По новым принципам следующий путь после truth-sync начинается с evidence, а не с очередной широкой фичи:
+По новым принципам путь после truth-sync уже прошел первый release-evidence checkpoint: `python tools/devbootstrap.py release-gates --profile full-local-release` дал `Overall: ok`, score `89/100`, raw class `beta_candidate`, но effective class `internal_candidate` из-за hard cap `repeatability-not-proven`. Детали зафиксированы в `docs/product/release-evidence-checkpoint-2026-06-04.md`.
 
-1. прогнать свежий `release-gates --profile full-local-release` bundle: scorecard уже принимает `frontend_uiux_real_backend_core_flow` как основной real-backend product-path proof;
-2. после этого выбрать один узкий slice: account-management/auth UX hardening, import-as-copy/apply flow после preview или release notes/known limitations refresh по фактическому gate bundle;
-3. не планировать старые blocker/stub labels как будущие работы, если `docs/product/v1-execution-roadmap.md` уже помечает соответствующий baseline как закрытый.
+Дальше не нужно возвращаться к старым blocker/stub labels, если `docs/product/v1-execution-roadmap.md` уже помечает соответствующий baseline как закрытый. Текущий порядок:
+
+1. повторить тот же `release-gates --profile full-local-release` из актуального source state, чтобы закрыть или честно оставить repeatability cap;
+2. после repeatability-решения обновить release notes / known limitations и выбрать beta naming profile;
+3. затем выбрать один узкий product slice: account-management/auth UX hardening или import-as-copy/apply flow после preview.
 
 ## Тестирование
 
