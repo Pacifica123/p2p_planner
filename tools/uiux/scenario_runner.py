@@ -125,6 +125,10 @@ class EventLog:
         return len(fatal_console) + len(self.runtime_errors)
 
 
+class FrontendStartupPrerequisiteError(RuntimeError):
+    classification = "REL-ENV"
+
+
 @dataclass
 class FrontendRuntime:
     process: subprocess.Popen[Any]
@@ -219,6 +223,36 @@ def command_for_subprocess(command: list[str], *, resolved_path: str | None = No
     return [resolved, *command[1:]]
 
 
+def frontend_vite_entry(project_root: Path) -> Path:
+    return project_root / "frontend" / "node_modules" / "vite" / "bin" / "vite.js"
+
+
+def frontend_startup_prerequisite_issue(project_root: Path) -> str | None:
+    frontend_dir = project_root / "frontend"
+    if not frontend_dir.is_dir():
+        return "frontend directory is missing; restore frontend/ before running UIX evidence."
+    if not (frontend_dir / "package.json").is_file():
+        return "frontend/package.json is missing; restore the frontend manifest before running UIX evidence."
+    if not (frontend_dir / "node_modules").is_dir():
+        return (
+            "frontend/node_modules is missing; run `python tools/devbootstrap.py prepare-frontend --install-mode=stale` "
+            "before standalone UIX `--start-frontend`, or run release-gates with dependency preparation enabled."
+        )
+    if not frontend_vite_entry(project_root).is_file():
+        return (
+            "frontend dependencies are incomplete: Vite is not installed at frontend/node_modules/vite/bin/vite.js; "
+            "run `python tools/devbootstrap.py prepare-frontend --install-mode=stale` to repair node_modules before standalone UIX."
+        )
+    return None
+
+
+def frontend_dev_launch_command(project_root: Path, host: str, port: int) -> tuple[list[str], str]:
+    vite_entry = frontend_vite_entry(project_root)
+    if vite_entry.is_file():
+        return ["node", "node_modules/vite/bin/vite.js", "--host", host, "--port", str(port), "--strictPort"], "vite_direct"
+    return ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"], "npm_run_dev"
+
+
 def start_frontend(project_root: Path, report_dir: Path, *, api_base_url: str, host: str = "127.0.0.1") -> FrontendRuntime:
     port = free_port(host)
     url = f"http://{host}:{port}/"
@@ -226,9 +260,16 @@ def start_frontend(project_root: Path, report_dir: Path, *, api_base_url: str, h
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.update({"VITE_API_BASE_URL": api_base_url.rstrip("/"), "VITE_ENABLE_PROJECT_ROADMAP_SEED": "false"})
-    requested_command = ["npm", "run", "dev", "--", "--host", host, "--port", str(port), "--strictPort"]
+    requested_command, launch_mode = frontend_dev_launch_command(project_root, host, port)
     launch_command = command_for_subprocess(requested_command)
     with log_path.open("w", encoding="utf-8") as log_handle:
+        log_handle.write(f"dependency preflight: frontend={str((project_root / 'frontend').as_posix())}\n")
+        prerequisite_issue = frontend_startup_prerequisite_issue(project_root)
+        if prerequisite_issue:
+            log_handle.write(f"prerequisite failed: {prerequisite_issue}\n")
+            log_handle.flush()
+            raise FrontendStartupPrerequisiteError(frontend_startup_failure_message(prerequisite_issue, url=url, log_path=log_path))
+        log_handle.write(f"launch mode: {launch_mode}\n")
         log_handle.write(f"requested: {requested_command!r}\n")
         log_handle.write(f"launch: {launch_command!r}\n")
         log_handle.flush()
@@ -643,8 +684,8 @@ def execute_scenario(
             final_html="",
         )
     except Exception as exc:  # noqa: BLE001
-        status = "infra_failed"
-        classification = "REL-PROC"
+        classification = str(getattr(exc, "classification", "REL-PROC"))
+        status = "skipped_prerequisite" if classification in {"REL-ENV", "REL-DB"} else "infra_failed"
         message = f"{exc.__class__.__name__}: {exc}"
         return finalize_report(
             scenario_name=scenario_name,
