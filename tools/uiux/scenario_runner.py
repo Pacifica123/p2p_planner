@@ -157,12 +157,35 @@ def http_ok(url: str, timeout: float = 1.0) -> bool:
         return False
 
 
-def wait_for_url(url: str, process: subprocess.Popen[Any] | None = None, timeout: float = 60.0) -> None:
+def read_text_tail(path: Path | None, *, max_lines: int = 80, max_chars: int = 12_000) -> str:
+    if path is None or not path.is_file():
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        return f"<failed to read {path}: {exc.__class__.__name__}: {exc}>"
+    tail = "\n".join(lines[-max_lines:])
+    if len(tail) > max_chars:
+        return "<truncated>\n" + tail[-max_chars:]
+    return tail
+
+
+def frontend_startup_failure_message(reason: str, *, url: str, log_path: Path | None = None) -> str:
+    message = f"{reason} while waiting for frontend URL {url}"
+    if log_path is not None:
+        message += f"; frontend log: {log_path.as_posix()}"
+    tail = read_text_tail(log_path)
+    if tail:
+        message += f"; frontend log tail:\n{tail}"
+    return message
+
+
+def wait_for_url(url: str, process: subprocess.Popen[Any] | None = None, timeout: float = 60.0, *, log_path: Path | None = None) -> None:
     deadline = time.monotonic() + timeout
     last_error = "not reachable"
     while time.monotonic() < deadline:
         if process is not None and process.poll() is not None:
-            raise RuntimeError(f"frontend process exited early with code {process.returncode}")
+            raise RuntimeError(frontend_startup_failure_message(f"frontend process exited early with code {process.returncode}", url=url, log_path=log_path))
         try:
             with urllib.request.urlopen(url, timeout=1.0) as response:  # noqa: S310 - user configured local/dev URL
                 if 200 <= response.status < 500:
@@ -170,7 +193,7 @@ def wait_for_url(url: str, process: subprocess.Popen[Any] | None = None, timeout
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last_error = f"{exc.__class__.__name__}: {exc}"
         time.sleep(0.2)
-    raise RuntimeError(f"frontend URL did not become reachable: {url} ({last_error})")
+    raise RuntimeError(frontend_startup_failure_message(f"frontend URL did not become reachable ({last_error})", url=url, log_path=log_path))
 
 
 def resolve_executable_path(executable: str) -> str | None:
@@ -218,7 +241,7 @@ def start_frontend(project_root: Path, report_dir: Path, *, api_base_url: str, h
             log_handle.write(f"launch failed: {exc.__class__.__name__}: {exc}\n")
             raise
     try:
-        wait_for_url(url, process, timeout=80.0)
+        wait_for_url(url, process, timeout=80.0, log_path=log_path)
         return FrontendRuntime(process=process, url=url, log_path=log_path)
     except Exception:
         if process.poll() is None:
@@ -463,10 +486,12 @@ def report_markdown(report: dict[str, Any]) -> str:
             f"- localStorage changed: `{report.get('storage', {}).get('localStorageChanged')}`",
             f"- sessionStorage changed: `{report.get('storage', {}).get('sessionStorageChanged')}`",
             "",
-            "## Artifacts",
-            "",
         ]
     )
+    diagnostics = report.get("diagnostics") or {}
+    if diagnostics.get("frontendLogTail"):
+        lines.extend(["## Frontend startup log tail", "", "```text", str(diagnostics["frontendLogTail"]), "```", ""])
+    lines.extend(["## Artifacts", ""])
     for key, value in (report.get("artifacts") or {}).items():
         lines.append(f"- {key}: `{value}`")
     lines.append("")
@@ -758,6 +783,8 @@ def finalize_report(
         "storageAfter": "storage-after.json",
         "frontendLog": "frontend.log",
     }
+    frontend_log_tail = read_text_tail(report_dir / "frontend.log")
+    diagnostics = {"frontendLogTail": frontend_log_tail} if frontend_log_tail else {}
     report = {
         "schemaVersion": 1,
         "tool": "uiux_evidence",
@@ -774,6 +801,7 @@ def finalize_report(
         "network": {"apiRequestCount": api_count, "failedApiRequestCount": failed_api_count},
         "storage": {"localStorageChanged": storage_before.get("localStorage") != storage_after.get("localStorage"), "sessionStorageChanged": storage_before.get("sessionStorage") != storage_after.get("sessionStorage")},
         "artifacts": artifacts,
+        "diagnostics": diagnostics,
     }
     write_json(report_dir / "report.json", report)
     write_text(report_dir / "report.md", report_markdown(report))
