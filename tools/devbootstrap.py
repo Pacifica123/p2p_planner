@@ -46,7 +46,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TOOL_VERSION = "2.0.0-draft"
+TOOL_VERSION = "2.0.1-draft"
 STATE_VERSION = 1
 REPORT_SCHEMA_VERSION = 1
 TIMEOUT_POLICY = {
@@ -2605,7 +2605,7 @@ def command_check_backend(args: argparse.Namespace) -> int:
 def launch_backend_process(project_root: Path, report_dir: Path) -> tuple[subprocess.Popen[Any], Path]:
     backend_dir = project_root / "backend"
     log_path = report_dir / "backend.log"
-    command = ["cargo", "run"]
+    command = ["cargo", "run", "--bin", "p2p-planner-backend"]
     execution_command = command_for_subprocess(command)
     log_handle = log_path.open("ab", buffering=0)
     header = "\n".join(
@@ -2674,10 +2674,10 @@ def command_start_backend(args: argparse.Namespace) -> int:
             result.next_actions.append("Install Rust/Cargo or use a shell where cargo is available, then rerun start-backend.")
         elif args.dry_run:
             result.classification = "dry_run"
-            result.actions.append(BackendAction("cargo_run", "planned", "Would start backend with cargo run and wait for health.", "cargo run"))
+            result.actions.append(BackendAction("cargo_run", "planned", "Would start the p2p-planner-backend binary with cargo run and wait for health.", "cargo run --bin p2p-planner-backend"))
             result.next_actions.append("Run without --dry-run when PostgreSQL is ready.")
         else:
-            command = ["cargo", "run"]
+            command = ["cargo", "run", "--bin", "p2p-planner-backend"]
             run_id_value = run_id("start-backend")
             result.run_id = run_id_value
             try:
@@ -5655,7 +5655,7 @@ def start_release_gates_managed_backend(
             classification="managed_backend_port_occupied",
             message=message,
             cwd="backend",
-            command=["cargo", "run"],
+            command=["cargo", "run", "--bin", "p2p-planner-backend"],
             log_path=rel(log_path, project_root),
             details=details,
         ), None
@@ -5672,14 +5672,14 @@ def start_release_gates_managed_backend(
             classification="missing_cargo",
             message=message,
             cwd="backend",
-            command=["cargo", "run"],
+            command=["cargo", "run", "--bin", "p2p-planner-backend"],
             log_path=rel(log_path, project_root),
             details=details,
         ), None
 
     backend_dir = project_root / "backend"
     backend_log_path = logs_dir / f"{index:02d}_managed_backend_process.log"
-    command = ["cargo", "run"]
+    command = ["cargo", "run", "--bin", "p2p-planner-backend"]
     execution_command = command_for_subprocess(command)
     backend_env_diff = release_gate_managed_db_env(database_url)
     backend_env_diff.update(release_gate_managed_backend_cors_env(project_root, state))
@@ -12010,7 +12010,7 @@ def self_check_case(result: SelfCheckResult, name: str, func: Any) -> None:
 
 
 def case_self_check_version_and_timeout_policy() -> str:
-    assert TOOL_VERSION == "2.0.0-draft", f"expected TOOL_VERSION 2.0.0-draft, got {TOOL_VERSION}"
+    assert TOOL_VERSION == "2.0.1-draft", f"expected TOOL_VERSION 2.0.1-draft, got {TOOL_VERSION}"
     required = {
         "probe_command",
         "port_probe",

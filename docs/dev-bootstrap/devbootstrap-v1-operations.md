@@ -37,7 +37,7 @@ python tools/devbootstrap.py smoke --level full --allow-dev-db-write
 | `prepare-env` | Creates missing env files from examples. Existing env files are not overwritten. | Yes |
 | `start-db` | Checks configured PostgreSQL and can start compose `postgres` if the port is closed. | Guarded |
 | `check-backend` | Runs `cargo metadata` and `cargo check`. | Yes, but can be slow |
-| `start-backend` | Starts `cargo run`, captures PID/state/logs and waits for health. | Guarded |
+| `start-backend` | Starts `cargo run --bin p2p-planner-backend`, captures PID/state/logs and waits for health. | Guarded |
 | `prepare-frontend` | Runs `npm ci` or `npm install` when dependencies are missing/stale. | Guarded |
 | `start-frontend` | Starts `npm run dev`, captures PID/state/logs and waits for frontend root. | Guarded |
 | `up` | Orchestrates the routine pipeline and stops on first blocking failure. | Guarded; `--dry-run` first |
