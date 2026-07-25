@@ -1,4 +1,4 @@
-# Browser smoke scenarios
+# Browser smoke-сценарии
 
 Минимальные browser smoke сценарии MVP.
 
@@ -9,14 +9,21 @@
 - pageerror считается smoke-failure.
 
 
-## Real-backend browser path
+## Путь с настоящим backend
 
-`auth-and-workspaces.smoke.spec.ts` intentionally uses Playwright `page.route` mocks and only checks deterministic boot/auth/workspace rendering. It does **not** satisfy the release checklist item for a real backend browser path.
+`auth-and-workspaces.smoke.spec.ts` намеренно использует Playwright
+`page.route` mocks и проверяет только детерминированный
+boot/auth/workspace-rendering. Он не доказывает работу с настоящим backend.
 
-The dedicated no-mock path lives in `smoke/real-backend.smoke.spec.ts` and is executed by:
+Отдельный no-mock путь находится в `smoke/real-backend.smoke.spec.ts`:
 
 ```bash
 npm run test:browser:real-backend
 ```
 
-In `devbootstrap release-gates` this path is opt-in via `--include-real-backend-browser` and also requires write-safe DB permission through `TEST_DATABASE_URL` or `--allow-dev-db-write`.
+В `devbootstrap release-gates` он включается через
+`--include-real-backend-browser` и требует безопасной БД через
+`TEST_DATABASE_URL` либо осознанный `--allow-dev-db-write`.
+
+Основным обязательным доказательством теперь считается custom UIX
+real-backend flow; Playwright-путь остаётся дополнительным.

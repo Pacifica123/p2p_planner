@@ -1,4 +1,4 @@
-# Technical specification: pure-Python devctl patch conveyor
+# Техническое описание devctl-конвейера на чистом Python
 
 ## 1. Назначение
 
@@ -284,7 +284,7 @@ Statuses:
     - update state registry as `failed`;
     - write report.
 
-### 9.2. No new patch
+### 9.2. Нет нового патча
 
 If no unapplied patch exists:
 
@@ -294,7 +294,7 @@ If no unapplied patch exists:
 - do not commit;
 - do not push.
 
-### 9.3. Already applied patch
+### 9.3. Патч уже применён
 
 If latest patch SHA-256 is already `applied`:
 
@@ -302,16 +302,16 @@ If latest patch SHA-256 is already `applied`:
 - show previous run info;
 - do not create duplicate archive.
 
-## 10. Git policy
+## 10. Правила работы с Git
 
-### 10.1. Required clean worktree
+### 10.1. Обязательное чистое рабочее дерево
 
 Before applying patch:
 
 - `git status --porcelain` must be empty;
 - if not empty — stop.
 
-### 10.2. Remote sync
+### 10.2. Синхронизация с remote
 
 Run:
 
@@ -336,7 +336,7 @@ If ahead before applying patch:
 - stop or warn strongly, depending on policy;
 - preferred v0 behavior: stop, because push discipline is already broken.
 
-### 10.3. Commit and push
+### 10.3. Commit и push
 
 Commit only if:
 
@@ -355,7 +355,7 @@ If push fails:
 - status: `push_failed`;
 - report must clearly say commit exists locally but is not on remote.
 
-## 11. Archive policy
+## 11. Правила архивов
 
 Each run gets a unique run directory:
 
@@ -420,7 +420,7 @@ Exception:
 
 should be allowed.
 
-## 13. Safe apply rules
+## 13. Правила безопасного применения
 
 ### 13.1. Safe file copy
 

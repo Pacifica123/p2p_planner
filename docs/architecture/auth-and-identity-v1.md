@@ -1,6 +1,6 @@
 # Auth и identity v1
 
-Документ фиксирует **минимальную auth-модель MVP** для P2P Planner.
+Документ фиксирует **минимальную auth-модель MVP** для p2pKanban.
 Он должен быть совместим с уже принятыми решениями:
 - backend обязателен в MVP как HTTP/API, auth/session слой и координатор синхронизации;
 - модель уже sync-ready и device/replica-aware;

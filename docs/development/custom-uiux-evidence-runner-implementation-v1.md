@@ -1,68 +1,60 @@
-# Custom UI/UX Evidence Runner v1 — implementation notes
+# Реализация UI/UX Evidence Runner v1
 
-This document records the first executable implementation slice for the Playwright exit strategy described in `custom-uiux-evidence-manifesto-v1.md` and `custom-uiux-evidence-runner-development-plan-v1.md`.
+## Реализовано
 
-## Implemented scope
+- поиск системного Chromium/Chrome/Edge;
+- запуск отдельного browser profile;
+- CDP WebSocket client на стандартной библиотеке Python;
+- boot scenario;
+- mocked core flow;
+- real-backend core flow;
+- screenshots, DOM, console и network evidence;
+- интеграция с devbootstrap release gates;
+- redaction чувствительных заголовков и значений;
+- очистка owned process/profile.
 
-The patch introduces a Python stdlib UI/UX runner under `tools/uiux_evidence.py` and `tools/uiux/`.
+## Сценарии
 
-The runner can:
+Файлы:
 
-- discover an already installed Chromium-compatible browser without downloading Playwright browser revisions;
-- launch the browser with a temporary profile and a local Chrome DevTools Protocol endpoint;
-- drive basic UI actions through CDP: navigation, visibility assertions, text input, clicks, visible-text assertions and network assertions;
-- start a runner-owned mock API for deterministic frontend-only evidence;
-- optionally start the Vite frontend with an injected `VITE_API_BASE_URL`;
-- produce evidence artifacts: JSON/Markdown report, DOM snapshot, DOM excerpt, console events, runtime errors, network log, storage snapshots and mock API request log.
+```text
+tools/uiux/scenarios/boot.json
+tools/uiux/scenarios/mocked-core-flow.json
+tools/uiux/scenarios/real-backend-core-flow.json
+```
 
-## Scenarios
+Frontend предоставляет устойчивые markers, чтобы runner не зависел от текста,
+случайных CSS-классов и координат.
 
-The first scenario set lives in `tools/uiux/scenarios/`:
+## Поведение окружения
 
-- `boot` proves that the auth route opens and renders without fatal runtime errors;
-- `mocked-core-flow` proves the workspace → board → column → card UI path against the runner-owned mock API;
-- `real-backend-core-flow` proves the same path against managed frontend/backend/test database runtime.
+- отсутствие браузера → infrastructure result;
+- frontend недоступен → runtime result;
+- fatal console → UI runtime failure;
+- неправильный network contract → contract failure;
+- backend недоступен в real flow → backend/runtime result.
 
-## Frontend contract
+Runner не скачивает браузер автоматически.
 
-The patch adds stable `data-testid` markers to the app shell, auth page, workspace list, board list, board screen, column/card creation controls, status banners and shared loading/error components.
+## Не входит
 
-The marker contract is intentionally checked from source by `python -B tools/uiux_evidence.py validate-scenarios --json`, so accidental marker drift is caught before a browser is even launched.
+- полная замена всех frontend unit tests;
+- visual regression по пикселям;
+- mobile WebView;
+- удалённая browser farm;
+- произвольный general-purpose automation DSL.
 
-## devbootstrap integration
+## Следующее усиление
 
-`release-gates` now includes these UIX gates:
+- стабилизировать CDP input на разных Chromium;
+- расширять console classification только по реальным сбоям;
+- сохранять regression memory по scenario ID;
+- удалить обязательные ссылки на Playwright после ещё одного повторяемого
+  full release run.
 
-- `frontend_uiux_validate_scenarios`;
-- `frontend_uiux_browser_discovery`;
-- `frontend_uiux_boot`;
-- `frontend_uiux_mocked_core_flow`;
-- `frontend_uiux_real_backend_core_flow`.
+## Релизное значение
 
-The real-backend UIX flow is required only when managed runtime is requested and a safe managed test DB/runtime is available. Without managed runtime it is reported as an optional skip, matching the existing safety model for DB-writing browser paths.
+Принятый прогон 2026-06-04 доказал mocked и real-backend core flow. Для
+beta.3 runner должен быть выполнен снова, потому что transport/bootstrap и
+релизная упаковка изменились после этой точки.
 
-Legacy Playwright gates remain present but are optional during the transition. Profile defaults no longer request Playwright browser installation.
-
-## Environment behavior
-
-The runner never downloads browsers. Missing browsers or browser policies that block local navigation are classified as environment prerequisites rather than product regressions. This keeps release evidence honest: a blocked browser environment is visible, but it is not mislabeled as a broken frontend.
-
-## Current non-goals
-
-This first slice does not yet implement drag-and-drop, visual screenshots, accessibility tree checks, multi-tab flows or full Playwright dependency removal. Those remain follow-up slices after the new runner proves stable on boot/core-flow evidence.
-## Hardening follow-up: CDP input and console classification
-
-The first manual Linux run proved browser discovery and frontend startup, but exposed two runner-level issues rather than product regressions:
-
-- CDP `fill` initially assigned `element.value` directly. That updated the DOM value but could leave React controlled component state unchanged, so form submit handlers saw stale empty state. The runner now uses the native input/textarea value setter and dispatches a bubbling `InputEvent` plus `change`, which matches the React-controlled form contract more closely.
-- Chromium `Log.entryAdded` reports ordinary failed HTTP resources, such as expected unauthenticated refresh probes, with `level=error`. These events are now kept in console evidence but are not treated as JavaScript runtime crashes. Fatal evidence remains explicit `console.error`/`console.assert`, CDP `Runtime.exceptionThrown`, and browser `fatal` log entries. Network failures stay visible in `network.json` and the report counters.
-
-This keeps `boot` focused on “the app can open and React does not crash”, while `mocked-core-flow` and `real-backend-core-flow` remain responsible for proving the actual user path and API behavior.
-
-
-
-## Release confidence checkpoint
-
-`frontend_uiux_real_backend_core_flow` is now the primary release-confidence proof for the real backend product path. When it passes inside `release-gates` against managed frontend/backend/test DB, `release-confidence-gate.json/md` may count the run as having real-backend product-path evidence and lift the `real-backend-product-path-missing` cap.
-
-The legacy Playwright `browser_real_backend_path` gate remains optional and can still provide equivalent transitional evidence, but release confidence is no longer coupled exclusively to Playwright. This matches the project-owned UIX direction: behavior-first evidence, no mandatory browser downloads, and explicit prerequisite classification when a system browser or safe DB/runtime is unavailable.

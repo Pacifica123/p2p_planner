@@ -1,40 +1,51 @@
-# Documentation weight budget v1
+# Бюджет веса документации v1
 
-## Purpose
+## Назначение
 
-Project archives are part of the development loop: they are uploaded to ChatGPT, copied between workspaces and inspected by humans. Documentation is valuable only while it keeps that loop cheap. This document sets the rule for future documentation growth.
+Документация должна возвращать контекст, а не требовать отдельного проекта по
+её чтению.
 
-## Budget
+## Правила
 
-Target for normal devctl post-archives: **stay comfortably below 1 MiB** while the project is still in active conversational development.
+- один факт имеет один основной документ;
+- выполненный development plan сжимается до решения и результата;
+- временные даты и blockers не копируются во все файлы;
+- roadmap описывает состояние, ADR — решение, runbook — команды;
+- большие логи и evidence хранятся вне source;
+- команды и имена полей не переводятся;
+- основной язык prose — русский;
+- английский сохраняется только для внешнего release body и международной
+  памятки.
 
-The budget is not a hard product limit. It is an operating constraint for this phase: small archives make patch review, upload, rollback and cross-machine diagnostics faster.
-
-## Rules
-
-1. **No duplicate manifestos.** A new strategic document may be long while the idea is being designed, but after the decision is accepted it should be compacted into: decision, scope, invariants, risks, exit criteria.
-2. **One source of truth per topic.** Phase notes should point to the canonical plan instead of repeating the whole plan.
-3. **Keep evidence out of source archives.** `.dev-bootstrap/`, run logs and diagnostic bundles are generated artifacts. They belong in per-run bundles, not in project snapshots.
-4. **Prefer tables and checklists over prose loops.** Keep rationale, but remove repeated persuasion after the decision is locked.
-5. **Do not compress executable contracts.** OpenAPI, migrations, source code and machine-readable schemas are not prose bloat.
-6. **Keep removal reversible.** Historical detail can be recovered from Git history or old devctl archives; current docs should optimize for the next developer decision.
-
-## Compact document template
-
-Use this structure for long-lived docs:
+## Рекомендуемый шаблон
 
 ```text
-# Title
+# Название
 
-## Decision
-## Scope
-## Current implementation
-## Commands / contracts
-## Risks
-## Exit criteria
-## Pointers
+## Решение
+## Область
+## Текущая реализация
+## Команды или контракты
+## Риски
+## Критерий выхода
+## Ссылки
 ```
 
-## Current compaction milestone
+## Ограничение размера
 
-This patch compacts the repeated stabilization/devbootstrap narrative and removes generated `.dev-bootstrap` run artifacts from source snapshots. Runtime code is not changed except for devctl archive exclusions.
+Если документ повторяет другой больше чем наполовину, его нужно:
+
+1. объединить с источником истины;
+2. заменить короткой ссылкой;
+3. либо явно назвать историческим.
+
+Фиксированного лимита строк нет: протокол может быть длинным. Но план,
+завершившийся реализацией, не должен навсегда оставаться огромной инструкцией о
+будущем.
+
+## Текущая точка
+
+В release-prep beta.3 англоязычные и устаревшие планы были переведены и
+сжаты. Следующие патчи не должны снова раздувать их полными копиями текущего
+roadmap.
+

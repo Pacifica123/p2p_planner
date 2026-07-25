@@ -335,8 +335,9 @@ Future-ready визуальный фон.
 
 ## 17. BoardAppearanceSettings
 
-Future-ready настройки внешнего вида доски.
-В MVP допустимы только безопасные defaults и минимальная подготовка в модели.
+Реализованные настройки внешнего вида доски. В beta поддерживается безопасный
+ограниченный набор preset/solid/gradient параметров без загрузки произвольных
+assets.
 - id
 - board_id
 - theme_id nullable

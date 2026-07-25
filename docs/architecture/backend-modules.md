@@ -1,10 +1,12 @@
 # Карта backend-модулей
 
-- Статус: Draft v2
-- Дата: 2026-04-01
-- Назначение: зафиксировать **реальную backend module map** под MVP, first migrations и будущий backend skeleton.
+- Статус: справочная карта реализованного модульного монолита
+- Дата актуализации: 2026-07-25
+- Назначение: зафиксировать ownership и границы backend-модулей.
 
-> Документ опирается на уже принятые решения: проект остается modular monolith, сохраняет слои `dto / handler / service / repo`, использует workspace-centric домен вместо role-centric и должен укладываться в MVP-срез `workspace / board / column / card` плюс `labels`, `checklists`, `comments`, минимальную коллаборацию и sync-ready foundation.
+> Фактический состав файлов имеет приоритет. Auth, appearance, activity, audit,
+> labels, checklists, comments, sync и transport outbox уже реализованы;
+> integrations остаются частичными.
 
 ---
 

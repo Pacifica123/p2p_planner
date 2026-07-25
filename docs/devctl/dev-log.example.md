@@ -1,85 +1,63 @@
-# Development Log
+# Пример журнала разработки
 
-Этот файл — пример журнала разработки. Он не заменяет Git history, а дает человеческое объяснение: что делали, зачем, какие проверки прошли и что дальше.
+Этот файл показывает формат человеческого объяснения патча. Он не заменяет Git
+history.
 
-## 2026-04-30 — Release workflow automation
+## 2026-04-30 — автоматизация релизного потока
 
 **Patch:** `2026-04-30-release-workflow`  
-**Patch archive:** `patch_20260430_231502_release-workflow.zip`  
-**Patch SHA-256:** `example-7f3a9c...`  
+**Архив:** `patch_20260430_231502_release-workflow.zip`  
+**SHA-256:** `example-7f3a9c...`  
 **Commit:** `abc1234`  
-**Commit message:** `chore(dev): add release workflow automation`  
-**Status:** `applied`  
-**Archive folder:** `archives/20260430_231502_release-workflow_7f3a9c/`
+**Статус:** `applied`
 
-### Goal
+### Цель
 
-Добавить операционный слой для разработки патчами: project state, dev-log, manifest-based patch format и будущий `devctl` patch conveyor.
+Добавить manifest-based патчи, state-срез, журнал и конвейер применения.
 
-### Changed
+### Изменения
 
-- Added `docs/project-state.md` as current project cockpit.
-- Added `docs/dev-log.md` as human-readable development journal.
-- Added `docs/release-workflow.md` describing patch workflow.
-- Added `tools/devctl.py` skeleton.
-- Added example patch manifest format.
+- добавлен короткий project state;
+- добавлен журнал;
+- описан patch workflow;
+- добавлен каркас devctl;
+- добавлен пример manifest.
 
-### Checks
+### Проверки
 
-| Check | Result | Log |
-|---|---:|---|
-| `cargo check` | pass | `logs/backend-cargo-check.log` |
-| `npm run build` | pass | `logs/frontend-build.log` |
-| `python tests/smoke_core_api.py` | skipped | backend service was not auto-started in v0 |
+| Проверка | Результат |
+|---|---|
+| `cargo check` | успешно |
+| `npm run build` | успешно |
+| Backend smoke | пропущен: runtime ещё не запускался автоматически |
 
-### Result
+### Итог
 
-Development workflow became more reproducible. The project now has a documented path for applying assistant-generated patches with backup, checks, archives, commit and push.
+Применение патча стало воспроизводимым: backup → apply → checks → archive →
+commit → push.
 
-### Notes
+### Следующее действие
 
-- v0 does not auto-start backend/frontend services.
-- v0 does not auto-install frontend or Python test dependencies.
-- Future version should add manifest `setup` and `services` sections.
-
-### Next best action
-
-Create `release-v1-gate.md` and define what blocks the real v1 release.
+Определить реальные блокеры v1, а не добавлять новые большие функции.
 
 ---
 
-## 2026-05-01 — Example failed run
+## 2026-05-01 — пример неуспешного запуска
 
 **Patch:** `2026-05-01-browser-smoke-runner`  
-**Patch archive:** `patch_20260501_101500_browser-smoke-runner.zip`  
-**Patch SHA-256:** `example-bad91e...`  
-**Commit:** none  
-**Status:** `failed`  
-**Archive folder:** `archives/20260501_101500_browser-smoke-runner_bad91e/`
+**Статус:** `failed`  
+**Commit:** не создан
 
-### Goal
+### Причина
 
-Add browser smoke checks to the patch conveyor.
+Browser smoke не запустился из-за отсутствующих Playwright browsers.
 
-### Changed
+### Итог
 
-- Applied files from patch.
-- No commit was created because checks failed.
+Рабочее дерево оставлено для анализа, создан failed-state archive, push не
+выполнялся.
 
-### Checks
+### Следующее действие
 
-| Check | Result | Log |
-|---|---:|---|
-| `npm run test:browser` | fail | `logs/frontend-browser-smoke.log` |
+Либо явно подготовить browser dependency, либо оставить этот gate optional.
 
-### Failure summary
-
-Browser smoke failed because Playwright browsers were not installed in the local environment.
-
-### Result
-
-The working tree was left dirty for analysis. A failed-state archive was created. Push was not attempted.
-
-### Next best action
-
-Add explicit manifest setup step for Playwright installation or keep browser smoke as manual until service/setup support exists.

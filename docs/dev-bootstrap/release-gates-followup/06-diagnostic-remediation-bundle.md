@@ -1,5 +1,9 @@
 # Proposal: diagnostic remediation bundle for release-gates
 
+> Статус: исторический план. Managed DB, managed runtime и remediation bundle
+> уже реализованы; актуальные команды находятся в
+> `docs/dev-bootstrap/release-gates-test-database.md`.
+
 ## Источник анализа
 
 Документ построен по результатам архива `20260524_200616_release-gates.zip` для запуска `20260524_200616_release-gates`.
@@ -126,7 +130,8 @@ python tools/devbootstrap.py release-gates --prepare-frontend --install-playwrig
 python tools/devbootstrap.py release-gates --managed-test-db --include-real-backend-browser
 ```
 
-Пока managed DB не реализована, команда должна ссылаться на `docs/dev-bootstrap/release-gates-test-database.md`.
+На момент исходного плана managed DB ещё не была реализована. Сейчас команда
+использует действующий `--managed-test-db`; ссылка выше остаётся runbook.
 
 ## Failure taxonomy
 

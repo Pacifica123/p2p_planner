@@ -1,111 +1,71 @@
-# Project State
+# Пример краткого состояния проекта
 
-Этот файл — пример короткого state-среза проекта. Его задача: быстро вернуть человека и ассистента в актуальный контекст без перечитывания всех больших документов.
+Такой файл помогает быстро вернуть человека и ассистента в контекст без чтения
+всей документации. Значения ниже являются примером формата.
 
-## Current source of truth
+## Источник истины
 
-**Repository:** `p2p_planner`  
-**Main branch:** `main`  
-**Current phase:** `v1 release preparation`  
-**Current workflow:** assistant-generated manifest patches + local patch conveyor  
-**Latest stable commit:** `abc1234`  
-**Latest stable archive:** `archives/20260430_231502_release-workflow_7f3a9c/post_p2p_planner_20260430_231502_after_release-workflow_abc1234.zip`
+**Проект:** `p2pKanban`  
+**Ветка:** `main`  
+**Фаза:** подготовка `v1.0.0-beta.3`  
+**Поток:** devctl patches + Git  
+**Последний commit:** `<sha>`  
+**Последний archive:** `archives/<run>/post_*.zip`
 
-## Current workspace layout
-
-Expected local workspace:
+## Workspace
 
 ```text
 p2p_workspace/
   patches/
   archives/
-  p2p_planner/
-    backend/
-    frontend/
-    docs/
-    tools/
+  p2pkanban/
 ```
 
-`archives` is the preferred spelling. A compatibility alias for `arhives` may be supported by tooling, but new work should use `archives`.
+## Готово
 
-## Ready / implemented
+- web Kanban core;
+- auth/session;
+- appearance и activity/audit;
+- local-first и backend sync baseline;
+- export/import preview;
+- zero-config container bootstrap;
+- experimental transport foundation.
 
-- Core backend CRUD for workspace, board, column, card.
-- Web core UI for workspace/board/card flow.
-- Appearance/customization backend and UI basis.
-- Activity/history/audit backend surface.
-- Auth layer exists, but docs and legacy references may still require cleanup.
-- Testing strategy draft exists.
-- Deployment/packaging discussion exists, but implementation and release flow need stabilization.
+## Текущий фокус
 
-## Current focus
+1. применить release-prep patch;
+2. выполнить новый full release-gates;
+3. собрать tagged bootstrap ZIP;
+4. проверить его на Windows и Linux;
+5. опубликовать Pre-release.
 
-Build the development conveyor before pushing deeper into v1 release work.
+## Риски
 
-Immediate focus:
+- новые bootstrap/transport изменения ещё не подтверждены повторным полным
+  прогоном;
+- coordinator-free режим не готов;
+- import execution отсутствует;
+- публичная лицензия не выбрана;
+- разные машины могут иметь разные workspace IDs, поэтому patch target должен
+  разрешаться через manifest, а не через случайный локальный путь.
 
-1. document patch manifest format;
-2. implement `tools/devctl.py` v0;
-3. make patch application reproducible;
-4. reduce multi-machine sync mistakes;
-5. make GitHub the practical source of truth after every successful run.
+## Правило
 
-## Active risks
-
-- Manual patch/archive routine is easy to forget or misorder.
-- Local machines can drift if commit/push/pull discipline fails.
-- Patch archives currently express changed files, but not deletions unless manifest supports them.
-- Some checks depend on tools that may not be installed globally.
-- Frontend checks may invoke `npx`/Playwright and require environment preparation.
-- Windows/Linux behavior must be handled carefully.
-- Legacy `X-User-Id` and older docs may still be inconsistent with current auth direction.
-
-## Current development rule
-
-Before starting work on any machine:
+Перед применением:
 
 ```bash
-python tools/devctl.py status
+devctl status
+devctl inspect <patch.zip>
+devctl plan <patch.zip>
 ```
 
-To apply the newest patch and run the conveyor:
+Применение допускается только из чистого синхронизированного Git-состояния.
 
-```bash
-python tools/devctl.py start
-```
+## Что не блокирует v1 автоматически
 
-The conveyor may apply a patch only from a clean and synced Git state.
+- mobile;
+- coordinator-free P2P;
+- AppImage;
+- одинокий Windows `.exe`;
+- все возможные integrations.
 
-## Release v1 intent
-
-v1 release should prioritize a stable, usable, demonstrable product over new conceptual expansion.
-
-v1 should not be blocked by:
-
-- full mobile app;
-- complete p2p sync;
-- perfect desktop packaging;
-- every possible integration.
-
-v1 should be blocked by:
-
-- broken core CRUD flow;
-- broken frontend happy path;
-- impossible local setup;
-- unclear release instructions;
-- known data-loss risks in normal use;
-- untracked state drift between machines.
-
-## Next best action
-
-Implement `devctl` v0 as a pure-Python patch conveyor with `status` and `start` commands.
-
-## Parking lot
-
-Ideas that matter but should not derail current focus:
-
-- cross-platform packaging: exe/AppImage first, apk later;
-- mobile UX and local-first mobile storage;
-- p2p/relay production hardening;
-- richer automatic environment setup;
-- service auto-start for backend/frontend smoke tests.

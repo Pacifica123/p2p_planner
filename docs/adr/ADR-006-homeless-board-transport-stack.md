@@ -1,56 +1,93 @@
-# ADR-006: Homeless board transport stack
+# ADR-006: транспортный стек «бездомной доски»
 
-Status: accepted for staged implementation, 2026-07-25.
+- Статус: принято как экспериментальное направление
+- Дата актуализации: 2026-07-25
 
-## Context
+## Контекст
 
-p2pKanban must let several devices work with one board without making a
-subscription VPS the permanent owner of the data. The current implementation is
-local-first at the client boundary but still uses one Rust/PostgreSQL
-coordinator for authorization, dedupe, cursor and `serverOrder`.
+Полностью прямой P2P-обмен не решает доставку между участниками, которые не
+бывают онлайн одновременно. Один бесплатный VPS решает эту задачу, но снова
+делает проект зависимым от постоянного сервера, тарифа и конкретного
+провайдера.
 
-BitTorrent, IPFS and direct WebRTC do not by themselves deliver small changes
-between users who are never online at the same time. Git hosting can store
-encrypted batches but is a poor low-latency multiwriter event queue.
+Текущая реализация уже имеет полезные заготовки:
 
-## Decision
+- локальный snapshot;
+- очередь исходящих операций;
+- `replicaId`, `replicaSeq`, `logicalClock`;
+- event log, cursor, tombstones и `serverOrder`;
+- backend, который проверяет права и принимает изменения.
 
-Adopt a staged, replaceable stack:
+При этом coordinator-free модель прав ещё не реализована. Поэтому транспорт
+можно менять постепенно, не выдавая эксперимент за готовую P2P-систему.
 
-1. Current Rust/PostgreSQL coordinator can run on a home machine reachable over
-   Tailscale.
-2. Sync event shape, deterministic ordering and envelope authentication live in
-   the independent `backend/crates/sync-core` crate.
-3. Accepted events are copied through a PostgreSQL outbox to at least three
-   Nostr relays. Relay payloads are authenticated and encrypted; Nostr is a
-   shadow store-and-forward path, not the authority.
-4. Iroh carries the same signed envelope directly between online peers. Delivery
-   speed does not affect merge results.
-5. A separate Cloudflare Durable Object may replace only the compatibility
-   coordinator surface: membership, dedupe, cursor, `serverOrder`, WebSocket and
-   compact event log.
+## Решение
 
-The existing domain backend and PostgreSQL projections are not moved into the
-Durable Object.
+Выбрана составная модель:
 
-## Invariants
+1. Rust/PostgreSQL backend остаётся каноническим координатором текущей beta.
+2. `sync-core` хранит нейтральный к транспорту контракт событий и merge-правила.
+3. Nostr используется как зашифрованное асинхронное зеркало accepted events.
+4. Iroh используется как прямой быстрый путь между одновременно доступными
+   native peers.
+5. Cloudflare Durable Object исследуется как небольшой совместимый координатор
+   для membership, dedupe, cursor, `serverOrder` и WebSocket.
+6. Домашний coordinator через Tailscale остаётся самым простым бесплатным
+   способом совместной работы на текущем коде.
 
-- A transport cannot decide a same-field conflict.
-- Network delivery can be duplicated and reordered.
-- `eventId` and `(replicaId, replicaSeq)` remain idempotency keys.
-- Nostr or Iroh failure must not reject an event already accepted by the current
-  coordinator.
-- Nostr relays never receive plaintext workspace IDs or domain payloads.
-- `serverOrder` is compatibility delivery order, not the semantic merge winner.
-- Secrets are runtime configuration and must not enter Git or devctl payloads.
+```mermaid
+flowchart TB
+    Client["Клиент p2pKanban"]
+    Local[("Локальные данные")]
+    Core["sync-core"]
+    Backend["Rust-координатор"]
+    Db[("PostgreSQL")]
+    Nostr["Nostr shadow"]
+    Iroh["Iroh direct path"]
+    Edge["Edge coordinator"]
 
-## Consequences
+    Client <--> Local
+    Client <--> Backend
+    Backend <--> Db
+    Backend --> Core
+    Core -. эксперимент .-> Nostr
+    Core -. эксперимент .-> Iroh
+    Client -. совместимый прототип .-> Edge
+```
 
-The first usable deployment remains coordinator-backed. Nostr recovery can now
-be tested without making relay availability part of the write path. Iroh is an
-implemented Rust adapter but needs a Rust-capable desktop/mobile client runtime
-before the web UI can use it. The Durable Object is deployable, but it is not
-authorization-equivalent to the Rust backend until client signatures and
-owner-signed membership epochs are implemented.
+## Инварианты
 
-Coordinator-free mode remains a separate decision.
+- Сбой Nostr/Iroh не должен откатывать уже принятую пользовательскую операцию.
+- Одна операция имеет один `eventId` и дедуплицируется независимо от транспорта.
+- Transport не выбирает смыслового победителя конфликта.
+- Секреты workspace не попадают в Git, manifest, URL и логи.
+- Внешний relay не видит открытый payload и настоящий workspace UUID.
+- `serverOrder` остаётся порядком принятия/доставки, а не универсальным правилом
+  смыслового разрешения конфликтов.
+- Coordinator-free режим нельзя включать до подписей устройств и
+  owner-signed membership epochs.
+
+## Последствия
+
+Плюсы:
+
+- бесплатные сервисы становятся сменяемыми перевозчиками;
+- исчезновение одного relay не уничтожает доску;
+- текущий backend не требуется переписывать сразу;
+- transport можно проверять в shadow-режиме.
+
+Минусы:
+
+- временно существуют несколько путей доставки;
+- ключи, ротация и наблюдаемость усложняются;
+- browser не может напрямую использовать native Iroh endpoint;
+- полное восстановление из relay должно быть отдельно доказано;
+- edge coordinator пока слабее основного backend по авторизации.
+
+## Критерий перехода дальше
+
+Nostr можно считать восстановительным транспортом только после успешного
+восстановления тестовой доски из relay events в пустую проекцию. Edge
+coordinator может заменить Rust-координатор только после подписей каждого
+события, ротации membership epochs и отрицательных auth-тестов.
+

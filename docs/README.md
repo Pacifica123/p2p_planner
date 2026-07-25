@@ -1,96 +1,107 @@
-# Документация проекта P2P Planner
+# Документация p2pKanban
 
-Этот каталог фиксирует текущие архитектурные, продуктовые и release/dev решения проекта web-first local-first Kanban planner.
+Этот каталог описывает фактическое состояние проекта. Если старый план
+противоречит коду или более новому документу, приоритет у следующего порядка:
 
-## Как читать
+1. `VERSION`, главный `README.md` и работающий код;
+2. `product/v1-execution-roadmap.md`;
+3. ADR;
+4. текущие архитектурные и эксплуатационные документы;
+5. исторические планы разработки.
 
-1. Product baseline:
-   - `product/v1-execution-roadmap.md`
-   - `product/mvp-scope-v1.md`
-   - `product/beta-scope-v1.md`
-   - `product/v1-known-limitations.md`
-   - `product/release-evidence-checkpoint-2026-06-04.md`
-   - `product/v1.0.0-beta.2-release-notes.md`
-   - `product/v1.0.0-beta.2-release-artifacts.md`
-2. Domain and sync vocabulary:
-   - `domain/`
-   - `sync/`
-   - `adr/`
-3. Architecture:
-   - `architecture/project-structure.md`
-   - `architecture/backend-modules.md`
-   - `architecture/database-structure-v2.md`
-   - `architecture/auth-and-identity-v1.md`
-   - `architecture/activity-history-audit-v1.md`
-   - `architecture/appearance-customization-v1.md`
-   - `architecture/local-first-data-layer-v1.md`
-   - `architecture/sync-model-implementation-plan-v1.md`
-   - `architecture/conflict-resolution-v1.md`
-   - `architecture/testing-strategy-v1.md`
-   - `adr/ADR-006-homeless-board-transport-stack.md`
-4. API contract:
-   - `api/openapi.yaml`
-5. Local dev automation:
-   - `dev-bootstrap/dev-autodeployer-manifesto.md`
-   - `dev-bootstrap/dev-autodeployer-v1-development-plan.md`
-   - `dev-bootstrap/devbootstrap-v1-operations.md`
-   - `dev-bootstrap/devbootstrap-v2-release-gates-plan.md`
-   - `dev-bootstrap/release-gates-test-database.md`
-6. Stabilization and development process:
-   - `development/development-planning-and-engineering-principles-v2.md`
-   - `development/release-stabilization-program-v1.md`
-   - `development/systemic-release-stabilization-manifesto-v1.md`
-   - `development/release-stabilization-problem-ledger.md`
-   - `development/release-confidence-scorecard-v1.md`
-   - `development/release-stabilization-profile-side-effects-v1.md`
-   - `development/custom-uiux-evidence-manifesto-v1.md`
-   - `development/custom-uiux-evidence-runner-development-plan-v1.md`
-   - `development/custom-uiux-evidence-runner-implementation-v1.md`
-   - `development/documentation-weight-budget-v1.md`
-7. Free hosting and experimental transports:
-   - `deployment/free-hosting-transports-v1.md`
+## С чего начать
 
-## Current decisions
+Обычному пользователю достаточно:
 
-| Area | Decision |
+- [`../README.md`](../README.md) — запуск и основные команды;
+- [`deployment/zero-config-bootstrap-v1.md`](deployment/zero-config-bootstrap-v1.md) — как работает запуск без `.env`;
+- [`product/v1-known-limitations.md`](product/v1-known-limitations.md) — честные ограничения;
+- [`product/v1.0.0-beta.3-release-notes.md`](product/v1.0.0-beta.3-release-notes.md) — текст текущего релиза.
+
+Разработчику:
+
+- [`product/v1-execution-roadmap.md`](product/v1-execution-roadmap.md) — что
+  готово, частично готово и отложено;
+- [`architecture/project-structure.md`](architecture/project-structure.md) —
+  структура репозитория;
+- [`api/openapi.yaml`](api/openapi.yaml) — HTTP API;
+- [`architecture/testing-strategy-v1.md`](architecture/testing-strategy-v1.md)
+  — проверки;
+- [`dev-bootstrap/devbootstrap-v1-operations.md`](dev-bootstrap/devbootstrap-v1-operations.md)
+  — расширенная локальная диагностика.
+
+Для понимания синхронизации:
+
+- `domain/` — сущности и права;
+- `sync/` — протокол и конфликты;
+- `adr/` — принятые архитектурные решения;
+- [`deployment/free-hosting-transports-v1.md`](deployment/free-hosting-transports-v1.md)
+  — домашний координатор, Nostr, Iroh и edge coordinator.
+
+## Текущее состояние
+
+| Область | Фактическое решение |
 |---|---|
-| Product | MVP is web-first Kanban with workspaces, boards, columns, cards, labels/checklists/comments, appearance, activity/audit and backup/export preview surface. |
-| Current v1 status | Read `product/v1-execution-roadmap.md` first; it is the active truth surface for done/partial/deferred/out-of-scope status. |
-| Local-first | Local-first runtime and backend-coordinated sync are baseline-implemented for core web flow; `20260604_050815_release-gates` proved the beta.2 real-backend product path, while stable release still needs repeatability evidence. |
-| P2P | Transport foundation is now partially implemented: independent sync-core, Nostr shadow outbox/recovery and native Iroh adapter. Canonical collaboration remains Rust-coordinator-backed; coordinator-free mode is not implemented. |
-| Development planning | Current mode is verified product acceleration: one user/release/truth fact per patch, cheapest sufficient evidence, no ownerless debt. |
-| Devctl | Patch conveyor applies small reproducible devctl patches, not full project archives. |
-| Devbootstrap | Project-owned diagnostic/release-gates tool; generated `.dev-bootstrap` artifacts are not source. |
-| Release gates | Evidence-first bundle with ledgers, classifications, confidence gate and regression memory; current beta.2 checkpoint passed `full-local-release` with effective cap `repeatability-not-proven`. |
-| UI evidence | Playwright is legacy transition; target is custom lightweight UI/UX Evidence Runner. |
-| Documentation size | Long manifestos are compacted after decisions are accepted; source archives should stay small. |
+| Версия | `v1.0.0-beta.3`, GitHub Pre-release |
+| Основной запуск | `python bootstrap.py`, весь runtime в Docker |
+| Канонический путь | React/Vite → Nginx → Rust/Axum → PostgreSQL |
+| Local-first | Локальный snapshot и очередь исходящих операций для основного web-сценария |
+| Синхронизация | Backend-координируемая; клиентский pull ещё не строит все проекции автоматически |
+| P2P | `sync-core`, Nostr shadow и Iroh adapter реализованы как экспериментальный фундамент |
+| Edge coordinator | Отдельный совместимый прототип; не заменяет основной backend |
+| Mobile | Отложен до стабилизации web/sync |
+| Релиз | Основной артефакт — self-host bootstrap ZIP, а не AppImage и не одинокий `.exe` |
 
-## Important commands
+## Важная граница
+
+p2pKanban пока не является полностью бессерверной P2P-системой. У каждого
+клиента есть локальные данные, но права и каноническое принятие общих изменений
+в обычном режиме всё ещё определяет Rust/PostgreSQL-координатор.
+
+Nostr, Iroh и Durable Object не должны описываться как готовый пользовательский
+режим, пока не завершены подписи устройств, эпохи состава участников,
+автоматическое восстановление проекций и полноценная интеграция с клиентами.
+
+## Команды
+
+Обычный запуск:
 
 ```bash
-python -B tools/devbootstrap.py self-check --no-write-report
-python -B tools/devbootstrap.py diagnose --no-write-report
-python -B tools/devbootstrap.py release-gates --dry-run
-python -B tools/devbootstrap.py release-gates --profile diagnostic --prepare-deps
-python -B tools/devbootstrap.py release-gates --managed-test-db --managed-runtime --prepare-deps
+python bootstrap.py
 ```
 
-## Artifact policy
+Статические проверки релизной подготовки:
 
-Keep in source:
+```bash
+python -B tools/check_release_prep.py
+python -B tools/check_zero_config_bootstrap.py
+```
 
-- architecture/product/process docs;
-- source code;
-- migrations;
-- OpenAPI;
-- examples and stable fixtures.
+Полный локальный релизный прогон:
 
-Keep out of source snapshots:
+```bash
+python -B tools/devbootstrap.py release-gates --profile full-local-release
+```
 
-- `.dev-bootstrap/` generated runs and state;
-- `node_modules/`, `target/`, `dist/`, `build/`;
-- logs, caches, bytecode;
-- env files and secrets;
-- large release/browser/test artifacts.
+Сборка основного релизного архива из помеченного тегом commit:
 
-Release-gates bundles should be shared separately when diagnosing a run.
+```bash
+python tools/build_release_bundle.py --require-tag
+```
+
+## Политика артефактов
+
+В Git хранятся исходники, миграции, OpenAPI, документация, устойчивые примеры и
+небольшие fixtures.
+
+Не хранятся `.env`, секреты, `.dev-bootstrap`, `node_modules`, `target`, `dist`,
+логи, локальные БД и крупные релизные архивы. Итоги release gates и собранные
+артефакты прикладываются к релизу отдельно.
+
+## Язык
+
+Основной язык документации — русский. Имена протоколов, API-полей, команд,
+типов, файлов и общепринятые технические обозначения остаются без перевода.
+Английская версия сохраняется только там, где она нужна конечному получателю,
+например в тексте GitHub Release и `README_RELEASE_EN.md`.
+

@@ -1,19 +1,19 @@
-# p2pKanban edge coordinator
+# Edge coordinator p2pKanban
 
-Small Cloudflare Durable Object compatibility anchor. It deliberately stores
-only:
+Небольшой совместимый coordinator на Cloudflare Durable Object. Он хранит
+только:
 
-- active membership rows and membership epoch;
-- `(eventId)` / `(replicaId, replicaSeq)` dedupe keys;
-- monotonically increasing `serverOrder`;
-- per-replica cursors;
-- compact JSON event log;
+- активный состав участников и membership epoch;
+- dedupe по `eventId` и `(replicaId, replicaSeq)`;
+- возрастающий `serverOrder`;
+- cursor каждой replica;
+- компактный JSON event log;
 - hibernatable WebSocket sessions.
 
-It does not contain cards, columns, appearance settings, PostgreSQL tables or
-the domain merge policy.
+Карточки, колонки, настройки внешнего вида, PostgreSQL-таблицы и merge policy
+здесь не хранятся.
 
-## Local checks
+## Локальные проверки
 
 ```bash
 npm ci
@@ -21,13 +21,17 @@ npm run typecheck
 npm test
 ```
 
-## First deployment
+## Первое развёртывание
 
 ```bash
 npx wrangler secret put COORDINATOR_ADMIN_TOKEN
 npm run deploy
 ```
 
-Provisioning and client request examples live in
-`docs/deployment/free-hosting-transports-v1.md`. Do not put the admin token or
-board tokens into `wrangler.jsonc`.
+Примеры provision и запросов находятся в
+`docs/deployment/free-hosting-transports-v1.md`. Admin token и board tokens
+нельзя записывать в `wrangler.jsonc`.
+
+Сервис пока не проверяет асимметричную подпись каждого события и поэтому
+остаётся экспериментом совместимости, а не заменой основного backend.
+

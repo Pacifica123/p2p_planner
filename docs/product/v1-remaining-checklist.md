@@ -1,185 +1,57 @@
-# Что осталось допилить до v1
+# Что осталось до стабильного v1.0.0
 
-Этот список фиксирует только то, что осталось после патча `contract archive reorder baseline`.
+## Уже закрыто
 
-## 1. Contract parity sweep
+- [x] Основной CRUD workspace/board/column/card.
+- [x] Метки, чек-листы и комментарии.
+- [x] Настройки внешнего вида.
+- [x] Activity и audit.
+- [x] Local-first snapshot и pending queue для основного сценария.
+- [x] Backend push/pull sync baseline.
+- [x] Export и import preview.
+- [x] Базовый auth/security hardening.
+- [x] Zero-config Docker bootstrap.
+- [x] Экспериментальный transport foundation.
+- [x] Версия и релизные документы выровнены на `v1.0.0-beta.3`.
 
-Статус: закрыто патчем `contract parity sweep`. Детали зафиксированы в `docs/api/contract-parity-sweep-v1.md`, а повторяемая проверка добавлена как `python tools/contract_parity_sweep.py --check`.
+## До публикации beta.3
 
-- [x] Сверить оставшиеся backend routes, frontend API calls и OpenAPI paths после archive/reorder/card lifecycle baseline.
-- [x] Найти frontend-кнопки, которые ведут в отсутствующие или stub routes.
-- [x] Обновить OpenAPI под оставшийся фактический beta-surface.
-- [x] Зафиксировать, какие routes являются real v1, а какие deferred/internal.
+- [ ] Выполнить `python -B tools/check_release_prep.py`.
+- [ ] Выполнить `python -B tools/check_zero_config_bootstrap.py --frontend-build`.
+- [ ] Выполнить `python -B tools/devbootstrap.py release-gates --profile full-local-release`.
+- [ ] Исправить все ошибки обязательных gates.
+- [ ] Пометить чистый commit тегом `v1.0.0-beta.3`.
+- [ ] Собрать архив через `python tools/build_release_bundle.py --require-tag`.
+- [ ] Проверить распакованный архив на Windows.
+- [ ] Проверить распакованный архив на Linux.
+- [ ] Приложить `SHA256SUMS.txt` и последний `release-gates_*.zip`.
+- [ ] Отметить GitHub Release как Pre-release.
 
-Итог sweep по подозрительным зонам:
+## До stable v1.0.0
 
-- labels/checklists/comments оставлены как `deferred_stub` до minimal card enrichment slice;
-- sync оставлен как `deferred_stub` до sync baseline;
-- import/export/integrations/webhooks помечены как `contract_stub`, потому что surface есть, но настоящего исполнения bundle/import/webhook еще нет;
-- user/device naming выровнен: `DELETE /me/devices/{deviceId}` вместо несуществующего revoke-route.
+- [ ] Повторить полный релизный прогон после исправлений, а не полагаться на
+      один успешный запуск.
+- [ ] Подтвердить сохранение данных после stop/start и обновления контейнеров.
+- [ ] Зафиксировать backup/restore runbook для PostgreSQL volume.
+- [ ] Выбрать и добавить лицензию либо явно оставить проект без публичной
+      лицензии.
+- [ ] Решить, достаточно ли import preview для stable v1.
+- [ ] Решить, считается ли неполное применение входящего sync-log блокером
+      stable v1.
+- [ ] Удалить или явно оставить optional старые Playwright-пути.
+- [ ] Убедиться, что release/snapshot не содержит секретов и тяжёлых generated
+      каталогов.
 
-## 2. Минимально полезная карточка
+## Не блокирует v1.0.0 автоматически
 
-Выбран вариант A: не скрывать labels/checklists/comments, а реализовать минимальный рабочий slice.
+- mobile;
+- coordinator-free P2P;
+- Iroh в браузере;
+- E2EE;
+- MFA/passkeys;
+- production integrations/webhooks;
+- AppImage и отдельный Windows `.exe`.
 
-Статус: закрыто патчем `minimal card enrichment slice`. Backend-заглушки labels/checklists/comments заменены рабочими CRUD/assignment flows, OpenAPI переведен в `real_v1`, а `CardDetailsDrawer` получил UI для labels, checklists и comments.
+Эти функции могут стать причиной следующего minor/major релиза, но не должны
+бесконечно удерживать уже работающий self-host web-продукт в beta.
 
-- [x] Labels: создать label на доске.
-- [x] Labels: назначить label на карточку.
-- [x] Labels: снять label с карточки.
-- [x] Labels: переименовать/удалить label.
-- [x] Checklists: создать checklist.
-- [x] Checklists: добавить item.
-- [x] Checklists: отметить item done/undone.
-- [x] Checklists: удалить item.
-- [x] Comments: добавить comment.
-- [x] Comments: показать comments timeline в карточке.
-- [x] Comments: редактировать/удалить свой comment, если берем это в v1.
-- [x] Activity: писать события labels/checklists/comments.
-- [x] Frontend: добавить UI в `CardDetailsDrawer`.
-- [x] Smoke/browser test: покрыть минимальный card enrichment flow через backend smoke API; browser smoke остается mocked critical boot-flow.
-
-## 3. Local-first runtime baseline
-
-Статус: закрыто патчем `local-first runtime baseline`. Основной board/card runtime теперь читает persistent local snapshot, пишет card operations в pending queue и flush-ит их при reconnect через существующий HTTP API. Детали реализации зафиксированы в `docs/architecture/local-first-data-layer-v1.md`, раздел 24.
-
-- [x] Persistent local store на frontend.
-- [x] Local schema для workspace/board/column/card.
-- [x] Pending operations queue.
-- [x] Sync metadata: `synced / pending / failed`.
-- [x] Warm start: показать сохраненную доску до network refresh.
-- [x] Offline read для уже загруженной доски.
-- [x] Offline edit/create/reorder/move card.
-- [x] Reconnect flush pending operations.
-- [x] UI состояния: `offline`, `saved locally`, `syncing`, `sync failed`.
-- [x] Retry failed operation.
-
-Минимальный критерий: пользователь открыл доску, сеть пропала, он изменил карточку, сеть вернулась — изменение не потерялось.
-
-Ограничения baseline:
-
-- это runtime baseline, а не финальный sync protocol;
-- labels/checklists/comments для локально созданной новой карточки становятся доступны после sync карточки;
-- browser storage adapter намеренно сделан простым и изолированным, чтобы позже заменить его на IndexedDB без переписывания screen-level контрактов.
-
-## 4. Sync baseline
-
-Статус: закрыто патчем `sync baseline`. Sync routes больше не являются `501`-заглушками: backend регистрирует replica, принимает idempotent push events в `change_events`, отдает pull batch по cursor и пишет tombstones для core delete/archive events. Frontend получил browser replica identity и видимый sync baseline banner на board screen.
-
-- [x] Replica registration.
-- [x] Client replica identity.
-- [x] Monotonic `replicaSeq`.
-- [x] Push changes.
-- [x] Pull changes by cursor.
-- [x] Idempotency по `eventId` или `replicaId + replicaSeq`.
-- [x] Duplicate-safe apply.
-- [x] Tombstone-aware delete/archive для core entities.
-- [x] Visible sync status на frontend.
-- [x] Smoke/integration test: повторный push не создает дубликаты.
-
-Ограничения baseline:
-
-- local-first card CRUD flush пока остается на domain HTTP API, чтобы не смешивать event-log baseline с domain replay за один патч;
-- pull сохраняет cursor metadata, но frontend пока не применяет входящий stream в entity projections автоматически;
-- conflict handling ограничен duplicate/out-of-order/rejected markers, без полноценного merge UI.
-
-## 5. Export / backup safety net
-
-Статус: закрыто патчем `export backup safety net`. Dedicated import/export endpoints больше не возвращают фиктивные counts: backend формирует versioned workspace/board JSON bundle с `manifest.json`, payload sections и restore hints, frontend умеет скачать board-level backup с board screen, а import preview валидирует supplied bundle manifest без destructive restore.
-
-- [x] Export workspace или board в versioned JSON bundle.
-- [x] `manifest.json` внутри export bundle.
-- [x] Явно описать, что входит в export.
-- [x] Import preview или import-as-copy.
-- [x] Никакого destructive restore по умолчанию.
-- [x] Smoke: export созданной board/card структуры.
-- [x] README: как сделать backup/export.
-
-Ограничения baseline:
-
-- bundle является application-level JSON snapshot, а не raw DB dump и не sync-log replay;
-- attachment blobs зарезервированы, но не экспортируются;
-- import execution остается non-destructive boundary и возвращает `preview_required`; реальное apply/import-as-copy остается будущим hardening slice.
-
-## 6. Auth/security hardening
-
-Статус: закрыто патчем `auth security hardening`. Детали baseline зафиксированы в `docs/architecture/security-privacy-threat-model-v1.1.md`, раздел 23: dev-header auth ограничен local/dev/test профилями, CORS/JWT/cookie config получил startup guards, sync push/pull усилены workspace access boundaries, а smoke покрывает negative auth и derived endpoint access cases.
-
-- [x] `AUTH__ENABLE_DEV_HEADER_AUTH=false` в beta/profile по умолчанию.
-- [x] `X-User-Id` оставить только для local/dev.
-- [x] CORS allowlist без wildcard для beta/self-host.
-- [x] JWT/secret values не default.
-- [x] Refresh cookie атрибуты под deployment profile.
-- [x] Sign-out чистит frontend session state.
-- [x] Sign-out-all инвалидирует refresh family.
-- [x] Negative auth smoke: no token / wrong token / forbidden workspace.
-- [x] Derived endpoints проверяют access: activity/audit/export/sync.
-- [x] Логи не содержат password/token/secret.
-
-Ограничения baseline:
-
-- MFA/passkeys/E2EE не входят в v1 hardening;
-- local-first snapshot encryption не реализован;
-- browser smoke по реальному backend остается частью следующего release-gates блока.
-
-## 7. Testing and release gates
-
-Статус: release-evidence baseline закрыт для `v1.0.0-beta.2` preparation. `frontend_uiux_real_backend_core_flow` прошёл в составе `release-gates --profile full-local-release` на managed frontend/backend/test DB. Следующий блокер — repeatability, а не отсутствие real-backend proof.
-
-- [x] `cargo test` default gate executed; remaining ignored tests are handled by the DB-enabled gate.
-- [x] `python tests/smoke_core_api.py` covered by backend Python smoke twice inside release-gates.
-- [x] `npm run build` executed inside release-gates.
-- [x] `npm run test:run` covered by the frontend unit/integration gate inside release-gates.
-- [x] `npm run test:browser` retained as the browser-test contract marker; current evidence is `frontend_browser_smoke` plus UIX browser gates.
-- [x] UIX real-backend core flow прошёл и принят как доказательство real backend product path.
-- [x] Свежий `release-gates --profile full-local-release` bundle доказывает real backend product path на этой машине.
-- [x] Smoke идемпотентен на двух backend smoke прогонах в одном release-gates bundle.
-- [x] Clean-machine quickstart проверен: clean-machine sandbox прошёл в текущем bundle.
-- [x] README соответствует текущему release-prep направлению.
-- [x] Release notes + known limitations обновлены для beta.2 prep.
-- [ ] Повторный `release-gates --profile full-local-release` после release-prep patch поднял repeatability confidence.
-- [ ] Windows release artifact smoke-tested after unzip.
-- [ ] Linux AppImage smoke-tested as normal user.
-
-## 8. Devctl / packaging hygiene
-
-- [ ] Убедиться, что `target/`, `node_modules/`, `dist/`, `build/` не попадают в snapshots.
-- [ ] Убедиться, что `release/**/*.zip` и `release/**/*.exe` заменяются заглушками.
-- [x] Добавить exclude для `*.tsbuildinfo`.
-- [ ] Проверить, нужны ли generated `vite.config.js/.d.ts`; если нет — исключить.
-- [ ] Проверить, что патчи всегда идут в новом формате: `manifest.json + files/...`.
-
-## Release decision
-
-Текущий целевой тег:
-
-```text
-v1.0.0-beta.2
-```
-
-`v1.0.0-beta.1` уже был первым опубликованным beta-релизом, поэтому новая GitHub Pre-release линия должна идти как beta.2. Stable `v1.0.0` откладывается до repeatability checkpoint и artifact-level smoke.
-
-## Короткая формула продолжения после truth-sync
-
-Закрытые product/runtime baseline больше не должны планироваться как будущие блокеры:
-
-1. contract parity baseline — закрыто;
-2. minimal card enrichment — закрыто;
-3. local-first runtime baseline — закрыто;
-4. sync baseline — закрыто;
-5. export/backup safety net — закрыто;
-6. auth/security hardening baseline — закрыто.
-
-Следующий практический патч по новым принципам уже не release-evidence, а **release-prep for beta.2**:
-
-- зафиксировать `v1.0.0-beta.2` как тег GitHub Pre-release;
-- подготовить release notes / known limitations по фактическому gate bundle;
-- описать обязательные release assets: Windows `.exe` bundle, Linux `.AppImage`, `SHA256SUMS.txt`, final release-gates bundle;
-- после patch application повторить full-local-release для repeatability signal.
-
-После этого выбирать только один следующий slice:
-
-- publish beta.2 after artifact smoke;
-- account-management/auth UX hardening для следующего beta profile;
-- import-as-copy execution после безопасного preview;
-- Playwright retirement/optionalization после принятого UIX parity.

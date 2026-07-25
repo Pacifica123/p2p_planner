@@ -642,20 +642,25 @@ npm run test:browser
 - no hidden requirement вроде “надо помнить локальный патч с другой машины”;
 - version/tag naming policy.
 
-Рекомендуемое имя текущего beta tag:
+Текущий beta tag:
 
 ```text
-v1.0.0-beta.2
+v1.0.0-beta.3
 ```
 
-`v1.0.0-beta.1` уже был первым beta release, поэтому следующая GitHub Pre-release линия должна быть beta.2. Если repeatability или artifact smoke сорвут packaging claims, публикацию beta.2 нужно задержать, а не откатывать название к web-preview.
+Линия beta.2 использовалась для предыдущей release-evidence подготовки.
+После добавления transport foundation и zero-config bootstrap текущим
+кандидатом является beta.3. Если новый полный прогон или artifact smoke не
+пройдут, публикацию нужно задержать, а не повышать версию до stable.
 
-Обязательные beta.2 artifacts:
+Обязательные beta.3 artifacts:
 
-- Windows self-host bundle with backend `.exe`;
-- Linux `x86_64` `.AppImage`;
-- final `release-gates_*.zip` evidence bundle;
+- `p2pkanban-v1.0.0-beta.3-bootstrap.zip`;
+- финальный `release-gates_*.zip`;
 - `SHA256SUMS.txt`.
+
+Отдельные Windows `.exe` и Linux AppImage больше не являются обязательными:
+основной runtime собирается и запускается через Docker.
 
 ---
 

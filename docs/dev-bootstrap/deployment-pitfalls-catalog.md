@@ -1,64 +1,69 @@
-# Deployment pitfalls catalog for dev auto-bootstrapper
+# Каталог проблем развёртывания
 
-## Purpose
+Этот каталог помогает сначала определить класс сбоя, а уже потом менять код.
+Подробные логи должны находиться в конкретном run bundle.
 
-This catalog lists failure families that devbootstrap should classify before a human edits product code. It is intentionally compact; detailed evidence belongs in per-run bundles.
+## Карта проблем
 
-## Pitfall map
-
-| Layer | Common failures | Preferred classification/remediation |
+| Слой | Типичные причины | Категория |
 |---|---|---|
-| OS/platform | Unsupported shell, path length, permissions, clock skew. | `REL-ENV`; print platform, shell, path and concrete command. |
-| Project layout | Wrong cwd, missing `backend/`, `frontend/`, `tools/`, `.env.example`. | Discovery failure; show expected root and found files. |
-| Python | Missing Python or incompatible version. | Prerequisite blocker before any project mutation. |
-| Git/devctl | Dirty tree, missing patches dir, push/network failure. | `REL-DEVCTL`; separate local apply from remote push. |
-| Rust/Cargo | Missing cargo/rustc, failed metadata/check/test, Windows linker path noise. | Toolchain vs product classification; keep raw stderr. |
-| Node/npm | Missing node/npm, lockfile mismatch, install failure. | `REL-FE`; never mutate lockfile implicitly. |
-| PostgreSQL | Server absent, stopped, wrong port, bad password, no CREATEDB, migrations mismatch. | `REL-DB`; prefer managed test DB or explicit `TEST_DATABASE_URL`. |
-| Backend runtime | Port busy, health timeout, env parse, migration boot failure. | `REL-PROC` or `REL-BE` depending on evidence. |
-| Frontend runtime | Vite startup failure, env API mismatch, port busy. | `REL-FE` / `REL-PROC`. |
-| UI/browser evidence | Browser prerequisite, app boot failure, JS runtime error, route/form/storage failure. | Transitional `REL-BROWSER`; target `REL-UIUX`. |
-| Smoke | Writes blocked, dirty shared user state, non-idempotent assumptions. | `REL-SMOKE`; use isolated DB/runtime. |
-| Cleanup | Stale PID, owned process not stopped, temporary DB retained unexpectedly. | `REL-PROC`; preserve cleanup evidence. |
-| Archive hygiene | `.dev-bootstrap`, node_modules, target, logs or generated reports in source snapshot. | `REL-DEVCTL` / `REL-DOC`; exclude generated artifacts. |
-| Security | Secrets in logs, env files in archive, unsafe public defaults. | `REL-SEC`; redact or block archive. |
+| ОС | Права, длина пути, shell, часы | `REL-ENV` |
+| Структура проекта | Неверный cwd, нет backend/frontend/tools | discovery failure |
+| Python | Не найден или несовместим | prerequisite |
+| Git/devctl | Dirty tree, нет patches, push failure | `REL-DEVCTL` |
+| Rust | Нет toolchain, ошибка metadata/check/test/linker | `REL-BE` или infra |
+| Node/npm | Нет npm, lock mismatch, install failure | `REL-FE` |
+| PostgreSQL | Сервис выключен, пароль/роль/БД неверны | `REL-DB` |
+| Backend runtime | Порт, env, миграции, health timeout | `REL-PROC` / `REL-BE` |
+| Frontend runtime | Vite, API URL, порт | `REL-FE` / `REL-PROC` |
+| UIX | Браузер, JS, route marker, form/storage/network | `REL-UIUX` |
+| Smoke | Общая грязная БД, неидемпотентность | `REL-SMOKE` |
+| Cleanup | Чужой PID, старое состояние | `REL-PROC` |
+| Архив | Generated/secret файлы в source | `REL-DEVCTL` / `REL-SEC` |
 
-## Diagnostic principles
+## Правила диагностики
 
-1. Classify before fixing.
-2. Separate prerequisite failure from product regression.
-3. Preserve raw evidence, but redact secrets.
-4. Do not “helpfully” write to shared databases.
-5. Prefer short targeted rerun commands.
-6. Treat generated run artifacts as disposable evidence, not source.
+1. Отделять ошибку среды от регрессии продукта.
+2. Сохранять raw output, удаляя секреты.
+3. Не писать в общую БД «для проверки».
+4. Не убивать процесс только потому, что он занял ожидаемый порт.
+5. Давать одну короткую команду повторного запуска.
+6. Не хранить `.dev-bootstrap` как исходный код.
 
-## PostgreSQL checklist
+## PostgreSQL
 
-- Is `psql` available?
-- Does `pg_isready` reach the target host/port?
-- Does the configured user authenticate?
-- Is the target database disposable?
-- Can the admin role create/drop a per-run DB?
-- Are migrations embedded and current?
-- Does backend boot against the same DB used by smoke tests?
+Проверять по порядку:
 
-## Browser/UI checklist
+- доступен ли `pg_isready`;
+- тот ли host/port;
+- проходит ли authentication;
+- существует ли нужная БД;
+- disposable ли она;
+- может ли admin создать отдельную test DB;
+- использует ли backend именно эту БД;
+- применились ли миграции.
 
-Legacy Playwright issues must not be confused with UI product failures. The target custom UI/UX Evidence Runner should distinguish:
+Обычный пользовательский bootstrap изолирует PostgreSQL внутри Docker и снимает
+большинство этих проблем. Этот список нужен главным образом для host-native
+разработки и release gates.
 
-- no supported system browser;
-- frontend unreachable;
-- app root not mounted;
-- JS runtime/console fatal;
-- route marker missing;
-- button hidden/disabled/not actionable;
-- form submission failed;
-- local/session storage mismatch;
-- backend contract/network mismatch.
+## UI
 
-## Archive checklist
+Нужно различать:
 
-Project snapshots should exclude:
+- браузер отсутствует;
+- frontend недоступен;
+- приложение не смонтировалось;
+- fatal в console;
+- route marker отсутствует;
+- кнопка скрыта или disabled;
+- отправка формы не прошла;
+- storage повреждён;
+- backend ответил несовместимым контрактом.
+
+## Архив
+
+В project/release snapshot не должны попадать:
 
 ```text
 .git/
@@ -74,7 +79,8 @@ logs/
 __pycache__/
 .pytest_cache/
 .env*
-*.db / *.sqlite / *.tsbuildinfo
+*.db
+*.sqlite
+*.tsbuildinfo
 ```
 
-Per-run release-gates bundles remain separate and are attached only when diagnosing a run.

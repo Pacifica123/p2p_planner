@@ -1,91 +1,72 @@
-# Dev auto-bootstrapper v1 development plan
+# План devbootstrap v1
 
-## Purpose
+- Статус: план реализован и расширен; документ сохранён как короткая справка
 
-`tools/devbootstrap.py` is the project-owned local environment assistant. It exists so a developer can move from a raw checkout/archive to a diagnosed, runnable, testable dev environment through explicit, reportable commands.
+`tools/devbootstrap.py` — проектный помощник для разработки и release gates. Он
+диагностирует host-native окружение, запускает принадлежащие ему процессы и
+собирает доказательства. Обычный конечный пользователь должен запускать
+`bootstrap.py`, а не проходить этот план.
 
-## Non-goals
+## Границы
 
-- Do not become a package manager.
-- Do not hide destructive actions.
-- Do not silently write to a shared database.
-- Do not start or stop processes that were not created by the tool.
-- Do not replace devctl; devbootstrap prepares/tests the project, devctl applies patches.
+Devbootstrap:
 
-## CLI surface
+- не является package manager;
+- не скрывает разрушительные действия;
+- не пишет молча в общую БД;
+- не останавливает чужие процессы;
+- не заменяет devctl;
+- использует только стандартную библиотеку Python.
 
-| Command | Responsibility |
+## Основные команды
+
+| Команда | Назначение |
 |---|---|
-| `diagnose` | Read-only platform/tool/port/HTTP checks. |
-| `plan` | Show intended env/runtime actions. |
-| `prepare-env` | Safely create missing env files from examples. |
-| `start-db` | Guarded PostgreSQL/compose assistance. |
-| `check-backend` | Backend metadata/check compilation diagnostics. |
-| `start-backend` | Start owned backend process and track PID/logs. |
-| `prepare-frontend` | Install/refresh frontend dependencies by policy. |
-| `start-frontend` | Start owned Vite frontend and track PID/logs. |
-| `smoke` | Quick/standard/full smoke ladder. |
-| `status` | Show tracked PIDs, ports, health and stale state. |
-| `stop` | Stop only tracked owned processes; DB only by explicit opt-in. |
-| `up` | One-command guarded pipeline. |
-| `self-check` | Internal sanity suite for the bootstrapper. |
-| `release-gates` | Keep-going release evidence runner and remediation bundle. |
+| `diagnose` | Read-only проверка платформы, инструментов, портов и HTTP |
+| `plan` | План env/runtime действий |
+| `prepare-env` | Создать только отсутствующие env из examples |
+| `start-db` | Защищённая помощь с dev PostgreSQL |
+| `check-backend` | Cargo metadata/check |
+| `prepare-frontend` | Установка зависимостей по выбранной политике |
+| `up` | Управляемый host-native запуск |
+| `smoke` | Quick/standard/full проверки |
+| `status` / `stop` | Состояние и остановка только своих процессов |
+| `release-gates` | Keep-going релизный прогон и bundle |
+| `self-check` | Внутренние fixtures самого инструмента |
 
-## Implemented v1/v2 reality
+## Что уже реализовано
 
-The original v1 phased plan has been implemented and extended. Current notable capabilities:
+- JSON/Markdown reports;
+- timeout и классификация ошибок;
+- Windows resolution для `.cmd`;
+- managed test DB;
+- managed backend/frontend на динамических портах;
+- контроль frontend dependencies;
+- consent profiles;
+- remediation bundle, ledgers, scorecard и regression memory;
+- UIX runner без обязательного скачивания Playwright browser.
 
-- JSON/Markdown report envelope for commands;
-- timeout policy and failure classifiers;
-- Windows command resolution for `.cmd`/npm/cargo cases;
-- managed test DB derivation and safe write guards;
-- managed runtime with dynamic backend/frontend ports;
-- frontend dependency marker and prepare modes;
-- release-gates profiles and consent plan;
-- remediation bundle, ledgers, confidence gate and regression memory;
-- explicit transition away from Playwright toward custom UI/UX evidence.
+## Generated состояние
 
-## Runtime state and artifacts
-
-Generated files live under `.dev-bootstrap/`. They are not source and should not be included in devctl project snapshots.
-
-Important paths:
+Все результаты находятся в `.dev-bootstrap/`, например:
 
 ```text
 .dev-bootstrap/state.json
 .dev-bootstrap/frontend-install.json
 .dev-bootstrap/runs/<run-id>/report.md
-.dev-bootstrap/runs/<run-id>/release-gates.md
 .dev-bootstrap/runs/<run-id>/release-gates.json
 .dev-bootstrap/runs/<run-id>/release-gates_*.zip
 ```
 
-## Safety model
+Этот каталог не входит в devctl snapshots и релизный ZIP.
 
-| Action | Default |
-|---|---|
-| Read environment/tools/ports | Allowed. |
-| Write reports under `.dev-bootstrap` | Allowed for non-dry command runs. |
-| Create env files | Only missing files, never overwrite secrets. |
-| Install dependencies | Explicit prepare mode/profile. |
-| Create/drop test DB | Explicit managed DB/profile and credentials. |
-| Write through backend smoke | Requires isolated DB or explicit disposable dev DB consent. |
-| Start processes | Only owned tracked processes. |
-| Stop processes | Only owned tracked processes. |
+## Модель безопасности
 
-## Integration with devctl
+- чтение среды разрешено;
+- reports можно писать только в `.dev-bootstrap`;
+- существующие env не перезаписываются;
+- dependency install требует явного профиля;
+- DB-writing требует managed test DB или отдельного согласия;
+- запускаются и останавливаются только tracked owned processes;
+- Docker volumes не удаляются неявно.
 
-- devctl applies project patches and creates pre/post/failed archives.
-- devbootstrap generates diagnostic bundles inside a project run.
-- devctl archives must exclude `.dev-bootstrap` because it is generated evidence, not source.
-- Patch checks may run `python -B tools/devbootstrap.py self-check --no-write-report` for syntax/contract confidence.
-
-## Acceptance criteria
-
-The tool is acceptable when:
-
-- a new developer can diagnose missing prerequisites without reading source;
-- every mutating action is explicit and logged;
-- failed gates produce targeted next commands;
-- generated run artifacts are shareable as separate bundles;
-- source archives remain small and free of `.dev-bootstrap` history.

@@ -1,40 +1,26 @@
-# devctl v0.2 — release archive trimming
+# devctl v0.2 — уменьшение release snapshots
 
-`devctl` v0.2 keeps the same commands:
+- Статус: действующее правило встроенного `tools/devctl.py`
 
-```bash
-python tools/devctl.py status
-python tools/devctl.py start
+## Проблема
+
+Каталог `release/` полезен, но может содержать большие ZIP и Windows `.exe`.
+Если копировать их в каждый pre/post/failed snapshot, `archives/` быстро
+разрастается.
+
+## Решение
+
+По умолчанию структура `release/` сохраняется, но:
+
+```text
+release/**/*.zip
+release/**/*.exe
 ```
 
-The goal of this patch is to keep `archives/` useful as a lightweight project snapshot store even when the project contains a prepared `release/` directory.
+заменяются маленькими поясняющими placeholders. Рабочая копия не изменяется и
+реальные файлы не удаляются.
 
-## Problem
-
-The project-level `release/` directory is useful and should remain in the working tree, but it can contain heavy generated payloads:
-
-- nested release `.zip` files;
-- Windows backend executables such as `p2p-planner-backend.exe`.
-
-When `devctl start` creates pre/post/failed snapshots, copying those payloads into every archive quickly inflates archive size by many megabytes.
-
-## What changed
-
-By default, `devctl` still includes the `release/` directory structure in snapshot archives, but omits heavy release payload files:
-
-- `release/**/*.zip`
-- `release/**/*.exe`
-
-For transparency, `devctl` writes small placeholder text files into the archive:
-
-- `тут_был_zip_архив.txt` next to omitted release zip files;
-- `тут_был_экзешник.txt` next to omitted executable files.
-
-The placeholders explain that the payload was intentionally skipped, list the omitted file path and size, and clarify that nothing was deleted from the working copy.
-
-## Escape hatch
-
-If a future patch truly needs full release payloads inside devctl snapshots, its manifest may opt out of trimming:
+Редкий opt-out:
 
 ```json
 {
@@ -44,22 +30,19 @@ If a future patch truly needs full release payloads inside devctl snapshots, its
 }
 ```
 
-This should be rare. Normal development snapshots should stay lightweight.
+## Что остаётся
 
-## What stays intentionally unchanged
+Исходники, документация, конфигурация, миграции и release metadata продолжают
+попадать в snapshot. Обычные исключения `.git`, `target`, `node_modules`,
+`dist`, `.env` и локальных БД сохраняются.
 
-- `release/` is not excluded wholesale.
-- Source files, docs, configs, migrations, frontend/backend code and release metadata are still archived.
-- Existing archive exclusions still apply: `.git/`, `target/`, `node_modules/`, `dist/`, `build/`, `.env`, local databases and similar generated/local files.
-- Real release artifacts are not removed from the project tree; they are only omitted from devctl snapshot zip files.
-
-## Smoke check for this patch
-
-The lightweight validation for this patch is:
+## Проверка
 
 ```bash
 python -m py_compile tools/devctl.py
 python tools/devctl.py status
 ```
 
-A manual archive check should show that a project containing `release/*.zip` and `release/**/*.exe` produces a much smaller snapshot containing placeholder text files instead of those payloads.
+Ручная проверка должна подтвердить, что snapshot содержит placeholders, а не
+тяжёлые payload.
+

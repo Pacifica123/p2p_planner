@@ -1,3 +1,5 @@
-# Frontend factories
+# Фабрики тестовых данных frontend
 
-Builders/factories для workspace, board, column, card, activity entries, appearance payloads и sync status моделей.
+Здесь находятся builders/factories для workspace, досок, колонок, карточек,
+истории, appearance payloads и моделей sync status. Фабрика должна создавать
+минимальный валидный объект и позволять тесту переопределить только важные поля.

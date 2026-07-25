@@ -48,7 +48,8 @@
 
 1. Настройки внешнего вида доски не должны ломать читаемость интерфейса.
 2. Отсутствие theme/wallpaper должно приводить к безопасным значениям по умолчанию.
-3. Appearance-сущности считаются future-ready и не обязательны для MVP UI.
+3. Минимальные user/board appearance входят в beta UI; произвольные темы,
+   загружаемые wallpapers и asset-management остаются future-ready.
 
 ## Sync
 

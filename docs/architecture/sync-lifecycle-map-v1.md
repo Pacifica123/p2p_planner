@@ -1,282 +1,161 @@
-# Sync lifecycle map v1
+# Жизненный цикл синхронизации v1
 
-- Статус: Draft v1
-- Дата: 2026-04-12
-- Назначение: зафиксировать сквозной жизненный цикл sync-состояния для клиента и backend coordinator.
+## Общая модель
 
-> Это operational map для этапа реализации. Он не заменяет protocol/glossary, а показывает, как именно движется состояние через boot, local mutation, push, pull, reconcile и recovery.
+```mermaid
+flowchart TB
+    Boot["Запуск клиента"]
+    Local["Чтение локального snapshot"]
+    Ui["Показ доски"]
+    Edit["Локальное изменение"]
+    Queue["pending operation"]
+    Push["Push в backend"]
+    Pull["Pull по cursor"]
+    Apply["Применение входящих событий"]
+    Reconcile["Сверка"]
+    Snapshot["Восстановление snapshot"]
 
----
-
-## 1. High-level lifecycle
-
-```text
-BOOT
-  -> replica registration
-  -> local store recovery
-  -> hydration decision
-      -> snapshot/bootstrap path
-      -> incremental pull path
-  -> scope becomes ready
-
-LOCAL MUTATION
-  -> local commit
-  -> pending op created
-  -> entity marked pending
-  -> push scheduled
-
-PUSH
-  -> batch assembly
-  -> server validate/dedupe
-  -> change_events append
-  -> current-state apply
-  -> ack returned
-  -> local pending finalized
-
-PULL
-  -> request after cursor
-  -> ordered server events returned
-  -> local apply
-  -> reconciliation
-  -> cursor advance
-
-RECOVERY
-  -> retry/backoff on transient failure
-  -> failed/conflict marker on semantic failure
-  -> needs_snapshot on cursor invalidation / long-gap recovery
+    Boot --> Local --> Ui
+    Ui --> Edit --> Queue --> Push
+    Push --> Pull --> Apply --> Reconcile
+    Reconcile -->|расхождение| Snapshot
+    Reconcile -->|совпало| Ui
 ```
 
----
+В beta.3 полностью работает локальная очередь основного card-flow и backend
+push/pull baseline. Автоматическое применение всего входящего stream к
+клиентским entity projections остаётся частичным.
 
-## 2. Boot lifecycle
+## 1. Запуск
 
-```text
-App start
-  -> open persistent local store
-  -> restore replica metadata, cursors, pending_ops, entity_meta
-  -> determine network state
-  -> if replica not registered: register replica
-  -> classify each scope:
-       - hydrated and warm
-       - cached but stale
-       - empty and not hydrated
-       - broken / needs snapshot
-  -> start background sync engine
-```
+### Тёплый запуск
 
-### Boot decisions
+1. Клиент читает сохранённый snapshot.
+2. Сразу показывает доску.
+3. В фоне проверяет сеть и обновления.
+4. Pending operations не теряются.
 
-### A. Warm boot
-- локальные данные уже есть;
-- экран может рендериться сразу;
-- sync engine делает background pull.
+### Холодный запуск
 
-### B. Cold boot
-- нужного scope локально нет;
-- сначала нужен bootstrap/snapshot-like hydration path;
-- после seed состояния scope переходит на incremental pull.
+1. Локального snapshot нет.
+2. При наличии сети клиент загружает данные backend.
+3. Сохраняет snapshot и cursor.
+4. При отсутствии сети показывает понятное пустое/offline состояние, а не
+   притворяется синхронизированным.
 
-### C. Offline boot
-- локальные данные есть -> рендерим их и помечаем offline;
-- локальных данных нет -> показываем `offline and nothing cached`.
+## 2. Исходящее изменение
 
----
+Пользовательское действие сначала фиксируется локально:
 
-## 3. Outbound mutation lifecycle
+1. создаётся операция с `eventId`, `replicaId`, `replicaSeq` и
+   `logicalClock`;
+2. локальная проекция обновляется;
+3. операция попадает в persistent queue;
+4. UI показывает `pending`;
+5. отправка выполняется сразу либо после восстановления сети.
 
-```text
-User action
-  -> validate command locally
-  -> local transaction:
-       - patch domain records
-       - update entity_meta
-       - create/coalesce pending op
-       - assign replicaSeq/logicalClock
-  -> UI shows new state immediately
-  -> push job scheduled
-```
+После локального commit допустимы состояния:
 
-### Local statuses after commit
-- entity: `pending_create | pending_update | pending_delete`
-- operation: `queued`
-- scope: `hasPendingChanges = true`
-- app surface: `Saved locally` / `Changes pending`
+- `pending` — сохранено локально, ещё не принято backend;
+- `syncing` — выполняется отправка;
+- `synced` — backend принял либо распознал duplicate;
+- `failed` — требуется retry или действие пользователя;
+- `conflict` — нужен merge/reconciliation.
 
----
+## 3. Push
 
-## 4. Push lifecycle
+Backend:
 
-```text
-Sync engine selects pending ops
-  -> group by scope
-  -> sort by replicaSeq
-  -> build push batch
-  -> POST /sync/push
-  -> server validates each event
-      -> duplicate
-      -> rejected
-      -> conflict
-      -> accepted
-  -> server writes change_events + assigns serverOrder
-  -> server applies event to domain state
-  -> server returns per-event results
-  -> client finalizes local pending state
-```
+1. проверяет доступ к workspace;
+2. валидирует event;
+3. дедуплицирует по `eventId` и `(replicaId, replicaSeq)`;
+4. назначает `serverOrder`;
+5. сохраняет event и transport outbox в одной транзакции;
+6. возвращает результат.
 
-### Client reaction to push results
+Реакция клиента:
 
-#### `accepted`
-- pending op closed;
-- entity can stay locally visible;
-- source event waits for later pull normalization if needed.
+- `accepted` → операция закрывается;
+- `duplicate` → считается доставленной;
+- `rejected` → не повторяется бесконечно, причина показывается;
+- `conflict` → сохраняется для reconciliation;
+- временная network/5xx ошибка → retry с задержкой.
 
-#### `duplicate`
-- pending op closed as no-op;
-- no user-facing error.
+## 4. Pull
 
-#### `rejected`
-- pending op gets failure state;
-- entity keeps local state only if это не вводит пользователя в заблуждение;
-- UI получает retry/discard surface.
+Клиент запрашивает события после сохранённого cursor:
 
-#### `conflict`
-- pending op gets conflict marker;
-- либо canonical outcome уже выбран и создается `conflict_stub`/review marker;
-- либо операция требует manual resolution/retry/discard согласно `docs/architecture/conflict-resolution-v1.md`.
+1. backend возвращает упорядоченный batch;
+2. клиент проверяет envelope и workspace;
+3. duplicate пропускается;
+4. tombstone не позволяет воскресить удалённую сущность старым событием;
+5. cursor продвигается только после безопасного применения batch.
 
----
+Если batch нельзя применить целиком, cursor нельзя перескакивать вперёд.
 
-## 5. Inbound pull lifecycle
+## 5. Reconciliation
 
-```text
-Sync trigger
-  -> choose scope cursor
-  -> POST /sync/pull
-  -> receive ordered events after lastServerOrder
-  -> apply one by one to local store
-  -> update entity_meta and projections
-  -> persist new cursor only after full durable apply
-  -> if hasMore: continue pull loop
-```
+Возможные исходы:
 
-### Client apply rules
-- inbound apply is idempotent;
-- ordering is strictly by `serverOrder`;
-- tombstones are processed before stale local resurrection becomes possible;
-- own earlier events may arrive back through server stream and must not duplicate domain records.
+- чистая сходимость — локальное состояние совпало;
+- event принят, но локальная проекция устарела — нужен pull/apply;
+- операция отвергнута — локальный optimistic результат откатывается либо
+  помечается;
+- история неполна — требуется snapshot recovery.
 
----
+Смысловой порядок конфликтов задаётся merge policy, а не временем прихода
+пакета. Для параллельных версий используется детерминированное сравнение,
+описанное в документации конфликтов.
 
-## 6. Reconciliation lifecycle
+## 6. Snapshot recovery
 
-```text
-Inbound event arrives
-  -> detect relation to local entity
-  -> detect relation to local pending op / recent ack
-  -> normalize local domain state
-  -> clear dirtyFields if server state supersedes them
-  -> preserve failure marker if event did not actually resolve issue
-  -> write final entity_meta
-```
+Recovery нужен, когда cursor потерян, журнал обрезан, schema несовместима или
+проекция не сходится.
 
-### Typical reconciliation outcomes
+Безопасная последовательность:
 
-#### A. Clean convergence
-- local state and server stream agree;
-- entity becomes `synced`.
+1. сохранить pending operations отдельно;
+2. скачать и проверить новый snapshot;
+3. заменить только подтверждённую локальную проекцию;
+4. установить cursor snapshot;
+5. повторно проиграть совместимые pending operations;
+6. показать конфликты, которые нельзя применить автоматически.
 
-#### B. Accepted but still stale locally
-- push succeeded, but richer canonical state came only with later pull;
-- local record updated from inbound event.
+Snapshot нельзя считать destructive restore серверной БД.
 
-#### C. Failure convergence
-- server rejected operation;
-- local state marked `failed/retryable`;
-- cursor still moves for unrelated incoming events.
+## 7. Ошибки и retry
 
-#### D. Snapshot required
-- server says cursor invalid or gap too large;
-- scope enters `needs_snapshot` and exits normal incremental loop.
+Можно повторять:
 
----
+- timeout;
+- временную недоступность сети;
+- 429 и подходящие 5xx;
+- relay delivery failure.
 
-## 7. Snapshot recovery lifecycle
+Нельзя бесконечно повторять:
 
-```text
-Scope marked needs_snapshot
-  -> pause normal incremental pull for this scope
-  -> fetch fresh snapshot/bootstrap state
-  -> replace or carefully re-seed local records for this scope
-  -> write fresh seeded cursor
-  -> resume incremental pull from new baseline
-```
+- 400 с неправильным payload;
+- 401/403 без обновления сессии/прав;
+- schema mismatch;
+- окончательно отвергнутый event.
 
-### Safety rules
-- snapshot reset is scope-local, not global by default;
-- pending ops for the same scope must be reviewed before destructive reseed;
-- client must not merge fresh snapshot with stale cursor lineage blindly.
+Retry должен иметь ограничение, backoff и видимый статус.
 
----
+## 8. Transport foundation
 
-## 8. Failure and retry lifecycle
+Nostr shadow получает accepted events из транзакционного outbox. Iroh может
+доставить тот же signed envelope быстрее. Оба пути дедуплицируются по event ID и
+не меняют merge policy.
 
-```text
-Network failure
-  -> operation remains queued/retryable
-  -> app surface becomes offline/degraded
-  -> exponential backoff starts
-  -> reconnect retriggers push/pull
+До coordinator-free режима backend остаётся владельцем авторизации и
+`serverOrder`.
 
-Semantic failure
-  -> no blind auto-retry loop
-  -> failed/conflict marker kept
-  -> user may retry after editing or discard local change
-```
+## Контрольные точки
 
-### Retry categories
-- transient network/server unavailable -> automatic retry;
-- unauthorized/revoked replica -> requires re-auth / re-registration;
-- validation/business rejection -> requires user or app-level intervention;
-- snapshot_required/cursor_expired -> requires recovery flow.
+- локальная операция переживает перезапуск браузера;
+- duplicate push не создаёт второе событие;
+- cursor не продвигается после неуспешного apply;
+- delete/archive не отменяется старым событием;
+- сбой relay не ломает основной CRUD;
+- восстановление из Nostr доказывается сравнением итогового snapshot.
 
----
-
-## 9. Scope lifecycle summary
-
-```text
-empty
-  -> hydrating
-  -> ready
-  -> syncing
-  -> ready
-
-ready
-  -> has_pending_changes
-  -> pushing
-  -> pulling
-  -> reconciling
-  -> ready
-
-ready/syncing
-  -> degraded
-  -> backoff
-  -> ready
-
-ready/syncing
-  -> needs_snapshot
-  -> hydrating
-  -> ready
-```
-
----
-
-## 10. Operational checkpoints
-
-На этапе реализации система считается корректной, если выполняются такие checkpoints:
-- локальная мутация переживает reload до sync;
-- push дубликата не создает дублей на сервере;
-- pull повтора не создает дублей локально;
-- cursor не двигается до durable apply;
-- offline не уничтожает уже видимое локальное состояние;
-- snapshot recovery не ломает соседние scope;
-- UI умеет различать `pending`, `syncing`, `failed`, `conflict_stub`, `needs_snapshot`.

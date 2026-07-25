@@ -1,32 +1,55 @@
-# v1 known limitations
+# Известные ограничения v1.0.0-beta.3
 
-Этот документ фиксирует known limitations для v1/beta перед GitHub Pre-release `v1.0.0-beta.2`. Он нужен не как маркетинговые release notes, а как честная граница того, что release-gates и artifact smoke должны подсветить перед выпуском.
+Это список границ релиза, а не перечень обещаний «когда-нибудь».
 
-Freshness note: текущий implementation-status см. в `docs/product/v1-execution-roadmap.md`. Release-evidence checkpoint от 2026-06-04 прошёл `Overall: ok`; оставшийся hard cap перед stable release — `repeatability-not-proven`.
+## Релиз и развёртывание
 
-## Ограничающие условия release-gates
+- Релиз должен быть отмечен как GitHub Pre-release.
+- Подтверждённый прогон от 2026-06-04 не покрывает новые transport и bootstrap
+  изменения; нужен свежий `full-local-release`.
+- Основной ZIP должен быть проверен после распаковки отдельно на Windows и
+  Linux.
+- Первый запуск скачивает базовые Docker images и собирает backend/frontend,
+  поэтому требует интернет и может занять несколько минут.
+- Docker volumes не являются резервной копией. Для важных досок нужен export и
+  проверенный внешний backup.
+- LAN-режим использует обычный HTTP. Его нельзя напрямую публиковать в интернет.
 
-- `python tools/devbootstrap.py release-gates --profile full-local-release` прошёл на 2026-06-04, но stable `v1.0.0` нельзя объявлять до repeatability checkpoint.
-- `clean-machine` evidence остаётся обязательным маркером release-gates docs: clean-machine sandbox/quickstart должен проходить и быть сохранён в финальном release-gates bundle.
-- Mocked browser/UIX smoke проверяет frontend behavior, но real backend product path закрывается только `frontend_uiux_real_backend_core_flow`; в принятом checkpoint этот gate прошёл.
-- Legacy `browser_real_backend_path` остается optional transition signal через `--include-real-backend-browser`, но не является обязательным beta.2 blocker.
-- DB-writing smoke/browser gates не должны писать в обычную dev-БД без явного `TEST_DATABASE_URL` или managed test DB.
-- Playwright/browser binaries считаются infrastructure prerequisite. Их отсутствие классифицируется отдельно и не должно маскироваться как frontend regression.
+## Local-first и синхронизация
 
-## Продуктовые ограничения v1/beta
+- Каноническое принятие общих изменений выполняет Rust/PostgreSQL backend.
+- Клиентский pull пока не перестраивает все локальные проекции автоматически.
+- Полноценного UI для смысловых конфликтов нет.
+- Локально созданная и ещё не синхронизированная карточка имеет ограничения
+  для некоторых дочерних сущностей.
+- Локальный snapshot в браузере не зашифрован.
 
-- P2P-синхронизация остается future-ready слоем, а не обязательным пользовательским сценарием v1.
-- Conflict handling ограничен baseline duplicate/out-of-order/rejected markers, без полноценного merge UI.
-- Import execution остается non-destructive boundary; destructive restore не входит в v1.
-- MFA/passkeys/E2EE и local snapshot encryption не входят в v1 hardening.
-- Attachment blobs зарезервированы, но не экспортируются в baseline backup bundle.
+## Экспериментальные транспорты
 
+- `sync-core`, Nostr shadow, Iroh и edge coordinator не включены в обычный
+  bootstrap.
+- Nostr — дополнительное зашифрованное зеркало accepted events, а не источник
+  прав и не готовая замена PostgreSQL.
+- Iroh adapter не подключён к текущему браузерному клиенту и не хранит события
+  для offline-peer.
+- Edge coordinator использует общий board token и пока не проверяет
+  асимметричную подпись каждого события.
+- Полностью coordinator-free режим не готов.
 
-## Ограничения release artifacts для beta.2
+## Backup, import и интеграции
 
-- GitHub release должен быть отмечен как **Pre-release**.
-- Windows `.exe` должен попадать в self-host bundle, а не выкладываться как одинокий бинарник без `README_RELEASE.md`, `.env.example`, frontend build и DB instructions.
-- Linux `.AppImage` является обязательным beta.2 asset candidate, но его готовность должна подтверждаться artifact-level smoke на Linux, а не только source-level `release-gates`.
-- AppImage должен явно документировать, что именно он запускает и какие внешние prerequisites остаются, особенно PostgreSQL, если он не включён в packaged runtime story.
-- `SHA256SUMS.txt` обязателен для всех загружаемых binary/archive assets; GPG signature опциональна.
-- Devctl snapshots/patches не должны включать большие `.zip`, `.exe`, `.AppImage` payloads; такие файлы загружаются только в GitHub Release assets.
+- Export является прикладным JSON snapshot, а не raw dump БД.
+- Вложения не экспортируются.
+- Import выполняет только preview; применение backup и destructive restore не
+  реализованы.
+- Внешние integrations/webhooks не считаются production-ready.
+
+## Безопасность и продукт
+
+- MFA, passkeys и E2EE не входят в beta.3.
+- Удалённый участник local-first системы может сохранить уже скачанные данные.
+- Mobile-клиент не входит в этот релиз.
+- Проект пока не содержит выбранной публичной лицензии. До её добавления нельзя
+  считать, что пользователям автоматически разрешено копирование и изменение
+  кода за пределами закона об авторском праве.
+

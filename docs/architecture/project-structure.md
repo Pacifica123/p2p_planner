@@ -1,158 +1,111 @@
-# Структура каталогов проекта
+# Структура проекта
 
-Ниже зафиксирована рекомендуемая структура репозитория на ближайшие итерации.
+Актуальная карта основных каталогов `v1.0.0-beta.3`:
 
 ```text
-docs/
-  README.md
-  adr/
-  api/
-    openapi.yaml
-  product/
-    mvp-scope-v1.md
-  domain/
-    terms.md
-    entities.md
-    invariants.md
-    permissions.md
-    lifecycle.md
-    customization.md
-  sync/
-    glossary.md
-    protocol.md
-    conflict-resolution.md
-    schemas/
-  architecture/
-    project-structure.md
-    database.md
-    backend-modules.md
-    local-first-data-layer-v1.md
-    sync-model-implementation-plan-v1.md
-    conflict-resolution-v1.md
-    p2p-relay-bootstrap-abstraction-v1.md
-    integrations-architecture-v1.md
-    import-export-backup-v1.md
-    security-privacy-threat-model-v1.1.md
-    testing-strategy-v1.md
-    testing-pyramid-v1.md
-    testing-application-guide-v1.md
-
-backend/
-  migrations/
-  tests/
-    README.md
-    *.rs
-    smoke_core_api.py
-    SMOKE_SCENARIOS.md
-    smoke/
-    contract/
-    fixtures/
-    scenarios/
-    support/
-  src/
-    auth/
-    db/
-    http/
-    modules/
-      activity/
-      appearance/
-      audit/
-      boards/
-      cards/
-      checklists/
-      comments/
-      integrations/
-      labels/
-      sync/
-      users/
-      workspaces/
-      common.rs
-      mod.rs
-    app.rs
-    config.rs
-    error.rs
-    lib.rs
-    main.rs
-    state.rs
-    telemetry.rs
-
-frontend/
-  playwright.config.ts
-  e2e/
-    README.md
-    smoke/
-  src/
-    app/
-      layouts/
-      providers/
-      router/
-      styles/
-    features/
-      activity/
-      appearance/
-      boards/
-      bootstrap/
-      cards/
-      columns/
-      integrations/
-      workspaces/
-    shared/
-      api/
-      appearance/
-      config/
-      lib/
-      types/
-      ui/
-    test/
-      README.md
-      setup.ts
-      renderWithProviders.tsx
-      unit/
-      integration/
-      contracts/
-      fixtures/
-      factories/
-    main.tsx
+.
+├── VERSION
+├── README.md
+├── bootstrap.py
+├── backend/
+│   ├── Cargo.toml
+│   ├── migrations/
+│   ├── crates/
+│   │   ├── sync-core/
+│   │   ├── nostr-transport/
+│   │   └── iroh-transport/
+│   ├── src/
+│   │   ├── auth/
+│   │   ├── db/
+│   │   ├── http/
+│   │   ├── modules/
+│   │   ├── transports/
+│   │   └── bin/nostr_recover.rs
+│   └── tests/
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   ├── features/
+│   │   ├── shared/
+│   │   └── test/
+│   └── e2e/
+├── edge-coordinator/
+├── deploy/
+│   ├── bootstrap/
+│   └── home-coordinator/
+├── docs/
+│   ├── adr/
+│   ├── api/
+│   ├── architecture/
+│   ├── deployment/
+│   ├── dev-bootstrap/
+│   ├── devctl/
+│   ├── development/
+│   ├── domain/
+│   ├── product/
+│   └── sync/
+├── release/
+└── tools/
+    ├── container_bootstrap.py
+    ├── build_release_bundle.py
+    ├── check_release_prep.py
+    ├── devbootstrap.py
+    └── uiux/
 ```
 
-## Принципы
+## Правила
 
-### 1. Документы живут рядом с кодом
-Архитектурные решения и контракты не должны жить только "в голове" или в чате.
+### Документация рядом с кодом
 
-### 2. Product-first reading order
-Сначала читается `product/`, затем термины и glossary, потом ADR и только после
-этого детали домена, БД, local-first, sync, integrations и testing strategy.
+Product roadmap отвечает на вопрос «что готово». ADR объясняет принятые
+решения. Architecture описывает контракты. Deployment содержит команды.
+Generated evidence не хранится в `docs/`.
 
-### 3. Backend модульный
-Модули backend группируются по домену, а не по техническим таблицам.
+### Backend — модульный монолит
 
-### 4. Frontend feature-based
-Функциональность сгруппирована по пользовательским сценариям и bounded context'ам.
+Доменные модули разделены по ответственности, но работают в одном процессе и
+одной транзакционной PostgreSQL. Путь зависимости:
 
-### 5. Shared contracts могут быть вынесены позже
-Когда появится реальная необходимость делить типы и схемы между несколькими
-клиентами, для этого можно добавить отдельный слой shared contracts без ломки
-текущей структуры.
+```text
+handler → service → repo
+```
 
-### 6. Mobile вводится позже
-Каталог mobile сознательно не раздувает текущий runtime scope, пока не
-стабилизированы backend, web и sync contracts.
+Repo одного модуля не должен становиться неявным API для другого.
 
-### 7. Transport/topology слой выделяется отдельно по смыслу
-Даже если concrete runtime сначала coordinator-only, в архитектуре заранее
-резервируется место для `transport`, `bootstrap`, `relay`, `discovery` и
-frontend-side sync/transport adapters. Это нужно, чтобы optional p2p
-добавлялся как отдельный слой, а не растекался по UI и CRUD-модулям.
+### Transport отделён
 
-### 8. Integrations выделяются отдельным слоем
-Даже если реальные provider implementations пока остаются заглушками,
-`integrations/` резервирует единое место для provider registry, import/export
-orchestration и webhook boundaries. Это уменьшает риск того, что
-GitHub/Obsidian/import/export логика потом начнет протекать в `boards`, `cards`
-или `sync`.
+`sync-core` не зависит от конкретной сети. Nostr/Iroh находятся в отдельных
+crates, backend transport outbox — в `src/transports`, а Cloudflare-прототип —
+в отдельном `edge-coordinator`.
 
-### 9. Test assets отделяются по смыслу
-- backend integration tests остаются в `backend/tests/*.rs`, потому что это естественная точка входа для `cargo test`;
-- contract/fixtures/scenarios/support выносятся в отдельные подкаталоги, чтобы sync/conflict и API data не смешивались с black-box smoke;
-- frontend unit/integration/contracts/fixtures/factories разделяются с самого начала, чтобы local-first и browser smoke не превратились в один хаотичный слой.
+### Frontend — по пользовательским функциям
+
+`features/` содержит сценарии, `shared/` — переиспользуемые API/types/UI,
+`app/` — composition и routing. Local-first store не должен расползаться по
+экранным компонентам.
+
+### Deployment не смешивается с разработкой
+
+`deploy/bootstrap` — обычный self-host путь. `deploy/home-coordinator` —
+удалённый общий coordinator через Tailscale. Host-native запуск остаётся в
+`tools/devbootstrap.py` для разработки и release gates.
+
+### Generated каталоги
+
+Не являются исходниками:
+
+```text
+.dev-bootstrap/
+backend/target/
+frontend/node_modules/
+frontend/dist/
+edge-coordinator/node_modules/
+release/dist/
+```
+
+### Mobile позже
+
+Отдельного mobile-каталога пока нет. Mobile должен использовать общие sync/API
+контракты, но не добавляется до выбора runtime и модели защищённого локального
+хранилища.
+

@@ -1,79 +1,86 @@
-# Testing strategy v1
+# Стратегия тестирования v1
 
-## Goal
+## Цель
 
-Provide enough automated evidence to decide whether the project is releasable without confusing product regressions with local environment noise.
+Доказать, что основной пользовательский путь работает на реальном backend, а
+ошибки окружения не маскируются под ошибки продукта.
 
-## Principles
+## Принципы
 
-1. Use several small signals instead of one magical end-to-end test.
-2. Keep write-capable checks isolated from shared dev state.
-3. Preserve reproducible logs and inputs.
-4. Classify infra blockers separately from product failures.
-5. Prefer deterministic fixtures and explicit user-facing scenarios.
+- сначала самая дешёвая проверка, способная поймать дефект;
+- тестовая БД отделена от пользовательской;
+- повторный smoke обязан быть идемпотентным;
+- generated evidence не хранится как исходный код;
+- пропущенная обязательная зависимость — отдельный результат, а не успех;
+- релизный артефакт проверяется после сборки, а не только по исходникам.
 
-## Layers
+## Слои
 
-| Layer | Purpose | Typical command |
+| Слой | Что проверяет | Основной запуск |
 |---|---|---|
-| Backend unit/integration | Domain/repo/service correctness. | `cd backend && cargo test` |
-| Backend DB integration | Migration/query behavior against disposable DB. | `TEST_DATABASE_URL=... cargo test -- --ignored` |
-| Backend smoke | API works as a running service. | `python backend/tests/smoke_core_api.py` via devbootstrap. |
-| Frontend build | TypeScript/Vite/import graph. | `cd frontend && npm run build` |
-| Frontend unit/integration | Component and state logic. | `cd frontend && npm run test:run` |
-| UI/UX evidence | User can open UI and complete critical flow. | Target: custom evidence runner. Legacy: Playwright. |
-| Release-gates | Bundle all relevant checks and decisions. | `python -B tools/devbootstrap.py release-gates ...` |
+| Статика | Форматы, версии, контракты и структура | `tools/check_release_prep.py` |
+| Rust unit/integration | Доменные правила, auth, DB и sync | `cargo test --workspace --all-features --all-targets` |
+| Frontend unit/integration | React-состояния и API-контракты | `npm run test:run` |
+| Backend smoke | Живой HTTP API и PostgreSQL | `backend/tests/smoke_core_api.py` |
+| UIX mocked | Критический UI-путь без backend | custom UI/UX Evidence Runner |
+| UIX real backend | Настоящий продуктовый путь | managed runtime gate |
+| Bootstrap | Compose, секреты, порты и lifecycle | `tools/check_zero_config_bootstrap.py` |
+| Артефакт | Поведение распакованного release ZIP | ручной/автоматизированный clean-machine smoke |
 
-## Mandatory v1 evidence
+## Обязательные доказательства beta.3
 
-Before release review:
+Перед публикацией:
 
-- `self-check` OK;
-- `diagnose` OK or non-blocking warnings only;
-- backend cargo default gate OK/accepted partial with DB ignored coverage;
-- DB ignored/integration tests run against disposable DB or explicitly deferred;
-- backend Python smoke runs twice against isolated runtime/DB;
-- frontend build OK;
-- frontend unit/integration OK;
-- UI/UX critical flow evidence exists;
-- docs/release notes/known limitations gates OK;
-- clean-machine dry signal collected for final review.
+```bash
+python -B tools/check_release_prep.py
+python -B tools/check_zero_config_bootstrap.py --frontend-build
+python -B tools/devbootstrap.py release-gates --profile full-local-release
+```
 
-## UI/UX testing direction
+После сборки:
 
-Playwright is not the long-term mandatory browser layer. The project will replace it with a lightweight custom UI/UX Evidence Runner that uses a system browser and captures:
+- распаковать ZIP в чистый каталог;
+- запустить `python bootstrap.py`;
+- пройти registration → workspace → board → column → card;
+- остановить и запустить снова;
+- проверить сохранение данных;
+- выполнить это минимум на Windows и Linux.
 
-- DOM boot proof;
-- console/runtime errors;
-- route markers;
-- visible/enabled controls;
-- form interactions;
-- network/backend evidence;
-- localStorage/sessionStorage before/after state;
-- concise JSON/Markdown reports.
+## UI/UX направление
 
-Playwright tests may remain only as transitional or optional heavy checks until parity is achieved.
+Playwright остаётся необязательным переходным покрытием. Основной путь —
+лёгкий UI/UX Evidence Runner через CDP, который умеет:
 
-## Fixtures
+- находить доступный Chromium;
+- запускать mock и real-backend сценарии;
+- собирать screenshot, DOM markers, console и network evidence;
+- классифицировать отказ по понятной категории.
 
-- Backend tests create disposable IDs/data and clean up where practical.
-- Smoke tests must not assume a fixed shared user starts with default mutable preferences.
-- UI tests should use stable `data-testid` markers for critical controls.
-- Real-backend UI scenarios must run against managed runtime/test DB, not an arbitrary local backend.
+Это не отменяет unit-тесты и backend smoke.
 
-## Quality gates by cadence
+## Fixtures и безопасность
 
-| Cadence | Required checks |
+- маленькие устойчивые fixtures хранятся в Git;
+- реальные токены, пароли и пользовательские данные запрещены;
+- DB-writing тесты требуют managed test DB или явный `TEST_DATABASE_URL`;
+- тест не должен удалять неизвестную БД или чужие Docker volumes;
+- полный reset проверяется только на специально созданных тестовых данных.
+
+## Частота
+
+| Когда | Минимум |
 |---|---|
-| Small patch | Syntax + affected unit tests + relevant self-check. |
-| Backend patch | Cargo relevant tests + API smoke when runtime behavior changed. |
-| Frontend patch | Build + unit/integration + UI evidence if flow changed. |
-| Release candidate | Full release-gates profile with managed DB/runtime and clean-machine dry. |
+| Малый патч | Затронутые unit/static checks |
+| Изменение API/DB | Cargo tests + backend smoke |
+| Изменение UI | Frontend tests + соответствующий UIX-сценарий |
+| Изменение bootstrap | Bootstrap self-check + Compose config + чистый запуск |
+| Release candidate | Полный профиль + smoke собранного артефакта |
 
-## Anti-patterns
+## Запрещённые упрощения
 
-- using `--allow-dev-db-write` as the default path;
-- treating missing browser binaries as UI regression;
-- committing generated `.dev-bootstrap` evidence;
-- expanding one browser test into a hidden product test suite;
-- accepting `REL-UNMAPPED` as stable.
+- считать успешную компиляцию доказательством работы продукта;
+- отмечать skipped обязательный gate как pass;
+- запускать destructive тест против обычной dev-БД;
+- считать mock UIX заменой real-backend пути;
+- публиковать ZIP, который никто не запускал после распаковки.
+

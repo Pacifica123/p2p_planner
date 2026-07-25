@@ -1,55 +1,48 @@
-﻿# P2P Planner v1.0.0-beta.1 — Web Core
-This is the first beta web/self-host release of P2P Planner.
+# p2pKanban v1.0.0-beta.1 — исторический Windows web bundle
 
-## Requirements
+Это памятка к первому beta-артефакту. Она не описывает текущий способ
+развёртывания. Для beta.3 используйте корневой `README.md` и
+`python bootstrap.py`.
 
-- Windows x64
-- Docker Desktop for PostgreSQL
-- Node.js for serving the built frontend
+## Что требовалось beta.1
 
-## Start PostgreSQL
+- Windows x64;
+- Docker Desktop для PostgreSQL;
+- Node.js для раздачи собранного frontend;
+- ручной `backend/.env`;
+- отдельный запуск backend и frontend.
 
-From this folder:
+## Исторический запуск
 
-`powershell
+PostgreSQL:
+
+```powershell
 docker compose -f docker-compose.dev.yml up -d
-``nConfigure backend
-Copy:
-backend\.env.example
-to:
-backend\.env
-For local beta testing, default values are usually enough.
-Start backend
+```
+
+Затем требовалось скопировать `backend/.env.example` в `backend/.env`,
+запустить:
+
+```powershell
 cd backend
 .\p2p-planner-backend.exe
-Backend listens on:
-[http://127.0.0.1:18080](http://127.0.0.1:18080)
-Health check:
-[http://127.0.0.1:18080/api/v1/health](http://127.0.0.1:18080/api/v1/health)
-Start frontend
-In another terminal:
+```
+
+и в другом терминале:
+
+```powershell
 cd frontend
 npx serve -s dist -l 5173
-Open:
-[http://127.0.0.1:5173](http://127.0.0.1:5173)
-Current beta scope
-Working:
-sign up / sign in / refresh session
-workspaces
-boards
-columns
-cards
-card details drawer
-drag-and-drop cards between columns
-user appearance
-board appearance
-activity/audit surfaces
-Not ready yet:
-native mobile app
-desktop installer
-real offline/local-first runtime
-sync between devices
-P2P/relay
-full backup/import/export
-labels/checklists/comments
+```
+
+Этот путь устарел: beta.3 автоматически создаёт БД, секреты и контейнеры и не
+требует ручного `.env`.
+
+## Возможности того релиза
+
+Работали базовые учётные записи, workspace, доски, колонки, карточки,
+drag-and-drop, внешний вид и activity/audit.
+
+Local-first, sync, backup/export, метки, чек-листы и комментарии в beta.1 ещё
+не входили. Сейчас эти сведения сохраняются только как история развития.
 

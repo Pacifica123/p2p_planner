@@ -2,7 +2,7 @@
 
 - Статус: Draft v1.1
 - Дата: 2026-04-14
-- Назначение: зафиксировать минимальный, но уже инженерно проверяемый security/privacy слой для account-based, local-first, sync-ready P2P Planner.
+- Назначение: зафиксировать минимальный, но уже инженерно проверяемый security/privacy слой для account-based, local-first, sync-ready p2pKanban.
 
 > Этот документ не обещает «zero-knowledge безопасность», которой у проекта пока нет. Его задача — определить точные границы доверия, обязательные инварианты, приоритеты риска, жизненный цикл данных и release-gates, по которым можно принимать инженерные решения без самообмана.
 
@@ -55,7 +55,7 @@
 
 ## 3. Главный вывод
 
-Для P2P Planner нельзя принимать модель «сначала быстро сделаем auth, а privacy потом как-нибудь докрутим».
+Для p2pKanban нельзя принимать модель «сначала быстро сделаем auth, а privacy потом как-нибудь докрутим».
 
 Минимально здравая позиция для v1.1 такая:
 
@@ -950,7 +950,7 @@ Privacy без lifecycle — неполная. Поэтому для каждо�
 
 ## 22. Итог в одной формуле
 
-Security v1.1 для P2P Planner =
+Security v1.1 для p2pKanban =
 
 **server-authoritative access control + disciplined session model + explicit local-data lifecycle + operator-aware privacy posture + sync/relay boundaries that do not weaken auth**.
 

@@ -1,4 +1,4 @@
-# P2P Planner frontend
+# Frontend p2pKanban
 
 ## Быстрый старт
 

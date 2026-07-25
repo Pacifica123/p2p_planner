@@ -3,6 +3,9 @@
 /frontend/dist
 /frontend/playwright-report
 /frontend/test-results
+/edge-coordinator/node_modules
+/edge-coordinator/.wrangler
+/release/dist/
 **/__pycache__/
 *.pyc
 .env

@@ -1,58 +1,53 @@
-# Backend skeleton v1
+# Каркас backend v1
 
-## Scope of this step
-This step creates a bootable backend foundation for the already approved MVP and architecture:
-- PostgreSQL + sqlx migrations on startup
-- axum HTTP server
-- config + app state + tracing + error layer
-- modular router registration
-- file skeletons for `dto / handler / service / repo`
+- Статус: исторический документ; каркас давно перерос исходный этап
+- Актуальная структура: `docs/architecture/project-structure.md`
 
-## What is already real
-- the application boots if PostgreSQL is available and migrations can run;
-- health endpoints are live:
-  - `GET /health`
-  - `GET /api/v1/health`
-  - `GET /api/v1/auth/session` returns a skeleton response;
-- all main route groups are already registered;
-- the database schema is split into ordered migrations instead of one draft file.
+## Что создавал этот этап
 
-## What is intentionally still stubbed
-Business logic for domain modules is not implemented yet. These routes are wired and return `not_implemented` until the next step:
-- auth write operations
-- users/devices
-- workspaces/members
-- boards/columns
-- cards
-- labels
-- checklists/items
-- comments
-- sync
-- audit-log
+Первый backend-каркас зафиксировал:
 
-## Project layout added in backend
-- `config/default.toml`
-- `.env.example`
-- `src/app.rs`
-- `src/config.rs`
-- `src/state.rs`
-- `src/error.rs`
-- `src/telemetry.rs`
-- `src/db/*`
-- `src/http/*`
-- `src/auth/*`
-- `src/modules/*`
+- Rust/Axum приложение;
+- конфигурацию из TOML и environment;
+- PostgreSQL pool и миграции;
+- общие HTTP-ответы и ошибки;
+- auth-модуль;
+- доменные модули;
+- health endpoints;
+- telemetry;
+- integration и smoke tests.
 
-## Why this shape
-This keeps consistency with earlier decisions:
-- modular monolith;
-- `dto / handler / service / repo` layering;
-- separate `auth` and `sync` concerns;
-- `boards` own columns, `workspaces` own membership;
-- sync-ready schema exists before full sync logic.
+## Что теперь является настоящей реализацией
 
-## Next step
-The next practical step is `Core backend logic`:
-- implement real CRUD for `workspaces`, `boards`, `columns`, `cards`;
-- add minimal auth/session persistence;
-- start replacing stub repos with real sqlx queries.
+В beta.3 работают auth/session, workspace, boards, cards, labels, checklists,
+comments, appearance, activity, audit, sync baseline и import/export preview.
+Маршруты, которые когда-то были заглушками, нельзя снова описывать как
+«следующий этап».
+
+Backend также включает:
+
+- `sync-core`;
+- Nostr shadow outbox и recovery;
+- optional Iroh adapter;
+- container entrypoint для zero-config bootstrap.
+
+## Что всё ещё частично
+
+- integrations/webhooks;
+- import execution;
+- coordinator-free membership/signatures;
+- автоматическое применение всего входящего event log к доменным проекциям.
+
+## Почему структура сохранена
+
+Модульный монолит остаётся подходящим:
+
+- одна транзакционная БД;
+- доменные границы видны в коде;
+- нет преждевременных микросервисов;
+- transport adapters можно менять отдельно;
+- один backend binary удобно собирать в контейнер.
+
+Любые новые документы должны ссылаться на этот файл только как на историю
+первоначального каркаса, а не как на текущий roadmap.
+

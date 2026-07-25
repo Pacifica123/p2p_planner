@@ -1,115 +1,98 @@
-# Free hosting and transport implementation v1
+# Бесплатный хостинг и экспериментальные транспорты
 
-This document is the operational truth for roadmap items 1–5. It separates
-usable code from experimental adapters and from the still-unimplemented
-coordinator-free mode.
+Этот документ описывает фактическое состояние пяти реализованных направлений.
+Ни одно из них само по себе не делает p2pKanban полностью бессерверным.
 
-## Implementation matrix
+## Матрица реализации
 
-| Item | Code in this patch | Runtime status |
+| Часть | Что есть в коде | Состояние |
 |---|---|---|
-| Home coordinator | Docker profile with PostgreSQL, Rust backend and Tailscale network namespace | Usable after local secrets and Tailscale login |
-| `sync-core` | Independent crate with event/envelope types, validation, deterministic merge order and authenticated envelopes | Used by backend validation and both transports |
-| Nostr shadow mode | Durable PostgreSQL outbox, retry/dead-letter worker, encryption, Nostr signing, three-relay requirement, backfill and recovery CLI | Disabled by default; safe to test beside coordinator |
-| Iroh direct path | Iroh 1.x endpoint, framed signed envelopes, multi-peer send and receive | Adapter implemented; not connected to browser UI |
-| Durable Object coordinator | SQLite membership, dedupe, cursor, `serverOrder`, event log, one-time WebSocket sessions and hibernatable sockets | Separate deployable compatibility service |
+| Домашний coordinator | Docker-профиль Rust + PostgreSQL в сети Tailscale | Можно использовать после настройки секретов и Tailscale |
+| `sync-core` | События, конверты, валидация, HMAC и порядок merge | Используется backend и transport-адаптерами |
+| Nostr shadow | Outbox, retry/dead-letter, шифрование, публикация и recovery CLI | По умолчанию выключен |
+| Iroh | Native QUIC endpoint и передача подписанных конвертов | Не подключён к web UI |
+| Durable Object | Membership, dedupe, cursor, `serverOrder`, event log и WebSocket | Отдельный совместимый прототип |
 
-None of these items makes the system coordinator-free.
-
-## Runtime topology
+## Текущая топология
 
 ```mermaid
 flowchart TB
-    Client["p2pKanban client"]
-    Local[("Local store")]
-    Rust["Rust coordinator"]
+    Web["Web-клиент"]
+    Local[("Локальный snapshot")]
+    Rust["Rust backend"]
     Pg[("PostgreSQL")]
     Outbox["Transport outbox"]
-    Nostr["Three or more Nostr relays"]
-    Iroh["Iroh direct QUIC"]
-    Edge["Optional Durable Object"]
+    Nostr["Несколько Nostr relay"]
+    Iroh["Iroh QUIC"]
+    Edge["Durable Object"]
 
-    Client <--> Local
-    Client <--> Rust
+    Web <--> Local
+    Web <--> Rust
     Rust <--> Pg
     Pg --> Outbox
-    Outbox --> Nostr
-    Client <-. same signed envelope .-> Iroh
-    Client <-. compatibility API .-> Edge
+    Outbox -. shadow .-> Nostr
+    Web -. через будущий shell .-> Iroh
+    Web -. эксперимент .-> Edge
 ```
 
-Solid arrows describe the current coordinator-backed path. Dashed arrows are
-replaceable transport or compatibility paths.
+Сплошные стрелки — обычный путь beta.3. Пунктир — экспериментальные пути.
 
-## 1. Home coordinator
+## 1. Домашний coordinator
 
-Use `deploy/home-coordinator/compose.yaml` on a Linux laptop or mini-PC.
-Detailed commands are in that directory's README.
+Профиль находится в `deploy/home-coordinator`. Он запускает текущий backend и
+PostgreSQL на Linux-машине, а наружу показывает API только через Tailscale.
+Порт PostgreSQL не публикуется.
 
-The important boundary is that PostgreSQL is not published to the LAN or
-internet. Backend and Tailscale share one network namespace. Tailscale HTTPS
-proxies port `18080`, so production-like secure cookies remain valid.
+Потребуются:
 
-Required private runtime values:
+- пароль PostgreSQL;
+- случайный JWT secret длиной не менее 32 символов;
+- точный CORS origin;
+- вход в Tailscale или временный auth key.
 
-- PostgreSQL password;
-- JWT secret of at least 32 random characters;
-- exact static-client CORS origin;
-- optional Tailscale auth key.
-
-The Tailscale auth key is only a bootstrap credential. Board data remains in
-PostgreSQL and local client stores.
+Это самый быстрый способ дать нескольким людям доступ к одной доске без
+переделки модели прав.
 
 ## 2. `sync-core`
 
-The crate is located at `backend/crates/sync-core`.
+Crate `backend/crates/sync-core` содержит:
 
-It contains:
-
-- `ClientChangeEvent` and `ServerChangeEvent`;
-- transport-neutral `SyncEnvelope`;
-- `SignedSyncEnvelope`;
-- event and envelope validation;
-- HMAC-SHA256 envelope authentication;
-- deterministic version comparison by
+- `ClientChangeEvent`, `ServerChangeEvent`;
+- `SyncEnvelope`, `SignedSyncEnvelope`;
+- проверку событий и конвертов;
+- HMAC-SHA256 для совместимого общего секрета;
+- сравнение версий по
   `(logicalClock, replicaId, eventId)`.
 
-It deliberately does not depend on Axum, sqlx, PostgreSQL, Nostr or Iroh.
-HMAC authentication is the compatibility mechanism for a shared workspace
-secret. It is not a replacement for the future per-device asymmetric
-signatures required by coordinator-free membership.
+Crate не зависит от Axum, sqlx, PostgreSQL, Nostr и Iroh. HMAC является
+временным механизмом совместимости, а не заменой будущих асимметричных подписей
+устройств.
 
-## 3. Nostr shadow transport
+## 3. Nostr shadow
 
-### What happens on push
+### Путь операции
 
 ```mermaid
 sequenceDiagram
-    participant C as Client
-    participant B as Rust backend
+    participant C as Клиент
+    participant B as Backend
     participant P as PostgreSQL
     participant W as Shadow worker
-    participant R as Nostr relays
+    participant R as Nostr relay
 
-    C->>B: push event
-    B->>P: validate, dedupe, assign serverOrder
-    P->>P: trigger inserts outbox row atomically
-    P-->>B: accepted
-    B-->>C: acknowledgement
-    P-->>W: pending outbox row
-    W->>W: sign and encrypt envelope
-    W->>R: publish kind 20078
-    R-->>W: Nostr event id
-    W->>P: delivered receipt
+    C->>B: push
+    B->>P: проверка, dedupe, serverOrder
+    P->>P: событие и outbox в одной транзакции
+    B-->>C: accepted
+    W->>P: забрать pending
+    W->>W: подписать и зашифровать
+    W->>R: опубликовать
+    W->>P: receipt или retry
 ```
 
-Network relay failure happens after canonical acceptance. It moves the outbox
-row through `retry` and eventually `dead_letter`; it does not roll back the
-board edit.
+Сбой relay происходит после канонического принятия и не откатывает карточку.
 
-### Configuration
-
-The backend defaults are disabled. Set private environment values at runtime:
+### Настройка
 
 ```text
 TRANSPORTS__NOSTR__ENABLED=true
@@ -120,147 +103,99 @@ TRANSPORTS__NOSTR__MIN_RELAY_ACKS=3
 TRANSPORTS__NOSTR__BACKFILL_ON_START=true
 ```
 
-Generate the master key locally:
+Master key можно создать локально:
 
 ```bash
 openssl rand -base64 32
 ```
 
-The master key derives a different encryption/authentication key and opaque
-`boardTag` for each workspace. Relays see the Nostr author, time, custom kind
-and ciphertext size. They do not see the workspace UUID or event payload.
+Для каждого workspace выводятся отдельные ключи шифрования и непрозрачный
+`boardTag`. Relay видит автора Nostr event, время и размер ciphertext, но не
+UUID workspace и не открытое содержимое.
 
-`backfill_on_start` queues existing workspace events that have no Nostr outbox
-row. After the initial test, it may be turned off; new accepted events are
-queued by a PostgreSQL trigger in the same transaction as `change_events`.
-The worker only marks a row delivered after the configured minimum—three by
-default—has acknowledged the Nostr event.
-
-### Observe queue state
-
-Authenticated endpoint:
+Состояние outbox доступно через:
 
 ```text
 GET /api/v1/sync/transports/status
 ```
 
-Relevant states are `pending`, `processing`, `retry`, `delivered` and
-`dead_letter`.
+Состояния: `pending`, `processing`, `retry`, `delivered`, `dead_letter`.
 
-### Relay-only recovery gate
+### Проверка восстановления
 
-1. Enable three test relays and `backfill_on_start`.
-2. Wait until no `pending`, `processing` or `retry` rows remain.
-3. Record PostgreSQL event count and ordered event IDs for one test workspace.
-4. Run from `backend/`:
+1. Включить минимум три тестовых relay и backfill.
+2. Дождаться отсутствия `pending`, `processing` и `retry`.
+3. Зафиксировать event IDs и количество событий тестового workspace.
+4. Выполнить из `backend/`:
 
-```bash
-cargo run --bin nostr_recover -- \
-  <workspace-uuid> ../recovered-workspace-events.json
-```
+   ```bash
+   cargo run --bin nostr_recover -- \
+     <workspace-uuid> ../recovered-workspace-events.json
+   ```
 
-5. Compare unique event IDs and `serverOrder` with PostgreSQL.
-6. Replay the recovered envelopes into an empty test projection.
-7. Compare the resulting board snapshot with the source snapshot.
+5. Сравнить `eventId` и `serverOrder`.
+6. Проиграть конверты в пустую тестовую проекцию.
+7. Сравнить итоговый snapshot с исходной доской.
 
-Steps 5–7 are the acceptance gate. Merely publishing to relays is not proof of
-recoverability.
+Публикация событий без шагов 5–7 не доказывает восстановимость.
 
-### Current limits
+Ограничения: политика хранения relay внешняя; один backend key обслуживает все
+настроенные workspace; вложения и полные snapshots не передаются; destructive
+restore отсутствует.
 
-- Relay retention and event-size policies remain external.
-- One backend Nostr author key mirrors all configured workspaces.
-- Attachments and full snapshots are not transported.
-- Recovery exports envelopes; automatic destructive database restore is
-  intentionally absent.
+## 4. Iroh
 
-## 4. Iroh direct transport
+Crate `backend/crates/iroh-transport` использует ALPN
+`p2p-kanban/sync/1`, принимает endpoint addresses и передаёт один ограниченный
+по размеру подписанный конверт на поток.
 
-The crate is `backend/crates/iroh-transport`. It binds an Iroh endpoint with
-ALPN `p2p-kanban/sync/1`, accepts endpoint addresses, sends one bounded signed
-envelope per unidirectional stream and can receive the same frame.
+Adapter не назначает `serverOrder`, не решает конфликты и не хранит сообщения
+для offline-peer. Клиент должен запускать прямой и асинхронный пути параллельно,
+а затем дедуплицировать по `eventId`.
 
-The adapter does not:
+Текущий Vite-клиент не может быть native Iroh endpoint. Реалистичная следующая
+точка интеграции — Tauri/mobile Rust shell либо local sidecar.
 
-- assign `serverOrder`;
-- modify `logicalClock`;
-- decide conflicts;
-- store messages for an offline peer.
+## 5. Durable Object coordinator
 
-Clients should race Iroh against the asynchronous path and dedupe by event ID.
-Failure only changes delivery diagnostics.
+Проект находится в `edge-coordinator/`.
 
-The current Vite browser client cannot directly host the native Rust endpoint.
-The next practical integration target is a Tauri/mobile Rust shell or a small
-local sidecar. Adding an unrelated WebRTC implementation to the browser is not
-considered the same Iroh transport.
+В SQLite хранятся:
 
-## 5. Durable Object compatibility coordinator
+- участники, роли, active flag и epoch;
+- dedupe keys и `serverOrder`;
+- cursor каждой replica;
+- короткие одноразовые WebSocket tickets;
+- компактный JSON event log;
+- hash board token.
 
-The project is in `edge-coordinator/`.
+Карточек, колонок и остальных доменных таблиц там нет.
 
-### Stored SQLite rows
-
-- `members`: actor key, role, active flag and epoch;
-- `events`: dedupe keys, `serverOrder`, actor, epoch and envelope JSON;
-- `cursors`: last acknowledged order per actor/replica;
-- `sessions`: one-minute single-use WebSocket tickets;
-- `meta`: board-token hash and current membership epoch.
-
-Cards and other domain tables are absent by design.
-
-### Deploy
+Проверка и развёртывание:
 
 ```bash
 cd edge-coordinator
 npm ci
+npm run typecheck
+npm test
 npx wrangler secret put COORDINATOR_ADMIN_TOKEN
 npm run deploy
 ```
 
-### Provision a board
+`boardTag` должен быть непрозрачным HMAC-значением, а не UUID workspace.
+Обычные HTTP-запросы используют `X-Board-Token` и `X-Actor-Key`. Для WebSocket
+сначала запрашивается одноразовый ticket, поэтому board token не попадает в URL.
 
-`boardTag` should be an opaque HMAC-derived value, not a workspace UUID.
+Текущая граница: владелец board token теоретически может назвать чужой
+`actorKey`. До асимметричной подписи каждого события этот сервис нельзя считать
+заменой основной авторизации.
 
-```bash
-curl -X POST \
-  "https://<worker>/v1/boards/<boardTag>/admin/provision" \
-  -H "Authorization: Bearer <admin-token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "boardToken": "<random-board-token-at-least-32-characters>",
-    "ownerKey": "device:<public-key-or-stable-id>",
-    "epoch": 1
-  }'
-```
+## Откат
 
-Add or revoke a member through `/admin/members`. Normal HTTP requests use
-`X-Board-Token` and `X-Actor-Key`.
+- домашний профиль: остановить Compose stack;
+- Nostr: установить `TRANSPORTS__NOSTR__ENABLED=false`;
+- Iroh: не инициализировать adapter;
+- edge: направить клиентов обратно на Rust backend.
 
-For a browser WebSocket:
+Во всех случаях канонические доменные данные остаются в PostgreSQL.
 
-1. `POST /sessions` with the two authentication headers.
-2. Receive a single-use one-minute ticket.
-3. Connect to `/ws?ticket=<ticket>`.
-4. Send `{ "type": "push", "event": ... }`.
-
-The board token is therefore not placed in a WebSocket URL.
-
-### Compatibility warning
-
-The edge coordinator verifies membership and a shared board token, but it does
-not yet verify a per-event asymmetric device signature. A board-token holder
-could claim another active `actorKey`. For that reason this service is a
-compatibility experiment, not yet a replacement for the Rust backend's
-authorization. Closing this gap belongs to roadmap item 6: owner-signed
-membership epochs and device signatures.
-
-## Rollback
-
-- Home profile: stop the compose stack; ordinary development config is
-  unchanged.
-- Nostr: set `TRANSPORTS__NOSTR__ENABLED=false`. Existing outbox and relay
-  events remain for diagnosis.
-- Iroh: do not initialize the adapter; canonical sync is unaffected.
-- Durable Object: point clients back to the Rust backend. No domain data needs
-  to be migrated out because the object never owned domain projections.

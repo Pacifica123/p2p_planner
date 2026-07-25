@@ -1,8 +1,11 @@
-# Frontend unit tests
+# Unit-тесты frontend
 
-Примеры целей:
+Основные цели:
+
 - selectors;
-- formatters;
-- API-to-UI mappers;
-- appearance/theme helpers;
-- ordering/status derivation helpers.
+- форматирование;
+- преобразование API → UI;
+- helpers тем и внешнего вида;
+- вычисление порядка и статусов.
+
+Unit-тесты должны оставаться быстрыми и не требовать browser/backend.

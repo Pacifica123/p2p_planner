@@ -1,7 +1,12 @@
-# Backend replayable scenarios
+# Повторяемые сценарии backend
 
-Каталог резервируется под replayable sync/conflict сценарии:
-- duplicate apply;
-- stale cursor / needs_snapshot;
-- offline replay after reconnect;
-- revoke membership vs offline replay.
+Каталог предназначен для сценариев синхронизации и конфликтов, которые можно
+проиграть повторно и получить тот же результат:
+
+- повторное применение одного события без дубликата;
+- устаревший cursor и переход в `needs_snapshot`;
+- проигрывание накопленных offline-операций после восстановления сети;
+- конфликт между отзывом membership и старой offline-операцией.
+
+Fixture должен явно задавать начальное состояние, входные события, порядок
+доставки и ожидаемую итоговую проекцию.

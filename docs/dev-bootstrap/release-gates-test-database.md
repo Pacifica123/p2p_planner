@@ -1,12 +1,28 @@
-# Release-gates test database
+# Тестовая БД и managed runtime для release gates
 
-`devbootstrap release-gates` deliberately treats DB-writing checks as unsafe unless a write-safe database target is explicit. This keeps regular dev data from being modified by backend smoke, DB integration tests, UIX real-backend evidence, or the legacy real-backend browser path.
+Пишущие проверки запрещены, пока не указан безопасный target. Это защищает
+обычные dev-данные от smoke, DB integration tests и UIX real-backend flow.
 
+## Рекомендуемый запуск
 
+```bash
+python tools/devbootstrap.py release-gates \
+  --profile full-local-release \
+  --test-db-retention=keep-on-failure
+```
 
-## Release-gates profiles and consent policy
+Профиль:
 
-Profiles are the preferred high-level UX for the managed release-gates stack:
+- подготавливает dependencies;
+- создаёт отдельную PostgreSQL DB;
+- запускает принадлежащие devbootstrap backend/frontend;
+- выбирает свободные loopback-порты;
+- подставляет CORS origin;
+- выполняет UIX real-backend flow;
+- запускает clean-machine dry sandbox;
+- удаляет успешную test DB и сохраняет упавшую для диагностики.
+
+## Профили согласия
 
 ```bash
 python tools/devbootstrap.py release-gates --profile diagnostic --dry-run
@@ -16,55 +32,28 @@ python tools/devbootstrap.py release-gates --profile managed-runtime
 python tools/devbootstrap.py release-gates --profile full-local-release --dry-run
 ```
 
-`diagnostic` is the safe baseline. `prepared-local` allows dependency/cache preparation. `isolated-db` creates a managed PostgreSQL test DB. `managed-runtime` combines managed DB plus owned backend/frontend processes on dynamic ports. `full-local-release` combines dependency preparation, managed DB/runtime, the UIX real-backend product path and a dry clean-machine sandbox. The legacy no-mock Playwright real-backend path remains an explicit optional transition gate.
+Явные flags имеют приоритет над профилем. Каждый run записывает resolved
+profile, разрешённые side effects и overrides в
+`release-gates-consent.md/json`. Dry-run не создаёт БД, не ставит dependencies,
+не запускает процессы и не копирует sandbox.
 
-Profiles set defaults only. Explicit flags still win, including boolean opt-out forms such as:
-
-```bash
-python tools/devbootstrap.py release-gates --profile full-local-release --managed-test-db=false
-python tools/devbootstrap.py release-gates --profile prepared-local --install-playwright-browsers=false
-python tools/devbootstrap.py release-gates --profile diagnostic --include-clean-machine
-```
-
-Every run writes `release-gates-consent.md` and `release-gates-consent.json` into the run directory. The consent files show the resolved profile, explicit overrides, effective options, allowed side effects, denied side effects and planned gate families. Dry-run profile runs must not create databases, install dependencies, start processes, copy clean-machine sandboxes or perform browser downloads.
-
-## Diagnostic remediation bundle
-
-Every `release-gates` run writes a first-class remediation bundle under `remediation/` and includes it in `release-gates_*.zip`:
-
-```text
-remediation/
-  gate-ledger.md
-  gate-ledger.json
-  prerequisites.md
-  skipped-gates.md
-  next-actions.md
-  rerun-commands.md
-  environment-fingerprint.json
-```
-
-The ledger normalizes raw gate states into human/AI-friendly statuses: `passed`, `failed`, `infra_failed`, `skipped_prerequisite`, `skipped_optional`, `partial_pass` and `planned`. This makes the important distinction explicit: an `infra_failed` run can still prove that some gates passed while other release-critical areas remain unknown.
-
-`prerequisites.md` lists infrastructure blockers with targeted next actions. `skipped-gates.md` lists unverified areas. `rerun-commands.md` is generated from actual blocker classifications, for example `--prepare-deps --install-playwright-browsers` for frontend dependency/browser blockers or `--managed-test-db --managed-runtime` for write-safe DB/runtime blockers. `environment-fingerprint.json` captures OS, Python, Git, Cargo/Rust, Node/npm, Docker/Compose, `psql`/`pg_isready`, default port probes, frontend dependency marker details, lockfile/migrations hashes, `backend/build.rs` presence and the current `.dev-bootstrap/state.json` summary with secrets masked by omission.
-
-
-## Managed ephemeral database
-
-The recommended one-command DB path is:
+## Managed test DB
 
 ```bash
 python tools/devbootstrap.py release-gates --managed-test-db
 ```
 
-`--managed-test-db` automatically uses the same isolated runtime for write-capable gates. You can also pass `--managed-runtime` explicitly, especially when using an external `TEST_DATABASE_URL`:
+Создаётся БД вида:
 
-```bash
-python tools/devbootstrap.py release-gates --managed-test-db --managed-runtime
+```text
+p2pkanban_rg_<tool-version>_<timestamp>_<id>
 ```
 
-With `--managed-test-db`, `release-gates` derives host/port defaults from `DATABASE__URL` / `DATABASE_URL`, creates an isolated database named like `p2pkanban_rg_<toolVersion>_<timestamp>_<id>`, overrides `DATABASE__URL`, `DATABASE_URL` and `TEST_DATABASE_URL` for DB-writing gates, and routes write-capable smoke through an isolated managed runtime. By default the source DB user is used for both maintenance and runtime connections. When that user cannot create databases or its password is not the credential you want to test with, pass an explicit maintenance/admin role with `--test-db-admin-user` plus either `--test-db-admin-password-env` or `--test-db-admin-password`; create/drop then uses that role, and the managed runtime DB URL also uses the same known-good credentials instead of falling back to a stale source URL password. With explicit `--managed-runtime`, Python smoke and browser gates are run only after devbootstrap starts its own backend/frontend processes from the current workspace on dynamic ports; occupied selected ports are treated as unsafe and are not reused. Because the frontend port is dynamic, devbootstrap also injects that owned frontend origin into the managed backend process `HTTP__CORS_ALLOWED_ORIGINS`; this avoids false real-backend browser failures from CORS while keeping checked-in env files cross-platform and unchanged.
+Все DB-writing gates получают переопределённые `DATABASE__URL`, `DATABASE_URL`
+и `TEST_DATABASE_URL`.
 
-Example with a password kept outside shell history/process listings:
+Если обычный DB user не имеет `CREATEDB`, используйте отдельную admin role и
+пароль из environment, чтобы пароль не попал в shell history:
 
 ```bash
 export P2P_TEST_DB_ADMIN_PASSWORD='<password>'
@@ -74,7 +63,7 @@ python tools/devbootstrap.py release-gates \
   --test-db-admin-password-env P2P_TEST_DB_ADMIN_PASSWORD
 ```
 
-PowerShell equivalent:
+PowerShell:
 
 ```powershell
 $env:P2P_TEST_DB_ADMIN_PASSWORD = '<password>'
@@ -84,153 +73,91 @@ python tools/devbootstrap.py release-gates `
   --test-db-admin-password-env P2P_TEST_DB_ADMIN_PASSWORD
 ```
 
-> Note: when explicit admin credentials are supplied, the generated managed DB URL intentionally uses those same credentials. This keeps the one-command local release path practical on machines where `DATABASE__URL` points at an old dev user/password but a separate local PostgreSQL admin role is available for creating disposable databases.
-
-For installations where the maintenance database is not named `postgres`, use `--test-db-maintenance-db <name>`.
-
-Retention is controlled by one compact policy:
-
-```bash
-python tools/devbootstrap.py release-gates --managed-test-db --test-db-retention=drop-always
-python tools/devbootstrap.py release-gates --managed-test-db --test-db-retention=keep-on-failure
-python tools/devbootstrap.py release-gates --managed-test-db --test-db-retention=keep-always
-```
-
-`keep-on-failure` is the default: successful runs drop the database, failed runs keep it and print a masked cleanup command in `managed-test-db.json`, `release-gates.md` and the gate logs. The compatibility alias `--keep-test-db=never|on-failure|always` maps to the same policy.
-
-If the configured PostgreSQL port is closed and you intentionally want devbootstrap to start the project compose service first, add:
-
-```bash
-python tools/devbootstrap.py release-gates --managed-test-db --start-db-if-needed
-```
-
-For failed runs where the DB is retained, `--dump-test-db-on-failure` attempts a `pg_dump --format=custom` into the run directory when `pg_dump` is available. Reports and bundles store masked database URLs only.
-
-## Managed isolated runtime
-
-`--managed-runtime` makes release-gates stop trusting whatever happens to be listening on the legacy `18080` / `5173` ports. It chooses free loopback ports, starts backend with `APP__HOST`, `APP__PORT` and the selected test database env, starts Vite with `VITE_API_BASE_URL` pointing at that managed backend, then passes the same URLs into Python smoke and Playwright.
-
-Runtime ownership is explicit: devbootstrap stores only its own PID/command/cwd/log paths in the release-gates bundle and stops only those processes during teardown. It never kills a process merely because it occupies a port.
-
-Managed runtime bundle files:
+Политики хранения:
 
 ```text
-logs/runtime-backend.log or logs/*_managed_backend_process.log
-logs/runtime-frontend.log or logs/*_managed_frontend_process.log
+drop-always
+keep-on-failure
+keep-always
+```
+
+По умолчанию используется `keep-on-failure`. При наличии `pg_dump` flag
+`--dump-test-db-on-failure` сохраняет dump упавшего запуска.
+
+## Managed runtime
+
+`--managed-runtime` не доверяет случайным процессам на `18080` и `5173`. Он:
+
+1. выбирает свободные порты;
+2. запускает backend с test DB;
+3. запускает frontend с правильным API URL;
+4. ждёт health;
+5. передаёт те же URLs smoke/UIX;
+6. останавливает только свои PID.
+
+Состояние и логи:
+
+```text
 logs/runtime-state.json
 logs/runtime-env-diff.md
 logs/managed-urls.env
+logs/*managed_backend*.log
+logs/*managed_frontend*.log
 ```
 
-`runtime-state.json` records selected ports, managed URLs, masked database target, PIDs, process logs and final runtime status. `runtime-env-diff.md` lists only the env overrides added by devbootstrap and masks DB/secrets.
+В env diff database URL и секреты маскируются.
 
-`--managed-runtime` needs a safe DB target for the managed backend. The preferred source is `--managed-test-db`; alternatively set `TEST_DATABASE_URL`. `--allow-dev-db-write` can be used only when writing to the configured dev DB is intentional.
+## Ручная test DB
 
-## Recommended local database
-
-Use a separate PostgreSQL database named `p2p_planner_test` for release checks.
-
-For the bundled dev compose service:
-
-```bash
-docker compose -f docker-compose.dev.yml up -d postgres
-
-docker exec -i p2p-planner-postgres-dev \
-  psql -U postgres -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'p2p_planner_test'" \
-  | grep -q 1 \
-  || docker exec -i p2p-planner-postgres-dev createdb -U postgres p2p_planner_test
-```
-
-Then export the explicit test URL before running backend DB gates:
+Если managed режим не подходит, создайте отдельную БД, например
+`p2p_planner_test`, и задайте:
 
 ```bash
 export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/p2p_planner_test
 ```
 
-## Live backend smoke
+Backend для live smoke должен быть запущен против той же БД.
 
-The Python smoke, UIX real-backend core flow and legacy real-backend browser path talk to an already running backend. For a fully safe release signal, that backend must also be started against the test database.
-
-A local env setup can look like this:
-
-```env
-DATABASE__URL=postgres://postgres:postgres@127.0.0.1:5432/p2p_planner_test
-TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/p2p_planner_test
-```
-
-After changing the env, restart the backend before running release gates.
-
-## Command matrix
+Два последовательных smoke намеренны:
 
 ```bash
 cd backend
 cargo test
-TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/p2p_planner_test cargo test -- --include-ignored
-BASE_URL=http://127.0.0.1:18080/api/v1 TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/p2p_planner_test python tests/smoke_core_api.py
-BASE_URL=http://127.0.0.1:18080/api/v1 TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/p2p_planner_test python tests/smoke_core_api.py
+TEST_DATABASE_URL=... cargo test -- --include-ignored
+BASE_URL=http://127.0.0.1:18080/api/v1 TEST_DATABASE_URL=... python tests/smoke_core_api.py
+BASE_URL=http://127.0.0.1:18080/api/v1 TEST_DATABASE_URL=... python tests/smoke_core_api.py
 ```
 
-The second smoke run is intentional: release gates use it to catch non-idempotent smoke behavior.
+Второй прогон ловит неидемпотентные предположения.
 
-A fuller UIX-first release review can then run:
+## Clean-machine sandbox
 
-```bash
-python tools/devbootstrap.py release-gates \
-  --profile full-local-release \
-  --test-db-retention=keep-on-failure
-```
+Sandbox копирует проект во временный каталог без `.git`, `.dev-bootstrap`,
+env, `node_modules`, `target`, `dist`, логов и release payload.
 
-This profile prepares dependencies, creates a managed test DB, starts owned backend/frontend runtime, runs the UIX real-backend core flow and includes a dry clean-machine sandbox. To collect the legacy no-mock Playwright signal as supplemental transition evidence, add `--include-real-backend-browser` and, only when needed, `--install-playwright-browsers`.
+Профили:
 
-## Clean-machine sandbox gate
-
-`--include-clean-machine` now runs a structured sandbox gate instead of a one-off quickstart log. Devbootstrap copies the current project to a temporary directory like `/tmp/devbootstrap-clean-machine-<run-id>-*/kanban`, excluding generated or local state: `.git`, `.dev-bootstrap`, `.venv`, `node_modules`, `target`, `dist`, `build`, `coverage`, `__pycache__`, `.pytest_cache`, local env files, bytecode and large release payloads. The copy keeps committed example files such as `backend/.env.example` and `frontend/.env.example`, then checks required startup files before running commands inside the sandbox.
-
-Profiles:
-
-| Profile | What it does | Cost |
-|---|---|---|
-| `dry` / `clean-machine-dry` | Required files, `self-check`, `diagnose`, `plan`, safe `prepare-env`, and `up --dry-run` with heavy steps skipped. | Low |
-| `deps` / `clean-machine-deps` | Everything from `dry`, plus `prepare-frontend --install-mode=stale` and backend `cargo test --no-run` from the sandbox. | Medium |
-| `runtime` / `clean-machine-runtime` | Everything from `deps`, plus a nested managed `release-gates --managed-test-db --managed-runtime --prepare-deps` run inside the sandbox. | High |
-
-Retention defaults to `keep-on-failure` so a failed sandbox can be inspected and a successful sandbox is deleted. Use `--clean-machine-retention=delete-always` for CI-like cleanup or `--clean-machine-retention=keep-always` when you intentionally want to inspect the copied project. When the sandbox is kept, the report prints the cleanup command.
-
-The main release-gates bundle includes:
-
-```text
-logs/clean-machine/report.md
-logs/clean-machine/clean-machine.json
-logs/clean-machine/file-list.txt
-logs/clean-machine/exclusions.txt
-logs/clean-machine/commands.log
-```
-
-Example cheap release-review run:
-
-```bash
-python tools/devbootstrap.py release-gates --include-clean-machine --clean-machine-profile=dry
-```
-
-`--prepare-deps` is the managed dependency preparation umbrella. Bare `--prepare-deps` means `stale` / `missing-or-stale`: release-gates first runs `prepare-frontend --install-mode=stale --no-write-report`, then a backend `cargo test --no-run` warmup, and only after that plans frontend build/test/browser gates using the refreshed marker. The compatibility flag `--prepare-frontend` maps to the same stale mode.
-
-Available dependency modes:
-
-| Mode | Behavior |
+| Профиль | Действия |
 |---|---|
-| `never` | Do not prepare dependencies; only diagnose and skip/fail gates with precise prerequisites. |
-| `missing` | Run `npm ci` only when `frontend/node_modules` is absent. |
-| `stale` / `missing-or-stale` | Run `npm ci` when `node_modules` is missing or `.dev-bootstrap/frontend-install.json` does not match package hashes/platform/node/npm. |
-| `always` | Run `npm ci` every time. |
+| `dry` | Required files, self-check, diagnose, plan, prepare-env, up dry-run |
+| `deps` | `dry` + frontend prepare + `cargo test --no-run` |
+| `runtime` | `deps` + вложенный managed release-gates |
 
-The frontend install marker now records package hashes, Node/npm versions, OS/platform fingerprint, install mode and install command. `prepare-frontend` refuses to fall back to `npm install` when `frontend/package-lock.json` is missing unless `--allow-npm-install-without-lock` is passed explicitly, and it treats package/lockfile changes caused by install as a separate dependency failure instead of hiding them inside frontend test failures.
+По умолчанию успешный sandbox удаляется, а упавший сохраняется. Bundle содержит
+report, JSON, file list, exclusions и command log.
 
-Playwright browser binaries remain an explicit opt-in because the download can be large:
+## Dependencies
 
-```bash
-python tools/devbootstrap.py release-gates --prepare-deps --install-playwright-browsers
-```
+`--prepare-deps` поддерживает режимы:
 
-When browser cache is missing and this flag is enabled, release-gates runs `npx playwright install chromium` as a separate controlled gate before `npm run test:browser`. Without the flag, browser smoke is skipped as `browser_smoke_prerequisite` with a precise next action.
+- `never`;
+- `missing`;
+- `stale` / `missing-or-stale`;
+- `always`.
 
-Use `--allow-dev-db-write` only when the configured dev database is disposable and writing into it is intentional.
+Lockfile не изменяется неявно. Playwright browsers скачиваются только с
+`--install-playwright-browsers`; без этого legacy browser gate может быть
+пропущен как prerequisite.
+
+`--allow-dev-db-write` разрешён только для заведомо одноразовой dev-БД.
+
