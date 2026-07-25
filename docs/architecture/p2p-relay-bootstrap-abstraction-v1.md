@@ -6,6 +6,15 @@
 
 > Этот документ продолжает `ADR-001`, `ADR-003`, `docs/sync/protocol.md`, `docs/architecture/local-first-data-layer-v1.md` и `docs/architecture/sync-model-implementation-plan-v1.md`. Здесь фиксируется не конечный wire protocol и не deployment-специфика, а **граница между sync engine и transport layer**: discovery, bootstrap, relay, topology assumptions и phased rollout.
 
+> Обновление реализации, 2026-07-25: транспортная граница получила первые
+> серверные адаптеры. `backend/crates/sync-core` теперь содержит независимые от
+> Axum/sqlx envelope, validation, merge order и HMAC signatures;
+> `nostr-transport` реализует зашифрованное shadow-зеркало, а
+> `iroh-transport` — прямой QUIC-канал. Основным рабочим путём по-прежнему
+> остаётся backend coordinator. Актуальный rollout и эксплуатационные
+> ограничения описаны в `ADR-006` и
+> `docs/deployment/free-hosting-transports-v1.md`.
+
 ---
 
 ## 1. Что считаем целью этапа

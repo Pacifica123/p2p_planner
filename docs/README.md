@@ -27,6 +27,7 @@
    - `architecture/sync-model-implementation-plan-v1.md`
    - `architecture/conflict-resolution-v1.md`
    - `architecture/testing-strategy-v1.md`
+   - `adr/ADR-006-homeless-board-transport-stack.md`
 4. API contract:
    - `api/openapi.yaml`
 5. Local dev automation:
@@ -46,6 +47,8 @@
    - `development/custom-uiux-evidence-runner-development-plan-v1.md`
    - `development/custom-uiux-evidence-runner-implementation-v1.md`
    - `development/documentation-weight-budget-v1.md`
+7. Free hosting and experimental transports:
+   - `deployment/free-hosting-transports-v1.md`
 
 ## Current decisions
 
@@ -54,7 +57,7 @@
 | Product | MVP is web-first Kanban with workspaces, boards, columns, cards, labels/checklists/comments, appearance, activity/audit and backup/export preview surface. |
 | Current v1 status | Read `product/v1-execution-roadmap.md` first; it is the active truth surface for done/partial/deferred/out-of-scope status. |
 | Local-first | Local-first runtime and backend-coordinated sync are baseline-implemented for core web flow; `20260604_050815_release-gates` proved the beta.2 real-backend product path, while stable release still needs repeatability evidence. |
-| P2P | Future-ready, not mandatory for v1 release. |
+| P2P | Transport foundation is now partially implemented: independent sync-core, Nostr shadow outbox/recovery and native Iroh adapter. Canonical collaboration remains Rust-coordinator-backed; coordinator-free mode is not implemented. |
 | Development planning | Current mode is verified product acceleration: one user/release/truth fact per patch, cheapest sufficient evidence, no ownerless debt. |
 | Devctl | Patch conveyor applies small reproducible devctl patches, not full project archives. |
 | Devbootstrap | Project-owned diagnostic/release-gates tool; generated `.dev-bootstrap` artifacts are not source. |

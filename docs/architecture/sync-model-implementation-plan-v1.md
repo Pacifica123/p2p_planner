@@ -6,6 +6,15 @@
 
 > Этот документ опирается на `ADR-001`, `ADR-003`, `docs/sync/protocol.md`, `docs/sync/glossary.md`, `docs/architecture/local-first-data-layer-v1.md`, `docs/architecture/conflict-resolution-v1.md` и `docs/architecture/p2p-relay-bootstrap-abstraction-v1.md`. Здесь мы фиксируем **как именно реализовывать sync pipeline в MVP**, не превращая текущий этап ни в full event sourcing, ни в окончательно захарденный p2p-протокол.
 
+> Обновление реализации, 2026-07-25: backend-coordinated sync остаётся
+> каноническим, но принятые `change_events` теперь могут атомарно ставиться в
+> transport outbox и асинхронно зеркалироваться в Nostr. Общие envelope,
+> validation, merge order и signatures вынесены в `backend/crates/sync-core`.
+> Экспериментальный Durable Object воспроизводит только coordinator-контракт
+> (`dedupe`, membership, cursor, `serverOrder`, WebSocket, compact log), не
+> заменяя пока основной backend. См. `ADR-006` и
+> `docs/deployment/free-hosting-transports-v1.md`.
+
 ---
 
 ## 1. Что считаем целью этапа

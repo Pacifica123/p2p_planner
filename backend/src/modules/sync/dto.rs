@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use p2p_kanban_sync_core::{ClientChangeEvent, ServerChangeEvent};
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncStatusQuery {
@@ -85,45 +87,6 @@ pub struct SyncScopeResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClientChangeEvent {
-    pub event_id: String,
-    pub replica_id: String,
-    pub replica_seq: i64,
-    pub entity_type: String,
-    pub entity_id: String,
-    pub operation: String,
-    pub field_mask: Option<Vec<String>>,
-    pub logical_clock: i64,
-    pub base_server_order: Option<i64>,
-    pub occurred_at: Option<String>,
-    #[serde(default)]
-    pub payload: Value,
-    #[serde(default)]
-    pub metadata: Value,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ServerChangeEvent {
-    pub event_id: String,
-    pub replica_id: String,
-    pub replica_seq: i64,
-    pub entity_type: String,
-    pub entity_id: String,
-    pub operation: String,
-    pub field_mask: Vec<String>,
-    pub logical_clock: i64,
-    pub base_server_order: Option<i64>,
-    pub payload: Value,
-    pub metadata: Value,
-    pub server_order: i64,
-    pub accepted_at: String,
-    pub actor_user_id: Option<String>,
-    pub actor_device_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PushChangesRequest {
     pub replica_id: String,
     pub workspace_id: Option<String>,
@@ -160,4 +123,29 @@ pub struct PullChangesResponse {
     pub events: Vec<ServerChangeEvent>,
     pub next_cursor: SyncCursorResponse,
     pub has_more: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransportQueueCount {
+    pub transport: String,
+    pub status: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransportAdapterStatus {
+    pub enabled: bool,
+    pub mode: String,
+    pub configured_endpoints: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransportStatusResponse {
+    pub coordinator: TransportAdapterStatus,
+    pub nostr: TransportAdapterStatus,
+    pub iroh: TransportAdapterStatus,
+    pub queue: Vec<TransportQueueCount>,
 }

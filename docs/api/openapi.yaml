@@ -1889,6 +1889,64 @@ components:
           oneOf:
           - $ref: '#/components/schemas/Replica'
           - type: 'null'
+    TransportAdapterStatus:
+      type: object
+      required:
+      - enabled
+      - mode
+      - configuredEndpoints
+      properties:
+        enabled:
+          type: boolean
+        mode:
+          type: string
+          enum:
+          - canonical
+          - shadow_store_and_forward
+          - direct_fast_path
+        configuredEndpoints:
+          type: integer
+          minimum: 0
+    TransportQueueCount:
+      type: object
+      required:
+      - transport
+      - status
+      - count
+      properties:
+        transport:
+          type: string
+          enum:
+          - nostr
+        status:
+          type: string
+          enum:
+          - pending
+          - processing
+          - retry
+          - delivered
+          - dead_letter
+        count:
+          type: integer
+          minimum: 0
+    TransportStatusResponse:
+      type: object
+      required:
+      - coordinator
+      - nostr
+      - iroh
+      - queue
+      properties:
+        coordinator:
+          $ref: '#/components/schemas/TransportAdapterStatus'
+        nostr:
+          $ref: '#/components/schemas/TransportAdapterStatus'
+        iroh:
+          $ref: '#/components/schemas/TransportAdapterStatus'
+        queue:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransportQueueCount'
     WallpaperConfig:
       type: object
       required:
@@ -4881,6 +4939,27 @@ paths:
           $ref: '#/components/responses/Forbidden'
       x-v1Status: real_v1
       x-frontendUsed: true
+  /sync/transports/status:
+    get:
+      tags:
+      - sync
+      summary: Get configured sync transports and shadow outbox counts
+      description: Transport diagnostics only. This endpoint does not report domain conflict state.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Transport configuration and queue counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransportStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      x-v1Status: experimental
+      x-frontendUsed: false
   /sync/replicas:
     post:
       tags:

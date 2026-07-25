@@ -1,5 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 
@@ -9,6 +10,8 @@ pub struct Settings {
     pub database: DatabaseSettings,
     pub http: HttpSettings,
     pub auth: AuthSettings,
+    #[serde(default)]
+    pub transports: TransportSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -62,6 +65,75 @@ pub struct AuthSettings {
     pub sensitive_rate_limit_max_attempts: u32,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TransportSettings {
+    #[serde(default = "default_transport_poll_interval_ms")]
+    pub worker_poll_interval_ms: u64,
+    #[serde(default = "default_transport_batch_size")]
+    pub batch_size: i64,
+    #[serde(default = "default_transport_max_attempts")]
+    pub max_attempts: i32,
+    #[serde(default)]
+    pub nostr: NostrTransportSettings,
+    #[serde(default)]
+    pub iroh: IrohTransportSettings,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NostrTransportSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub relays: Vec<String>,
+    #[serde(default)]
+    pub secret_key: Option<String>,
+    #[serde(default)]
+    pub master_key_base64: Option<String>,
+    #[serde(default = "default_nostr_event_kind")]
+    pub event_kind: u16,
+    #[serde(default = "default_nostr_fetch_timeout_secs")]
+    pub fetch_timeout_secs: u64,
+    #[serde(default = "default_nostr_min_relay_acks")]
+    pub min_relay_acks: usize,
+    #[serde(default)]
+    pub backfill_on_start: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct IrohTransportSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub peers: Vec<String>,
+}
+
+impl Default for TransportSettings {
+    fn default() -> Self {
+        Self {
+            worker_poll_interval_ms: default_transport_poll_interval_ms(),
+            batch_size: default_transport_batch_size(),
+            max_attempts: default_transport_max_attempts(),
+            nostr: NostrTransportSettings::default(),
+            iroh: IrohTransportSettings::default(),
+        }
+    }
+}
+
+impl Default for NostrTransportSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            relays: Vec::new(),
+            secret_key: None,
+            master_key_base64: None,
+            event_kind: default_nostr_event_kind(),
+            fetch_timeout_secs: default_nostr_fetch_timeout_secs(),
+            min_relay_acks: default_nostr_min_relay_acks(),
+            backfill_on_start: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogFormat {
@@ -103,6 +175,30 @@ fn default_sensitive_rate_limit_window_secs() -> u64 {
 
 fn default_sensitive_rate_limit_max_attempts() -> u32 {
     60
+}
+
+fn default_transport_poll_interval_ms() -> u64 {
+    1_000
+}
+
+fn default_transport_batch_size() -> i64 {
+    50
+}
+
+fn default_transport_max_attempts() -> i32 {
+    12
+}
+
+fn default_nostr_event_kind() -> u16 {
+    20_078
+}
+
+fn default_nostr_fetch_timeout_secs() -> u64 {
+    10
+}
+
+fn default_nostr_min_relay_acks() -> usize {
+    3
 }
 
 impl CookieSameSite {
@@ -156,6 +252,8 @@ impl Settings {
                     .list_separator(",")
                     .with_list_parse_key("http.cors_allowed_origins")
                     .with_list_parse_key("auth.previous_jwt_secrets")
+                    .with_list_parse_key("transports.nostr.relays")
+                    .with_list_parse_key("transports.iroh.peers")
                     .try_parsing(true),
             )
             .build()?
@@ -212,6 +310,69 @@ impl Settings {
             }
         }
 
+        if self.transports.worker_poll_interval_ms < 100 {
+            return Err(ConfigError::Message(
+                "TRANSPORTS__WORKER_POLL_INTERVAL_MS must be at least 100".to_string(),
+            ));
+        }
+        if !(1..=500).contains(&self.transports.batch_size) {
+            return Err(ConfigError::Message(
+                "TRANSPORTS__BATCH_SIZE must be between 1 and 500".to_string(),
+            ));
+        }
+        if !(1..=100).contains(&self.transports.max_attempts) {
+            return Err(ConfigError::Message(
+                "TRANSPORTS__MAX_ATTEMPTS must be between 1 and 100".to_string(),
+            ));
+        }
+
+        if self.transports.nostr.enabled {
+            if !cfg!(feature = "nostr-shadow") {
+                return Err(ConfigError::Message(
+                    "Nostr shadow transport is enabled in config but backend was built without the nostr-shadow feature"
+                        .to_string(),
+                ));
+            }
+            if self.transports.nostr.relays.len() < 3 {
+                return Err(ConfigError::Message(
+                    "TRANSPORTS__NOSTR__RELAYS must contain at least three relays in shadow mode"
+                        .to_string(),
+                ));
+            }
+            if self.transports.nostr.min_relay_acks < 3
+                || self.transports.nostr.min_relay_acks > self.transports.nostr.relays.len()
+            {
+                return Err(ConfigError::Message(
+                    "TRANSPORTS__NOSTR__MIN_RELAY_ACKS must be at least 3 and not exceed the configured relay count"
+                        .to_string(),
+                ));
+            }
+            if self
+                .transports
+                .nostr
+                .relays
+                .iter()
+                .any(|relay| !(relay.starts_with("wss://") || relay.starts_with("ws://")))
+            {
+                return Err(ConfigError::Message(
+                    "Every TRANSPORTS__NOSTR__RELAYS entry must use ws:// or wss://".to_string(),
+                ));
+            }
+            let secret_key = self
+                .transports
+                .nostr
+                .secret_key
+                .as_deref()
+                .unwrap_or_default()
+                .trim();
+            if secret_key.is_empty() || looks_like_placeholder_secret(secret_key) {
+                return Err(ConfigError::Message(
+                    "TRANSPORTS__NOSTR__SECRET_KEY must contain a real Nostr secret key".to_string(),
+                ));
+            }
+            self.transports.nostr.master_key()?;
+        }
+
         Ok(())
     }
 
@@ -221,5 +382,33 @@ impl Settings {
 
     pub fn socket_addr(&self) -> SocketAddr {
         SocketAddr::new(self.app.host, self.app.port)
+    }
+}
+
+impl NostrTransportSettings {
+    pub fn master_key(&self) -> Result<Vec<u8>, ConfigError> {
+        let encoded = self
+            .master_key_base64
+            .as_deref()
+            .unwrap_or_default()
+            .trim();
+        if encoded.is_empty() || looks_like_placeholder_secret(encoded) {
+            return Err(ConfigError::Message(
+                "TRANSPORTS__NOSTR__MASTER_KEY_BASE64 must contain a real 32-byte key"
+                    .to_string(),
+            ));
+        }
+        let decoded = STANDARD.decode(encoded).map_err(|_| {
+            ConfigError::Message(
+                "TRANSPORTS__NOSTR__MASTER_KEY_BASE64 must be valid standard base64".to_string(),
+            )
+        })?;
+        if decoded.len() != 32 {
+            return Err(ConfigError::Message(
+                "TRANSPORTS__NOSTR__MASTER_KEY_BASE64 must decode to exactly 32 bytes"
+                    .to_string(),
+            ));
+        }
+        Ok(decoded)
     }
 }

@@ -1,0 +1,334 @@
+use std::time::Duration;
+
+use anyhow::{anyhow, bail, Context, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    XChaCha20Poly1305, XNonce,
+};
+use hmac::{Hmac, Mac};
+use nostr_sdk::prelude::*;
+use p2p_kanban_sync_core::{
+    sign_envelope, validate_envelope, verify_envelope, SignedSyncEnvelope, SyncEnvelope,
+};
+use rand::{rngs::OsRng, RngCore};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
+
+const CIPHERTEXT_VERSION: u8 = 1;
+const WORKSPACE_KEY_DOMAIN: &[u8] = b"p2p-kanban:workspace-key:v1";
+const BOARD_TAG_DOMAIN: &[u8] = b"p2p-kanban:board-tag:v1";
+
+#[derive(Debug, Clone)]
+pub struct NostrTransportConfig {
+    pub relays: Vec<String>,
+    pub secret_key: String,
+    pub master_key: Vec<u8>,
+    pub event_kind: u16,
+    pub fetch_timeout: Duration,
+    pub min_relay_acks: usize,
+}
+
+impl NostrTransportConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.relays.is_empty() {
+            bail!("at least one Nostr relay is required");
+        }
+        if self.relays.iter().any(|relay| {
+            !(relay.starts_with("wss://") || relay.starts_with("ws://"))
+        }) {
+            bail!("Nostr relay URLs must use ws:// or wss://");
+        }
+        if self.secret_key.trim().is_empty() {
+            bail!("Nostr secret key is required");
+        }
+        if self.master_key.len() != 32 {
+            bail!("Nostr shadow master key must contain exactly 32 bytes");
+        }
+        if self.min_relay_acks == 0 || self.min_relay_acks > self.relays.len() {
+            bail!("minimum relay acknowledgements must be between 1 and the relay count");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CiphertextRecord {
+    version: u8,
+    board_tag: String,
+    nonce: String,
+    ciphertext: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NostrDeliveryReceipt {
+    pub nostr_event_id: String,
+    pub configured_relays: usize,
+    pub accepted_relays: Vec<String>,
+    pub failed_relays: Vec<String>,
+    pub board_tag: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NostrCodec {
+    master_key: Vec<u8>,
+}
+
+impl NostrCodec {
+    pub fn new(master_key: Vec<u8>) -> Result<Self> {
+        if master_key.len() != 32 {
+            bail!("Nostr shadow master key must contain exactly 32 bytes");
+        }
+        Ok(Self { master_key })
+    }
+
+    pub fn board_tag(&self, workspace_id: &str) -> Result<String> {
+        derive_tag(&self.master_key, BOARD_TAG_DOMAIN, workspace_id)
+    }
+
+    fn workspace_key(&self, workspace_id: &str) -> Result<[u8; 32]> {
+        derive_key(&self.master_key, WORKSPACE_KEY_DOMAIN, workspace_id)
+    }
+
+    pub fn seal(&self, envelope: SyncEnvelope) -> Result<String> {
+        validate_envelope(&envelope).context("refusing to mirror invalid sync envelope")?;
+        let workspace_id = envelope.workspace_id.clone();
+        let workspace_key = self.workspace_key(&workspace_id)?;
+        let signed = sign_envelope(envelope, "nostr-shadow-workspace-v1", &workspace_key)
+            .context("could not authenticate sync envelope")?;
+        let plaintext = serde_json::to_vec(&signed).context("could not serialize signed sync envelope")?;
+
+        let cipher = XChaCha20Poly1305::new_from_slice(&workspace_key)
+            .map_err(|_| anyhow!("could not initialize XChaCha20-Poly1305"))?;
+        let mut nonce_bytes = [0u8; 24];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(XNonce::from_slice(&nonce_bytes), plaintext.as_ref())
+            .map_err(|_| anyhow!("could not encrypt sync envelope"))?;
+
+        serde_json::to_string(&CiphertextRecord {
+            version: CIPHERTEXT_VERSION,
+            board_tag: self.board_tag(&workspace_id)?,
+            nonce: URL_SAFE_NO_PAD.encode(nonce_bytes),
+            ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
+        })
+        .context("could not serialize Nostr ciphertext record")
+    }
+
+    pub fn open_for_workspace(
+        &self,
+        workspace_id: &str,
+        content: &str,
+    ) -> Result<SignedSyncEnvelope> {
+        let record: CiphertextRecord =
+            serde_json::from_str(content).context("Nostr event content is not a ciphertext record")?;
+        if record.version != CIPHERTEXT_VERSION {
+            bail!("unsupported Nostr ciphertext version {}", record.version);
+        }
+        if record.board_tag != self.board_tag(workspace_id)? {
+            bail!("Nostr event belongs to another workspace");
+        }
+
+        let nonce = URL_SAFE_NO_PAD
+            .decode(record.nonce)
+            .context("Nostr ciphertext nonce is not valid base64url")?;
+        if nonce.len() != 24 {
+            bail!("Nostr ciphertext nonce must contain 24 bytes");
+        }
+        let ciphertext = URL_SAFE_NO_PAD
+            .decode(record.ciphertext)
+            .context("Nostr ciphertext is not valid base64url")?;
+        let workspace_key = self.workspace_key(workspace_id)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&workspace_key)
+            .map_err(|_| anyhow!("could not initialize XChaCha20-Poly1305"))?;
+        let plaintext = cipher
+            .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
+            .map_err(|_| anyhow!("Nostr ciphertext authentication failed"))?;
+        let signed: SignedSyncEnvelope =
+            serde_json::from_slice(&plaintext).context("decrypted Nostr payload is not a signed envelope")?;
+        verify_envelope(&signed, &workspace_key).context("decrypted sync envelope signature is invalid")?;
+        validate_envelope(&signed.envelope).context("decrypted sync envelope is invalid")?;
+        if signed.envelope.workspace_id != workspace_id {
+            bail!("decrypted sync envelope belongs to another workspace");
+        }
+        Ok(signed)
+    }
+}
+
+#[derive(Clone)]
+pub struct NostrTransport {
+    client: Client,
+    keys: Keys,
+    codec: NostrCodec,
+    config: NostrTransportConfig,
+}
+
+impl NostrTransport {
+    pub async fn connect(config: NostrTransportConfig) -> Result<Self> {
+        config.validate()?;
+        let keys = Keys::parse(config.secret_key.trim()).context("invalid Nostr secret key")?;
+        let client = Client::new(keys.clone());
+        for relay in &config.relays {
+            client
+                .add_relay(relay)
+                .await
+                .with_context(|| format!("could not add Nostr relay {relay}"))?;
+        }
+        client.connect().await;
+        client.wait_for_connection(Duration::from_secs(5)).await;
+
+        Ok(Self {
+            client,
+            keys,
+            codec: NostrCodec::new(config.master_key.clone())?,
+            config,
+        })
+    }
+
+    pub async fn publish(&self, envelope: SyncEnvelope) -> Result<NostrDeliveryReceipt> {
+        let board_tag = self.codec.board_tag(&envelope.workspace_id)?;
+        let content = self.codec.seal(envelope)?;
+        let builder = EventBuilder::new(Kind::Custom(self.config.event_kind), content);
+        let output = self
+            .client
+            .send_event_builder(builder)
+            .await
+            .context("Nostr relays did not accept the shadow event")?;
+        if output.success.len() < self.config.min_relay_acks {
+            bail!(
+                "Nostr shadow event reached only {}/{} required relays; failures: {:?}",
+                output.success.len(),
+                self.config.min_relay_acks,
+                output.failed
+            );
+        }
+
+        Ok(NostrDeliveryReceipt {
+            nostr_event_id: output.val.to_string(),
+            configured_relays: self.config.relays.len(),
+            accepted_relays: output.success.iter().map(ToString::to_string).collect(),
+            failed_relays: output.failed.keys().map(ToString::to_string).collect(),
+            board_tag,
+        })
+    }
+
+    pub async fn recover_workspace(&self, workspace_id: &str) -> Result<Vec<SignedSyncEnvelope>> {
+        let filter = Filter::new()
+            .author(self.keys.public_key())
+            .kind(Kind::Custom(self.config.event_kind));
+        let events = self
+            .client
+            .fetch_events(filter, self.config.fetch_timeout)
+            .await
+            .context("could not fetch Nostr shadow events")?;
+
+        let expected_tag = self.codec.board_tag(workspace_id)?;
+        let mut recovered = Vec::new();
+        for event in events.iter() {
+            let record = match serde_json::from_str::<CiphertextRecord>(&event.content) {
+                Ok(record) if record.board_tag == expected_tag => record,
+                _ => continue,
+            };
+            let content = serde_json::to_string(&record)?;
+            if let Ok(envelope) = self.codec.open_for_workspace(workspace_id, &content) {
+                recovered.push(envelope);
+            }
+        }
+
+        recovered.sort_by(|left, right| {
+            left.envelope
+                .event
+                .server_order
+                .cmp(&right.envelope.event.server_order)
+                .then_with(|| {
+                    left.envelope
+                        .event
+                        .replica_id
+                        .cmp(&right.envelope.event.replica_id)
+                })
+                .then_with(|| left.envelope.envelope_id.cmp(&right.envelope.envelope_id))
+        });
+        recovered.dedup_by(|left, right| left.envelope.envelope_id == right.envelope.envelope_id);
+        Ok(recovered)
+    }
+
+    pub async fn shutdown(&self) {
+        self.client.shutdown().await;
+    }
+}
+
+fn derive_key(master_key: &[u8], domain: &[u8], workspace_id: &str) -> Result<[u8; 32]> {
+    let mut mac =
+        <HmacSha256 as Mac>::new_from_slice(master_key).map_err(|_| anyhow!("invalid master key"))?;
+    mac.update(domain);
+    mac.update(&[0]);
+    mac.update(workspace_id.as_bytes());
+    let bytes = mac.finalize().into_bytes();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    Ok(key)
+}
+
+fn derive_tag(master_key: &[u8], domain: &[u8], workspace_id: &str) -> Result<String> {
+    Ok(URL_SAFE_NO_PAD.encode(derive_key(master_key, domain, workspace_id)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use p2p_kanban_sync_core::{ServerChangeEvent, SyncEnvelope};
+    use serde_json::json;
+
+    use super::*;
+
+    fn envelope() -> SyncEnvelope {
+        let mut envelope = SyncEnvelope::new(
+            "018f22e2-355a-7ba2-8ef0-d7bc788ceec8",
+            ServerChangeEvent {
+                event_id: "018f22e2-1d58-7f08-9a36-1f96bd9854b1".to_string(),
+                replica_id: "018f22e2-29cc-7ad6-aa57-b61d74a14e52".to_string(),
+                replica_seq: 1,
+                entity_type: "card".to_string(),
+                entity_id: "018f22e2-355a-7ba2-8ef0-d7bc788ceec8".to_string(),
+                operation: "update".to_string(),
+                field_mask: vec!["title".to_string()],
+                logical_clock: 7,
+                base_server_order: Some(3),
+                payload: json!({"title": "relay copy"}),
+                metadata: json!({}),
+                server_order: 4,
+                accepted_at: "2026-07-25T20:00:00Z".to_string(),
+                actor_user_id: None,
+                actor_device_id: None,
+            },
+        );
+        envelope.emitted_at = "2026-07-25T20:00:00Z".to_string();
+        envelope
+    }
+
+    #[test]
+    fn encrypted_record_round_trips_and_hides_workspace_id() {
+        let codec = NostrCodec::new(vec![7; 32]).unwrap();
+        let original = envelope();
+        let content = codec.seal(original.clone()).unwrap();
+        assert!(!content.contains(&original.workspace_id));
+        assert!(!content.contains("relay copy"));
+
+        let opened = codec
+            .open_for_workspace(&original.workspace_id, &content)
+            .unwrap();
+        assert_eq!(opened.envelope, original);
+    }
+
+    #[test]
+    fn wrong_workspace_cannot_open_record() {
+        let codec = NostrCodec::new(vec![7; 32]).unwrap();
+        let content = codec.seal(envelope()).unwrap();
+        assert!(codec
+            .open_for_workspace("018f22e2-aaaa-7aaa-8aaa-aaaaaaaaaaaa", &content)
+            .is_err());
+    }
+}

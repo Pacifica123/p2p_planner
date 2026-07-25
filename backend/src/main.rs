@@ -7,6 +7,7 @@ use p2p_planner_backend::{
     db::pool::create_pool,
     state::AppState,
     telemetry::init_tracing,
+    transports::spawn_workers,
 };
 
 static MIGRATOR: Migrator = sqlx::migrate!();
@@ -27,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to run database migrations")?;
 
     let state = AppState::new(settings, db);
+    spawn_workers(state.settings.clone(), state.db.clone());
     let app = build_app(state);
 
     let listener = tokio::net::TcpListener::bind(addr)

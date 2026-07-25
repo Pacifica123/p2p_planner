@@ -3,6 +3,14 @@
 Текущая backend-часть — это Axum + sqlx + PostgreSQL сервис для core kanban flow,
 appearance и activity/audit surface.
 
+Transport evolution is staged beside the coordinator:
+
+- `crates/sync-core` owns the transport-neutral event contract;
+- optional Nostr shadow mirroring uses a durable outbox;
+- `crates/iroh-transport` provides a native direct-path adapter;
+- none of these adapters replaces backend authorization or PostgreSQL domain
+  projections by default.
+
 ## Что уже заведено
 
 - bootable HTTP server;
@@ -45,3 +53,20 @@ Legacy `X-User-Id` fallback оставлен только для dev/test сце
 - `tests/smoke_core_api.py`
 
 Integration tests требуют `TEST_DATABASE_URL` или `DATABASE_URL`.
+
+## Experimental transport checks
+
+Runtime configuration and the relay-only recovery gate are documented in
+`../docs/deployment/free-hosting-transports-v1.md`.
+
+Queue diagnostics:
+
+```text
+GET /api/v1/sync/transports/status
+```
+
+Relay recovery:
+
+```bash
+cargo run --bin nostr_recover -- <workspace-uuid> ../recovered-events.json
+```

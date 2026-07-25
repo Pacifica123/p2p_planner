@@ -9,5 +9,6 @@
 .env.local
 backend/.env
 frontend/.env.local
+deploy/home-coordinator/runtime.env
 .dev-bootstrap/
 *.tsbuildinfo

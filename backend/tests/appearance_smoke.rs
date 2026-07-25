@@ -4,7 +4,10 @@ use axum::{
 };
 use p2p_planner_backend::{
     app::build_app,
-    config::{AppSettings, AuthSettings, DatabaseSettings, HttpSettings, LogFormat, Settings},
+    config::{
+        AppSettings, AuthSettings, DatabaseSettings, HttpSettings, LogFormat, Settings,
+        TransportSettings,
+    },
     state::AppState,
 };
 use serde_json::{json, Value};
@@ -54,6 +57,7 @@ fn test_settings(database_url: String) -> Settings {
             sensitive_rate_limit_window_secs: 60,
             sensitive_rate_limit_max_attempts: 60,
         },
+        transports: TransportSettings::default(),
     }
 }
 

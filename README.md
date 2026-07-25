@@ -142,6 +142,10 @@ VITE_ENABLE_PROJECT_ROADMAP_SEED=true
 - `docs/product/mvp-scope-v1.md` — границы MVP;
 - `docs/architecture/backend-modules.md` — карта backend-модулей;
 - `docs/architecture/frontend_architecture_v_1.md` — структура frontend;
+- `docs/deployment/free-hosting-transports-v1.md` — домашний координатор,
+  Nostr shadow mode, Iroh direct path и маленький Durable Object;
+- `docs/adr/ADR-006-homeless-board-transport-stack.md` — границы выбранного
+  бесплатного transport stack;
 - `docs/api/openapi.yaml` — текущий HTTP-контракт;
 - `docs/dev-bootstrap/devbootstrap-v1-operations.md` — quick commands, report contract, timeout policy and cleanup rules for devbootstrap v1;
 - `docs/development/release-stabilization-phase-0-baseline.md` — активный baseline фазы 0: freeze rules, Problem Ledger, scorecard and side-effect profiles для release stabilization lane.

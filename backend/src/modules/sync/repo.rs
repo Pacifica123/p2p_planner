@@ -400,6 +400,7 @@ pub async fn push_changes(
     replica_id: Uuid,
     workspace_id: Option<Uuid>,
     events: Vec<ClientChangeEvent>,
+    mirror_to_nostr: bool,
 ) -> AppResult<PushChangesResponse> {
     let _replica = fetch_replica_for_user(pool, replica_id, &auth).await?;
     if let Some(workspace_id) = workspace_id {
@@ -418,6 +419,11 @@ pub async fn push_changes(
         let entity_id = Uuid::parse_str(&event.entity_id).map_err(|_| AppError::bad_request("entityId must be a valid UUID"))?;
 
         if let Some(result) = duplicate_result(pool, event_id, replica_id, event.replica_seq).await? {
+            if mirror_to_nostr {
+                let stored_event_id = Uuid::parse_str(&result.event_id)
+                    .map_err(|_| AppError::internal())?;
+                crate::transports::repo::ensure_nostr_outbox(pool, stored_event_id).await?;
+            }
             results.push(result);
             continue;
         }
@@ -496,6 +502,9 @@ pub async fn push_changes(
         match inserted {
             Ok(row) => {
                 record_tombstone_if_needed(pool, workspace_id, event_id, replica_id, &auth, &event).await?;
+                if mirror_to_nostr {
+                    crate::transports::repo::ensure_nostr_outbox(pool, event_id).await?;
+                }
                 results.push(PushEventResult {
                     event_id: event.event_id,
                     replica_seq: event.replica_seq,
@@ -506,6 +515,11 @@ pub async fn push_changes(
             }
             Err(sqlx::Error::Database(db_error)) if matches!(db_error.kind(), sqlx::error::ErrorKind::UniqueViolation) => {
                 if let Some(result) = duplicate_result(pool, event_id, replica_id, event.replica_seq).await? {
+                    if mirror_to_nostr {
+                        let stored_event_id = Uuid::parse_str(&result.event_id)
+                            .map_err(|_| AppError::internal())?;
+                        crate::transports::repo::ensure_nostr_outbox(pool, stored_event_id).await?;
+                    }
                     results.push(result);
                 } else {
                     results.push(PushEventResult {

@@ -27,6 +27,15 @@ pub async fn get_status(
     Ok(ok(status))
 }
 
+pub async fn get_transport_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<impl IntoResponse> {
+    let auth = auth_context(&state, &headers).await?;
+    let status = service::get_transport_status(&state, auth).await?;
+    Ok(ok(status))
+}
+
 pub async fn list_replicas(
     State(state): State<AppState>,
     headers: HeaderMap,

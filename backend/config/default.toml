@@ -30,3 +30,22 @@ auth_rate_limit_window_secs = 60
 auth_rate_limit_max_attempts = 20
 sensitive_rate_limit_window_secs = 60
 sensitive_rate_limit_max_attempts = 60
+
+[transports]
+worker_poll_interval_ms = 1000
+batch_size = 50
+max_attempts = 12
+
+[transports.nostr]
+enabled = false
+relays = []
+secret_key = ""
+master_key_base64 = ""
+event_kind = 20078
+fetch_timeout_secs = 10
+min_relay_acks = 3
+backfill_on_start = false
+
+[transports.iroh]
+enabled = false
+peers = []

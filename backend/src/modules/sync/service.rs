@@ -1,4 +1,5 @@
 use uuid::Uuid;
+use p2p_kanban_sync_core::validate_client_event;
 
 use crate::{
     error::{AppError, AppResult},
@@ -9,6 +10,7 @@ use crate::{
 use super::dto::{
     ClientChangeEvent, PullChangesQuery, PullChangesResponse, PushChangesRequest, PushChangesResponse,
     RegisterReplicaRequest, RegisterReplicaResponse, ReplicaListResponse, SyncStatusQuery, SyncStatusResponse,
+    TransportAdapterStatus, TransportStatusResponse,
 };
 
 const MAX_PUSH_EVENTS: usize = 500;
@@ -34,29 +36,6 @@ fn normalize_replica_kind(kind: Option<String>) -> AppResult<String> {
         "import_worker" | "import" => Ok("import".to_string()),
         "server" => Ok("server".to_string()),
         _ => Err(AppError::bad_request("Unsupported replica kind")),
-    }
-}
-
-fn validate_operation(operation: &str) -> AppResult<&'static str> {
-    match operation {
-        "create" => Ok("create"),
-        "update" | "move" | "complete" => Ok("update"),
-        "delete" => Ok("delete"),
-        "restore" => Ok("restore"),
-        "reorder" => Ok("reorder"),
-        "add" => Ok("add"),
-        "remove" => Ok("remove"),
-        "archive" => Ok("archive"),
-        "unarchive" => Ok("unarchive"),
-        _ => Err(AppError::bad_request("Unsupported sync event operation")),
-    }
-}
-
-fn validate_entity_type(entity_type: &str) -> AppResult<()> {
-    match entity_type {
-        "workspace" | "workspace_member" | "board" | "column" | "card" | "board_label" | "card_label"
-        | "checklist" | "checklist_item" | "comment" => Ok(()),
-        _ => Err(AppError::bad_request("Unsupported sync event entityType")),
     }
 }
 
@@ -86,18 +65,7 @@ fn validate_workspace_scoping(workspace_id: Option<Uuid>, event: &ClientChangeEv
 }
 
 fn validate_event_shape(event: &ClientChangeEvent) -> AppResult<()> {
-    parse_uuid(&event.event_id, "eventId")?;
-    parse_uuid(&event.replica_id, "event.replicaId")?;
-    parse_uuid(&event.entity_id, "entityId")?;
-    if event.replica_seq < 1 {
-        return Err(AppError::bad_request("replicaSeq must be positive"));
-    }
-    if event.logical_clock < 1 {
-        return Err(AppError::bad_request("logicalClock must be positive"));
-    }
-    validate_entity_type(&event.entity_type)?;
-    validate_operation(&event.operation)?;
-    Ok(())
+    validate_client_event(event).map_err(|error| AppError::bad_request(error.to_string()))
 }
 
 pub async fn get_status(
@@ -159,7 +127,15 @@ pub async fn push_changes(
         previous_seq = Some(event.replica_seq);
     }
 
-    super::repo::push_changes(&state.db, auth, replica_id, workspace_id, payload.events).await
+    super::repo::push_changes(
+        &state.db,
+        auth,
+        replica_id,
+        workspace_id,
+        payload.events,
+        state.settings.transports.nostr.enabled,
+    )
+    .await
 }
 
 pub async fn pull_changes(
@@ -180,4 +156,29 @@ pub async fn pull_changes(
     let limit = query.limit.unwrap_or(DEFAULT_PULL_LIMIT).clamp(1, MAX_PULL_LIMIT);
 
     super::repo::pull_changes(&state.db, auth, replica_id, scope, workspace_id, last_server_order, limit).await
+}
+
+pub async fn get_transport_status(
+    state: &AppState,
+    _auth: AuthContext,
+) -> AppResult<TransportStatusResponse> {
+    let queue = crate::transports::transport_queue_status(&state.db).await?;
+    Ok(TransportStatusResponse {
+        coordinator: TransportAdapterStatus {
+            enabled: true,
+            mode: "canonical".to_string(),
+            configured_endpoints: 1,
+        },
+        nostr: TransportAdapterStatus {
+            enabled: state.settings.transports.nostr.enabled,
+            mode: "shadow_store_and_forward".to_string(),
+            configured_endpoints: state.settings.transports.nostr.relays.len(),
+        },
+        iroh: TransportAdapterStatus {
+            enabled: state.settings.transports.iroh.enabled,
+            mode: "direct_fast_path".to_string(),
+            configured_endpoints: state.settings.transports.iroh.peers.len(),
+        },
+        queue,
+    })
 }

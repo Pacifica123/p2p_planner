@@ -10,6 +10,7 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/sync/status", get(handler::get_status))
+        .route("/sync/transports/status", get(handler::get_transport_status))
         .route("/sync/replicas", get(handler::list_replicas))
         .route("/sync/replicas", post(handler::register_replica))
         .route("/sync/push", post(handler::push_changes))
