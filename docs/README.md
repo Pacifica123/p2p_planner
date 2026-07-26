@@ -15,6 +15,7 @@
 
 - [`../README.md`](../README.md) — запуск и основные команды;
 - [`deployment/zero-config-bootstrap-v1.md`](deployment/zero-config-bootstrap-v1.md) — как работает запуск без `.env`;
+- [`deployment/application-update-strategy-v1.md`](deployment/application-update-strategy-v1.md) — безопасная граница будущего автообновления;
 - [`product/v1-known-limitations.md`](product/v1-known-limitations.md) — честные ограничения;
 - [`product/v1.0.0-beta.3-release-notes.md`](product/v1.0.0-beta.3-release-notes.md) — текст текущего релиза.
 
@@ -104,4 +105,3 @@ python tools/build_release_bundle.py --require-tag
 типов, файлов и общепринятые технические обозначения остаются без перевода.
 Английская версия сохраняется только там, где она нужна конечному получателю,
 например в тексте GitHub Release и `README_RELEASE_EN.md`.
-

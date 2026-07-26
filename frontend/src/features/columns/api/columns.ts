@@ -5,7 +5,13 @@ export function getColumns(boardId: string) {
   return apiRequest<ColumnListResponse>(`/boards/${boardId}/columns`);
 }
 
-export function createColumn(boardId: string, input: { name: string; description?: string }) {
+export function createColumn(boardId: string, input: {
+  name: string;
+  description?: string;
+  position?: number;
+  colorToken?: string;
+  wipLimit?: number;
+}) {
   return apiRequest<BoardColumn>(`/boards/${boardId}/columns`, {
     method: 'POST',
     body: JSON.stringify(input),

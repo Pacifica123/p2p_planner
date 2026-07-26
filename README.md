@@ -73,7 +73,7 @@ python bootstrap.py reset --yes
 - настройки внешнего вида пользователя и доски;
 - локальный snapshot и очередь pending operations;
 - backend-координируемая push/pull синхронизация;
-- экспорт доски/workspace и безопасный import preview;
+- экспорт доски/workspace и импорт board-level JSON как новой копии;
 - независимый `sync-core`;
 - Nostr shadow outbox/recovery и native Iroh adapter как экспериментальный
   transport foundation.
@@ -82,13 +82,23 @@ python bootstrap.py reset --yes
 
 - coordinator-free P2P как основной режим;
 - полноценный mobile-клиент;
-- destructive restore/import;
+- merge и destructive restore/import поверх существующих данных;
 - законченный conflict-resolution UI;
 - production-ready integrations/webhooks.
 
 Не считайте наличие будущего контракта в коде готовой пользовательской
 функцией. Актуальная карта состояния:
 [`docs/product/v1-execution-roadmap.md`](docs/product/v1-execution-roadmap.md).
+
+### Перенос доски через JSON
+
+На открытой доске кнопка сохранения скачивает board-level backup JSON. Чтобы
+восстановить его, откройте список досок нужного workspace, выберите
+`Импорт доски из JSON`, проверьте состав и нажмите `Создать копию`.
+
+Импорт не перезаписывает существующую доску и не переносит сессии, старые ID,
+авторов или старую activity history. Подробности:
+[`docs/architecture/import-export-backup-v1.md`](docs/architecture/import-export-backup-v1.md).
 
 ## Как это устроено
 

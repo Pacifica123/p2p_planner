@@ -57,7 +57,15 @@ export interface ColumnListResponse {
   items: BoardColumn[];
 }
 
-export type CardStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | null;
+export type CardStatus =
+  | 'active'
+  | 'completed'
+  | 'cancelled'
+  | 'todo'
+  | 'in_progress'
+  | 'blocked'
+  | 'done'
+  | null;
 export type CardPriority = 'low' | 'medium' | 'high' | 'urgent' | null;
 
 export interface Card {

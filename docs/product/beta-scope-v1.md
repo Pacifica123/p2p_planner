@@ -380,6 +380,7 @@ PWA допустима как приятный bridge к “приложению
 
 - export download UI;
 - import preview UI;
+- board-level import-as-copy;
 - dry-run import report;
 - human-readable backup summary.
 
@@ -546,7 +547,7 @@ Mobile-чат имеет смысл открывать после выполне
 | Release evidence | Прогнать или честно классифицировать `release-gates`/UIX real backend product path на managed runtime/test DB | Без свежего bundle нельзя отличить готовый user path от старой надежды в документах |
 | Contract parity guard | Подтвердить, что OpenAPI, backend routes и frontend API calls не разошлись после закрытых baseline slices | Beta не должна содержать UI-кнопки, ведущие в 404/501/not_implemented |
 | Auth/account beta profile | Решить, достаточно ли `beta-local-self-host`, или нужен `beta-invite-preview`; для invite-preview закрыть account recovery/invite/rate-limit evidence | Нельзя случайно назвать local-dev posture internet-facing beta |
-| Import boundary | Явно оставить v1 на export + preview или реализовать import-as-copy execution отдельным патчем | Пользовательские данные нельзя подвергать destructive/ambiguous restore behavior |
+| Import boundary | Закрыто: board-level import-as-copy выполняется после preview; merge/destructive restore остаются вне beta | Пользовательские данные нельзя подвергать destructive/ambiguous restore behavior |
 | Release notes / limitations | Обновить known limitations по фактическому gate bundle | Release должен честно сказать, что проверено, что skipped и что deferred |
 
 Baseline-implemented areas such as labels/checklists/comments, local-first runtime, sync baseline, export backup preview and auth/security guards are no longer backlog items by themselves; they become release-evidence requirements.
@@ -558,7 +559,7 @@ Baseline-implemented areas such as labels/checklists/comments, local-first runti
 | Appearance polish | Проверить темы/обои/плотность на основных экранах | Это часть “личного” ощущения приложения |
 | Activity copy | Сделать activity текст понятным пользователю | История должна помогать, а не быть raw log |
 | Member UI | Минимальный UI members/roles, если beta обещает small-team use | Иначе beta лучше позиционировать как personal-first |
-| Import-as-copy UX | Если v1 обещает import execution, реализовать apply-as-copy после preview | Снижает риск порчи данных |
+| Import-as-copy UX | Реализовано для board-level bundle; проверить real-backend smoke и cleanup ошибки | Снижает риск порчи данных |
 | Real-backend browser confidence | Расширять сценарии после P0 release evidence checkpoint | Ловит CORS/session/runtime расхождения |
 | Error UX | Причесать 401/403/409/offline/sync failed states | Пользователь должен понимать, что происходит |
 

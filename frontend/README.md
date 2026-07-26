@@ -26,6 +26,8 @@ VITE_ENABLE_PROJECT_ROADMAP_SEED=true
 - card details drawer;
 - board activity panel;
 - user appearance / board appearance;
+- скачивание board-level backup JSON;
+- проверяемый импорт board-level JSON как новой копии в выбранный workspace;
 - loading / empty / error states;
 - базовый create / edit / archive / delete wiring для уже стабильного backend flow.
 
@@ -70,3 +72,16 @@ npm run test:browser
 Smoke использует mocked API responses, проходит через auth screen и временно отключает автосид dev-roadmap board, чтобы сценарий оставался быстрым и детерминированным.
 
 Подробная инструкция по тестированию всего приложения: `../docs/architecture/testing-application-guide-v1.md`.
+
+## Импорт доски
+
+1. Открой список досок нужного workspace.
+2. В блоке `Импорт доски из JSON` выбери файл.
+3. Проверь версию, состав и предупреждения.
+4. При необходимости измени название новой доски.
+5. Нажми `Создать копию`.
+
+Клиент принимает `p2p_planner_bundle` версии 1 с `scopeKind=board` размером до
+10 МБ. Он создаёт новые серверные ID и восстанавливает колонки, карточки,
+метки, checklists, comments и оформление через обычные API-команды.
+Существующие доски не изменяются.

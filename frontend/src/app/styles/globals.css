@@ -558,6 +558,40 @@ body {
   border-color: rgba(239, 68, 68, 0.28);
 }
 
+.board-import-preview {
+  display: grid;
+  gap: 16px;
+}
+
+.board-import-preview__summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.board-import-preview__summary > div,
+.board-import-preview__warnings,
+.board-import-progress {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--bg) 76%, transparent);
+}
+
+.board-import-preview__warnings ul {
+  display: grid;
+  gap: 6px;
+  padding-left: 20px;
+  color: var(--text-soft);
+}
+
+.board-import-progress progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
 .drawer {
   position: fixed;
   inset: 0;

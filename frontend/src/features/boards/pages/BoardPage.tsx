@@ -37,6 +37,9 @@ import { LoadingState } from '@/shared/ui/LoadingState';
 import { Panel } from '@/shared/ui/Panel';
 
 const statusTone: Record<string, string> = {
+  active: 'default',
+  completed: 'done',
+  cancelled: 'urgent',
   todo: 'default',
   in_progress: 'in_progress',
   blocked: 'urgent',

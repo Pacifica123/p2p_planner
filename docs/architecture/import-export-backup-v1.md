@@ -1,6 +1,6 @@
 # Import / export / backup v1
 
-- Статус: Draft v1
+- Статус: частично реализовано в beta; board export и create-copy import работают
 - Дата: 2026-04-12
 - Назначение: зафиксировать **переносимость данных, резервное копирование и восстановление** так, чтобы local-first модель, sync-ready архитектура и integration layer не противоречили друг другу.
 
@@ -350,21 +350,31 @@ Device-specific state вроде pending ops, local cursors и transient UI stat
 
 ---
 
-## 10. Что именно реализуем на этом этапе
+## 10. Что реализовано
 
-Реализация этого этапа должна дать:
-- канонический документ `import-export-backup-v1.md`;
-- concrete API contracts в `openapi.yaml`;
-- backend stubs для import/export/preview/apply surface;
-- frontend types/api stubs для будущего UI.
+Текущий beta-срез даёт:
 
-При этом текущая реализация сознательно **не обещает**:
-- реальную упаковку файлов;
-- blob transport;
-- full restore executor;
-- background job engine.
+- versioned application-level JSON bundle;
+- реальный board/workspace export через backend;
+- скачивание board backup из web-клиента;
+- локальную проверку board-level файла до первой записи на сервер;
+- preview с составом и предупреждениями;
+- board-level `create_copy` import в выбранный workspace через обычные
+  board/column/card/label/checklist/comment/appearance API-команды;
+- замену всех исходных ID новыми серверными ID;
+- попытку удалить только новую недособранную доску, если импорт оборвался.
 
-То есть этап закрывает **архитектурный контракт и будущее API surface**, а не production-ready restore pipeline.
+Текущая реализация сознательно **не обещает**:
+
+- workspace-level import;
+- merge с существующей доской;
+- destructive replace/restore;
+- перенос sessions, secrets, старых actor identity и timestamp;
+- replay старой activity history;
+- attachments/blob transport;
+- транзакцию на весь импорт и background job engine.
+
+Таким образом, рабочая граница beta — перенос одной доски как новой копии.
 
 ---
 
@@ -455,8 +465,40 @@ Device-specific state вроде pending ops, local cursors и transient UI stat
 
 `POST /integrations/import-export/imports/preview` принимает либо `bundle`, либо `bundleManifest`, проверяет `format=formatVersion=1` и возвращает non-destructive preview summary.
 
-V1 baseline **не выполняет destructive restore**. `POST /integrations/import-export/imports` остается reserved execution boundary и возвращает `preview_required`, не мутируя domain state. Это специально сохраняет гарантию безопасности: сначала preview, затем будущий apply через domain commands, а не raw table writes.
+V1 baseline **не выполняет destructive restore**. `POST /integrations/import-export/imports` остается reserved execution boundary и возвращает `preview_required`, не мутируя domain state. Board-level create-copy выполняется клиентским orchestrator через уже существующие проверяемые CRUD-команды. Backend execution boundary остаётся зарезервированным для будущей атомарной/background реализации.
 
-### 13.4. Frontend baseline
+### 13.4. Frontend export
 
 На board screen добавлена кнопка `💾`, которая запрашивает board-level `backup_snapshot` и скачивает `*.bundle.json` через браузер. Это user-owned safety copy, а не scheduled backup и не encrypted backup UX.
+
+### 13.5. Frontend board import
+
+На странице boards выбранного workspace есть блок `Импорт доски из JSON`.
+Поток состоит из двух отдельных стадий:
+
+1. **До записи на сервер:**
+   - проверка ограничения 10 МБ;
+   - JSON parse;
+   - `format=p2p_planner_bundle`;
+   - `formatVersion=1`;
+   - `scopeKind=board`;
+   - проверка обязательных разделов, уникальности ID и ссылок между сущностями;
+   - нормализация legacy card status (`todo/in_progress/blocked → active`,
+     `done → completed`);
+   - preview состава, потерь и нового имени.
+2. **После явного `Создать копию`:**
+   - новая доска в выбранном workspace;
+   - новые columns и mapping старых ID на новые;
+   - новые labels/cards и восстановление связей;
+   - checklists/items/comments;
+   - board appearance;
+   - переход на новую доску.
+
+Импорт не вызывает silent overwrite. Activity из bundle не воспроизводится:
+обычные API-команды сами формируют новую историю создания копии. Комментарии
+сохраняют текст, но получают текущего пользователя и новое время.
+
+Client-side orchestration пока не является общей транзакцией. При ошибке после
+создания доски клиент вызывает `DELETE /boards/{boardId}` только для этой новой
+копии. Если cleanup тоже не сработал, UI показывает ID недособранной доски,
+чтобы пользователь мог найти её и принять решение вручную.

@@ -25,8 +25,12 @@ export function createCard(boardId: string, input: {
   title: string;
   description?: string;
   columnId: string;
+  parentCardId?: string;
+  position?: number;
   status?: Card['status'];
   priority?: Card['priority'];
+  startAt?: string;
+  dueAt?: string;
 }) {
   return apiRequest<Card>(`/boards/${boardId}/cards`, {
     method: 'POST',
@@ -34,7 +38,19 @@ export function createCard(boardId: string, input: {
   });
 }
 
-export function updateCard(cardId: string, input: { title?: string; description?: string | null; status?: Card['status']; priority?: Card['priority']; dueAt?: string | null }) {
+export function updateCard(cardId: string, input: {
+  title?: string;
+  description?: string | null;
+  columnId?: string;
+  parentCardId?: string | null;
+  status?: Card['status'];
+  priority?: Card['priority'];
+  position?: number;
+  startAt?: string | null;
+  dueAt?: string | null;
+  completedAt?: string | null;
+  isArchived?: boolean;
+}) {
   return apiRequest<Card>(`/cards/${cardId}`, {
     method: 'PATCH',
     body: JSON.stringify(input),

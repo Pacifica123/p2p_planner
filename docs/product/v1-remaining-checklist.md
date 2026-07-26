@@ -8,7 +8,7 @@
 - [x] Activity и audit.
 - [x] Local-first snapshot и pending queue для основного сценария.
 - [x] Backend push/pull sync baseline.
-- [x] Export и import preview.
+- [x] Export, import preview и board-level import-as-copy.
 - [x] Базовый auth/security hardening.
 - [x] Zero-config Docker bootstrap.
 - [x] Экспериментальный transport foundation.
@@ -35,7 +35,7 @@
 - [ ] Зафиксировать backup/restore runbook для PostgreSQL volume.
 - [ ] Выбрать и добавить лицензию либо явно оставить проект без публичной
       лицензии.
-- [ ] Решить, достаточно ли import preview для stable v1.
+- [ ] Подтвердить import-as-copy smoke на итоговом release bundle.
 - [ ] Решить, считается ли неполное применение входящего sync-log блокером
       stable v1.
 - [ ] Удалить или явно оставить optional старые Playwright-пути.
@@ -54,4 +54,3 @@
 
 Эти функции могут стать причиной следующего minor/major релиза, но не должны
 бесконечно удерживать уже работающий self-host web-продукт в beta.
-

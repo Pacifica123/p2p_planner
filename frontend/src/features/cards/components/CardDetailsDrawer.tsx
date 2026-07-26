@@ -46,10 +46,13 @@ import type { BoardLabel, CardPriority, CardStatus, Checklist, ChecklistItem, Co
 
 const STATUS_OPTIONS = [
   { value: '', label: '—' },
-  { value: 'todo', label: 'todo' },
-  { value: 'in_progress', label: 'in_progress' },
-  { value: 'blocked', label: 'blocked' },
-  { value: 'done', label: 'done' },
+  { value: 'active', label: 'active' },
+  { value: 'completed', label: 'completed' },
+  { value: 'cancelled', label: 'cancelled' },
+  { value: 'todo', label: 'todo (legacy)' },
+  { value: 'in_progress', label: 'in_progress (legacy)' },
+  { value: 'blocked', label: 'blocked (legacy)' },
+  { value: 'done', label: 'done (legacy)' },
 ];
 
 const PRIORITY_OPTIONS = [

@@ -10,6 +10,7 @@ import { TextAreaField, TextField } from '@/shared/ui/Field';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { Badge } from '@/shared/ui/Badge';
 import { formatDateTime } from '@/shared/lib/date';
+import { BoardImportPanel } from '@/features/integrations/components/BoardImportPanel';
 
 export function WorkspaceBoardsPage() {
   const navigate = useNavigate();
@@ -89,6 +90,15 @@ export function WorkspaceBoardsPage() {
           </div>
         </form>
       </section>
+
+      <BoardImportPanel
+        workspaceId={workspaceId}
+        existingBoardNames={boardsQuery.data?.items.map((board) => board.name) || []}
+        onImported={async (boardId) => {
+          await boardsQuery.refetch();
+          navigate(paths.board(workspaceId, boardId));
+        }}
+      />
 
       {boardsQuery.isLoading ? <LoadingState label="Загружаем boards…" /> : null}
       {boardsQuery.isError ? <ErrorState title="Не удалось загрузить boards" onRetry={() => void boardsQuery.refetch()} /> : null}

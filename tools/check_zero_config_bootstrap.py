@@ -194,7 +194,7 @@ def check_frontend_production_build() -> None:
                 "VITE_ENABLE_PROJECT_ROADMAP_SEED": "true",
             }
         )
-        for command in ([npm, "ci"], [npm, "run", "build"]):
+        for command in ([npm, "ci"], [npm, "run", "test:run"], [npm, "run", "build"]):
             result = subprocess.run(
                 command,
                 cwd=checkout,
@@ -206,7 +206,7 @@ def check_frontend_production_build() -> None:
             )
             require(result.returncode == 0, result.stdout)
         require((checkout / "dist/index.html").is_file(), "frontend dist/index.html is missing")
-    print("OK frontend production build with /api/v1")
+    print("OK frontend tests and production build with /api/v1")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -214,7 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--frontend-build",
         action="store_true",
-        help="Also run npm ci and the production Vite build in a temporary copy.",
+        help="Also run npm ci, frontend tests and the production Vite build in a temporary copy.",
     )
     return parser
 

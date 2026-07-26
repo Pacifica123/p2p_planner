@@ -19,6 +19,12 @@ export function createBoard(workspaceId: string, input: { name: string; descript
   });
 }
 
+export function deleteBoard(boardId: string) {
+  return apiRequest<Board>(`/boards/${boardId}`, {
+    method: 'DELETE',
+  });
+}
+
 export function updateBoard(boardId: string, input: Partial<Pick<Board, 'name' | 'description'>>) {
   return apiRequest<Board>(`/boards/${boardId}`, {
     method: 'PATCH',
