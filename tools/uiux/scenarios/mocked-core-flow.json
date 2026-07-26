@@ -22,6 +22,7 @@
     { "fill": "[data-testid='board-name-input']", "valueFrom": "generated.boardName" },
     { "click": "[data-testid='board-create-submit']" },
     { "assertVisible": "[data-testid='board-page']" },
+    { "click": "[data-testid='open-column-composer']" },
     { "fill": "[data-testid='column-name-input']", "valueFrom": "generated.columnName" },
     { "click": "[data-testid='column-create-submit']" },
     { "assertVisibleText": { "selector": "[data-testid='board-column']", "textFrom": "generated.columnName" } },

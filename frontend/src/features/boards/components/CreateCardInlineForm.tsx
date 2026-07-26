@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { useCreateCardMutation } from '@/features/cards/hooks/useCards';
 import { useOptionalLocalFirstBoard } from '@/features/localFirst/context/LocalFirstBoardContext';
 import { Button } from '@/shared/ui/Button';
+import { Icon } from '@/shared/ui/Icon';
 
 interface CreateCardInlineFormProps {
   boardId: string;
@@ -39,10 +40,11 @@ export function CreateCardInlineForm({ boardId, columnId }: CreateCardInlineForm
           className="field__input"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder="Новая карточка"
+          placeholder="Добавить карточку"
+          aria-label="Название новой карточки"
         />
         <Button data-testid="card-create-submit" type="submit" iconOnly disabled={createCardMutation.isPending} title="Добавить карточку" aria-label="Добавить карточку">
-          {createCardMutation.isPending || localFirst?.isFlushing ? '…' : '＋'}
+          {createCardMutation.isPending || localFirst?.isFlushing ? '…' : <Icon name="plus" size={16} />}
         </Button>
       </div>
     </form>

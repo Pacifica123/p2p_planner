@@ -13,7 +13,7 @@ function RequireAuth() {
   const { status } = useAuthSession();
 
   if (status === 'loading') {
-    return <LoadingState label="Восстанавливаем session…" />;
+    return <LoadingState label="Восстанавливаем сессию…" />;
   }
 
   if (status !== 'authenticated') {

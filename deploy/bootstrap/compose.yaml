@@ -32,6 +32,7 @@ services:
       - internal
 
   backend:
+    image: p2pkanban/backend:${P2PKANBAN_IMAGE_TAG:-local}
     build:
       context: ../..
       dockerfile: deploy/bootstrap/backend.Dockerfile
@@ -79,6 +80,7 @@ services:
       - internal
 
   web:
+    image: p2pkanban/web:${P2PKANBAN_IMAGE_TAG:-local}
     build:
       context: ../..
       dockerfile: deploy/bootstrap/frontend.Dockerfile

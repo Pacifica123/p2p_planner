@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSyncStatus, pullChanges, registerReplica, type Replica, type SyncStatusResponse } from '@/features/sync/api/sync';
 import {
   getOrCreateClientReplicaKey,
@@ -31,6 +31,7 @@ export function useSyncBaseline(workspaceId?: string | null): SyncBaselineRuntim
   const [state, setState] = useState<SyncBaselineState>('idle');
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastPulledAt, setLastPulledAt] = useState<string | null>(null);
+  const autoPulledScopeRef = useRef<string | null>(null);
 
   const isOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
 
@@ -103,11 +104,12 @@ export function useSyncBaseline(workspaceId?: string | null): SyncBaselineRuntim
   }, [isOnline]);
 
   useEffect(() => {
-    if (state !== 'ready' || !workspaceId) return;
+    if (state !== 'ready' || !workspaceId || !replica?.id) return;
+    const scopeKey = `${replica.id}:${workspaceId}`;
+    if (autoPulledScopeRef.current === scopeKey) return;
+    autoPulledScopeRef.current = scopeKey;
     void pullWorkspace();
-    // Pull once after bootstrap/workspace switch. Manual refresh handles later pulls.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, state]);
+  }, [pullWorkspace, replica?.id, state, workspaceId]);
 
   return useMemo(() => ({
     state,

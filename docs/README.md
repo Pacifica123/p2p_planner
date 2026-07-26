@@ -15,7 +15,7 @@
 
 - [`../README.md`](../README.md) — запуск и основные команды;
 - [`deployment/zero-config-bootstrap-v1.md`](deployment/zero-config-bootstrap-v1.md) — как работает запуск без `.env`;
-- [`deployment/application-update-strategy-v1.md`](deployment/application-update-strategy-v1.md) — безопасная граница будущего автообновления;
+- [`deployment/application-update-strategy-v1.md`](deployment/application-update-strategy-v1.md) — рабочее обновление и rollback;
 - [`product/v1-known-limitations.md`](product/v1-known-limitations.md) — честные ограничения;
 - [`product/v1.0.0-beta.3-release-notes.md`](product/v1.0.0-beta.3-release-notes.md) — текст текущего релиза.
 
@@ -28,6 +28,8 @@
 - [`api/openapi.yaml`](api/openapi.yaml) — HTTP API;
 - [`architecture/testing-strategy-v1.md`](architecture/testing-strategy-v1.md)
   — проверки;
+- [`architecture/client-uiux-flat-pass-v1.md`](architecture/client-uiux-flat-pass-v1.md)
+  — подробный разбор проблем интерфейса и принятые изменения;
 - [`dev-bootstrap/devbootstrap-v1-operations.md`](dev-bootstrap/devbootstrap-v1-operations.md)
   — расширенная локальная диагностика.
 
@@ -45,6 +47,7 @@
 |---|---|
 | Версия | `v1.0.0-beta.3`, GitHub Pre-release |
 | Основной запуск | `python bootstrap.py`, весь runtime в Docker |
+| Обновление | `python bootstrap.py update`, backup + versioned images + rollback |
 | Канонический путь | React/Vite → Nginx → Rust/Axum → PostgreSQL |
 | Local-first | Локальный snapshot и очередь исходящих операций для основного web-сценария |
 | Синхронизация | Backend-координируемая; клиентский pull ещё не строит все проекции автоматически |

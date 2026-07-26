@@ -42,7 +42,9 @@ SQL не нужно. Первый build может занять нескольк
 
 | Действие | Команда |
 |---|---|
-| Запустить или обновить stack | `python bootstrap.py` |
+| Запустить stack | `python bootstrap.py` |
+| Обновить backend и web из `main` | `python bootstrap.py update` |
+| Вернуть прошлую версию кода | `python bootstrap.py rollback` |
 | Посмотреть состояние | `python bootstrap.py status` |
 | Посмотреть последние логи | `python bootstrap.py logs` |
 | Следить за логами | `python bootstrap.py logs --follow` |
@@ -62,6 +64,11 @@ python bootstrap.py reset --yes
 
 Подробности: [`docs/deployment/zero-config-bootstrap-v1.md`](docs/deployment/zero-config-bootstrap-v1.md).
 
+Перед обновлением bootstrap собирает новые images отдельно, создаёт PostgreSQL
+backup и только затем переключает backend/web на прежние volumes данных и
+секретов. Если старый release bundle не знает адрес GitHub-репозитория, при
+первом обновлении передайте его через `update --repository URL`.
+
 ## Что уже работает
 
 - регистрация, вход и refresh-сессия;
@@ -71,6 +78,7 @@ python bootstrap.py reset --yes
 - labels, checklists и comments;
 - история активности и audit API;
 - настройки внешнего вида пользователя и доски;
+- безопасное обновление Docker-связки с backup и rollback images;
 - локальный snapshot и очередь pending operations;
 - backend-координируемая push/pull синхронизация;
 - экспорт доски/workspace и импорт board-level JSON как новой копии;
@@ -170,6 +178,8 @@ npm run dev
 - [`docs/architecture/project-structure.md`](docs/architecture/project-structure.md) — структура проекта;
 - [`docs/api/openapi.yaml`](docs/api/openapi.yaml) — HTTP API;
 - [`docs/deployment/zero-config-bootstrap-v1.md`](docs/deployment/zero-config-bootstrap-v1.md) — новый bootstrap;
+- [`docs/deployment/application-update-strategy-v1.md`](docs/deployment/application-update-strategy-v1.md) — обновление и rollback;
+- [`docs/architecture/client-uiux-flat-pass-v1.md`](docs/architecture/client-uiux-flat-pass-v1.md) — разбор UI/UX-карты и flat-проход;
 - [`docs/deployment/free-hosting-transports-v1.md`](docs/deployment/free-hosting-transports-v1.md) — бесплатные transport-варианты;
 - [`docs/adr/ADR-006-homeless-board-transport-stack.md`](docs/adr/ADR-006-homeless-board-transport-stack.md) — выбранная transport-архитектура;
 - [`docs/dev-bootstrap/devbootstrap-v1-operations.md`](docs/dev-bootstrap/devbootstrap-v1-operations.md) — расширенная локальная диагностика.

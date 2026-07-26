@@ -24,7 +24,7 @@ export function PresetPicker({ value, onChange }: PresetPickerProps) {
             <span className="preset-card__swatch" style={{ background: getBoardPresetPreview(preset.id, resolvedTheme) }} />
             <span className="preset-card__title-row">
               <strong>{preset.label}</strong>
-              {isActive ? <Badge tone="default">active</Badge> : null}
+              {isActive ? <Badge tone="default">выбрано</Badge> : null}
             </span>
             <span className="muted">{preset.description}</span>
           </button>

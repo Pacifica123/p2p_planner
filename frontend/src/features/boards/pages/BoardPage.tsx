@@ -1,4 +1,4 @@
-import { DragEvent, FormEvent, ReactNode, useMemo, useRef, useState } from 'react';
+import { DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { paths } from '@/app/router/paths';
 import { useAppearance } from '@/app/providers/AppearanceProvider';
@@ -30,11 +30,9 @@ import { formatDateTime } from '@/shared/lib/date';
 import type { BoardColumn, Card } from '@/shared/types/api';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
-import { EmptyState } from '@/shared/ui/EmptyState';
 import { ErrorState } from '@/shared/ui/ErrorState';
-import { TextField } from '@/shared/ui/Field';
+import { Icon } from '@/shared/ui/Icon';
 import { LoadingState } from '@/shared/ui/LoadingState';
-import { Panel } from '@/shared/ui/Panel';
 
 const statusTone: Record<string, string> = {
   active: 'default',
@@ -51,6 +49,23 @@ const priorityTone: Record<string, string> = {
   medium: 'medium',
   high: 'high',
   urgent: 'urgent',
+};
+
+const statusLabel: Record<string, string> = {
+  active: 'активна',
+  blocked: 'заблокирована',
+  cancelled: 'отменена',
+  completed: 'завершена',
+  done: 'готово',
+  in_progress: 'в работе',
+  todo: 'запланировано',
+};
+
+const priorityLabel: Record<string, string> = {
+  high: 'высокий',
+  low: 'низкий',
+  medium: 'средний',
+  urgent: 'срочно',
 };
 
 interface DragSessionState extends CardMoveIntent {
@@ -91,6 +106,8 @@ export function BoardPage() {
   const [moveError, setMoveError] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isColumnComposerOpen, setColumnComposerOpen] = useState(false);
+  const [isActivityOpen, setActivityOpen] = useState(false);
   const dropHandledRef = useRef(false);
 
   const hasPendingCardMove = localFirst.isFlushing;
@@ -117,31 +134,43 @@ export function BoardPage() {
     return map;
   }, [currentCards, orderedColumns]);
 
+  useEffect(() => {
+    if (!isActivityOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActivityOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [isActivityOpen]);
+
   function handleCreateColumn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!newColumnName.trim()) return;
     createColumnMutation.mutate(
       { name: newColumnName.trim() },
       {
-        onSuccess: () => setNewColumnName(''),
+        onSuccess: () => {
+          setNewColumnName('');
+          setColumnComposerOpen(false);
+        },
       },
     );
   }
 
   async function handleRenameColumn(column: BoardColumn) {
-    const next = window.prompt('Новое название column', column.name)?.trim();
+    const next = window.prompt('Новое название колонки', column.name)?.trim();
     if (!next || next === column.name) return;
     await updateColumnMutation.mutateAsync({ columnId: column.id, input: { name: next } });
   }
 
   async function handleDeleteColumn(column: BoardColumn) {
-    if (!window.confirm(`Удалить column «${column.name}»?`)) return;
+    if (!window.confirm(`Удалить колонку «${column.name}»?`)) return;
     await deleteColumnMutation.mutateAsync(column.id);
   }
 
   async function handleRenameBoard() {
     if (!boardQuery.data) return;
-    const next = window.prompt('Новое название board', boardQuery.data.name)?.trim();
+    const next = window.prompt('Новое название доски', boardQuery.data.name)?.trim();
     if (!next || next === boardQuery.data.name) return;
     await updateBoardMutation.mutateAsync({ input: { name: next } });
   }
@@ -170,9 +199,9 @@ export function BoardPage() {
       link.remove();
       URL.revokeObjectURL(url);
       const counts = response.bundleManifest.summary.entityCounts;
-      setExportStatus(`Backup JSON готов: ${counts.boards} board, ${counts.columns} columns, ${counts.cards} cards.`);
+      setExportStatus(`Резервная копия готова: ${counts.columns} колонок, ${counts.cards} карточек.`);
     } catch (error) {
-      setExportStatus(error instanceof Error ? error.message : 'Не удалось создать backup/export bundle.');
+      setExportStatus(error instanceof Error ? error.message : 'Не удалось создать резервную копию.');
     } finally {
       setIsExporting(false);
     }
@@ -295,7 +324,7 @@ export function BoardPage() {
 
   function renderColumnCards(columnId: string, cards: Card[]): ReactNode {
     if (!cards.length && !dragSession) {
-      return <EmptyState title="Здесь пока нет карточек" compact description="Добавь card прямо внутри этой колонки." />;
+      return <div className="column-empty">Перетащите карточку сюда или создайте новую.</div>;
     }
 
     const dragCardId = dragSession?.cardId;
@@ -306,7 +335,7 @@ export function BoardPage() {
     cards.forEach((card) => {
       const isDraggedCard = dragCardId === card.id;
       if (!isDraggedCard && dropIndex === visibleIndex) {
-        rows.push(<div key={`drop-${columnId}-${visibleIndex}`} className="card-drop-indicator">Drop here</div>);
+        rows.push(<div key={`drop-${columnId}-${visibleIndex}`} className="card-drop-indicator">Переместить сюда</div>);
       }
 
       const currentVisibleIndex = visibleIndex;
@@ -330,18 +359,18 @@ export function BoardPage() {
           >
             <div className="card-tile__header">
               <strong>{card.title}</strong>
-              {card.isArchived ? <Badge tone="warning">archived</Badge> : null}
+              {card.isArchived ? <Badge tone="warning">в архиве</Badge> : null}
             </div>
             {(boardAppearance?.showCardDescription ?? true) && boardAppearance?.cardPreviewMode !== 'compact' && card.description ? (
               <p className="muted">{card.description}</p>
             ) : null}
             <div className="card-tile__footer">
-              {card.status ? <Badge tone={statusTone[card.status] || 'default'}>{card.status}</Badge> : null}
-              {card.priority ? <Badge tone={priorityTone[card.priority] || 'default'}>{card.priority}</Badge> : null}
-              {localFirst.getEntityStatus('card', card.id)?.status === 'pending' ? <Badge tone="warning">saved locally</Badge> : null}
-              {localFirst.getEntityStatus('card', card.id)?.status === 'failed' ? <Badge tone="urgent">sync failed</Badge> : null}
-              {(boardAppearance?.showCardDates ?? true) && card.dueAt ? <Badge tone="default">due {formatDateTime(card.dueAt)}</Badge> : null}
-              {(boardAppearance?.showCardDates ?? true) && !card.dueAt && card.startAt ? <Badge tone="default">start {formatDateTime(card.startAt)}</Badge> : null}
+              {card.status ? <Badge tone={statusTone[card.status] || 'default'}>{statusLabel[card.status] || card.status}</Badge> : null}
+              {card.priority ? <Badge tone={priorityTone[card.priority] || 'default'}>{priorityLabel[card.priority] || card.priority}</Badge> : null}
+              {localFirst.getEntityStatus('card', card.id)?.status === 'pending' ? <Badge tone="warning">сохранено локально</Badge> : null}
+              {localFirst.getEntityStatus('card', card.id)?.status === 'failed' ? <Badge tone="urgent">ошибка синхронизации</Badge> : null}
+              {(boardAppearance?.showCardDates ?? true) && card.dueAt ? <Badge tone="default">до {formatDateTime(card.dueAt)}</Badge> : null}
+              {(boardAppearance?.showCardDates ?? true) && !card.dueAt && card.startAt ? <Badge tone="default">с {formatDateTime(card.startAt)}</Badge> : null}
             </div>
           </article>
         </div>,
@@ -353,14 +382,14 @@ export function BoardPage() {
     });
 
     if (dropIndex === visibleIndex) {
-      rows.push(<div key={`drop-${columnId}-end`} className="card-drop-indicator">Drop here</div>);
+      rows.push(<div key={`drop-${columnId}-end`} className="card-drop-indicator">Переместить сюда</div>);
     }
 
     return <div className={`card-list ${dragSession ? 'card-list--dragging' : ''}`}>{rows}</div>;
   }
 
   if (!boardId || !workspaceId) {
-    return <ErrorState title="Board не выбрана" description="Выбери board из workspace." />;
+    return <ErrorState title="Доска не выбрана" description="Выберите доску в боковой панели." />;
   }
 
   const hasLocalSnapshot = Boolean(localFirst.snapshot);
@@ -371,72 +400,69 @@ export function BoardPage() {
     <LocalFirstBoardProvider value={localFirst}>
       <div className="page-shell" data-testid="board-page">
         <section className="page-header">
-        <div>
-          <h2 data-testid="board-title">{localFirst.board?.name || 'Board screen'}</h2>
-          <p className="muted">Рабочая kanban-поверхность с колонками, карточками, drag-and-drop и activity feed.</p>
-        </div>
-        <div className="page-header__actions">
-          <Button onClick={() => navigate(paths.workspaceBoards(workspaceId))}>К boards list</Button>
-          <Button iconOnly onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))} title="Настроить board" aria-label="Настроить board">🎨</Button>
-          <Button iconOnly onClick={() => void handleExportBoardBackup()} disabled={isExporting} title="Скачать backup JSON" aria-label="Скачать backup JSON">💾</Button>
-          <Button iconOnly onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data} title="Переименовать board" aria-label="Переименовать board">✏️</Button>
-          <Button iconOnly onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch(), localFirst.flushPendingOperations(), syncBaseline.pullWorkspace(), syncBaseline.refreshStatus()])} title="Обновить board" aria-label="Обновить board">↻</Button>
-        </div>
+          <div>
+            <h2 data-testid="board-title">{localFirst.board?.name || 'Доска'}</h2>
+            {localFirst.board?.description ? <p className="muted">{localFirst.board.description}</p> : null}
+          </div>
+          <div className="page-header__actions">
+            <Button variant="ghost" onClick={() => navigate(paths.workspaceBoards(workspaceId))}>
+              <Icon name="back" size={16} />
+              К доскам
+            </Button>
+            <Button variant="ghost" onClick={() => setActivityOpen(true)} title="Открыть историю доски">
+              <Icon name="history" size={16} />
+              История
+            </Button>
+            <Button iconOnly variant="ghost" onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))} title="Оформление доски" aria-label="Оформление доски">
+              <Icon name="palette" />
+            </Button>
+            <Button iconOnly variant="ghost" onClick={() => void handleExportBoardBackup()} disabled={isExporting} title="Скачать резервную копию JSON" aria-label="Скачать резервную копию JSON">
+              <Icon name="download" />
+            </Button>
+            <Button iconOnly variant="ghost" onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data} title="Переименовать доску" aria-label="Переименовать доску">
+              <Icon name="edit" />
+            </Button>
+            <Button iconOnly variant="ghost" onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch(), localFirst.flushPendingOperations(), syncBaseline.pullWorkspace(), syncBaseline.refreshStatus()])} title="Обновить данные доски" aria-label="Обновить данные доски">
+              <Icon name="refresh" />
+            </Button>
+          </div>
         </section>
 
         <LocalFirstStatusBanner runtime={localFirst} />
         <SyncBaselineStatus runtime={syncBaseline} />
 
         {exportStatus ? (
-        <div className="inline-banner">
-          <strong>Export / backup</strong>
-          <span>{exportStatus}</span>
-          <Button variant="ghost" iconOnly onClick={() => setExportStatus(null)} title="Скрыть сообщение" aria-label="Скрыть сообщение">✕</Button>
-        </div>
-      ) : null}
+          <div className="inline-banner">
+            <strong>Резервная копия</strong>
+            <span>{exportStatus}</span>
+            <Button variant="ghost" iconOnly onClick={() => setExportStatus(null)} title="Скрыть сообщение" aria-label="Скрыть сообщение">
+              <Icon name="close" size={16} />
+            </Button>
+          </div>
+        ) : null}
 
         {moveError ? (
-        <div className="inline-banner inline-banner--error">
-          <strong>Перемещение карточки не сохранилось.</strong>
-          <span>{moveError}</span>
-          <Button variant="ghost" iconOnly onClick={() => setMoveError(null)} title="Скрыть сообщение" aria-label="Скрыть сообщение">✕</Button>
-        </div>
-      ) : null}
+          <div className="inline-banner inline-banner--error">
+            <strong>Перемещение карточки не сохранилось.</strong>
+            <span>{moveError}</span>
+            <Button variant="ghost" iconOnly onClick={() => setMoveError(null)} title="Скрыть сообщение" aria-label="Скрыть сообщение">
+              <Icon name="close" size={16} />
+            </Button>
+          </div>
+        ) : null}
 
-        {isLoading ? <LoadingState label="Загружаем board surface…" /> : null}
-        {isError ? <ErrorState title="Не удалось собрать board surface" description="Проверь backend и доступность выбранной board." /> : null}
+        {isLoading ? <LoadingState label="Загружаем доску…" /> : null}
+        {isError ? <ErrorState title="Не удалось загрузить доску" description="Проверьте соединение с сервером и повторите попытку." /> : null}
 
         {!isLoading && !isError ? (
-        <div className="board-themed-surface" style={boardAppearance ? getBoardSurfaceStyle(boardAppearance, resolvedTheme) : undefined}>
-          <div className="board-layout">
+          <div className="board-themed-surface" style={boardAppearance ? getBoardSurfaceStyle(boardAppearance, resolvedTheme) : undefined}>
+            <BoardOverviewPanel
+              board={localFirst.board || undefined}
+              boardAppearance={boardAppearance}
+              columnCount={orderedColumns.length}
+              cardCount={currentCards.length}
+            />
             <div className="board-main">
-              <div className="board-top-grid">
-                <BoardOverviewPanel
-                  board={localFirst.board || undefined}
-                  boardAppearance={boardAppearance}
-                  columnCount={orderedColumns.length}
-                  cardCount={currentCards.length}
-                />
-
-                <Panel
-                  title="Create column"
-                  description="Быстрое добавление новой колонки без ухода со страницы."
-                >
-                  <form className="inline-form__row inline-form__row--stackable" data-testid="column-create-form" onSubmit={handleCreateColumn}>
-                    <TextField
-                      data-testid="column-name-input"
-                      label="Название колонки"
-                      value={newColumnName}
-                      onChange={(event) => setNewColumnName(event.target.value)}
-                      placeholder="Например, Todo"
-                    />
-                    <Button data-testid="column-create-submit" type="submit" variant="primary" disabled={createColumnMutation.isPending}>
-                      {createColumnMutation.isPending ? 'Создаем…' : '＋ Колонка'}
-                    </Button>
-                  </form>
-                </Panel>
-              </div>
-
               {orderedColumns.length ? (
                 <div className="columns-strip columns-strip--board-surface">
                   {orderedColumns.map((column) => {
@@ -460,26 +486,91 @@ export function BoardPage() {
                       />
                     );
                   })}
+
+                  <section className={`add-column-card ${isColumnComposerOpen ? 'is-open' : ''}`}>
+                    {isColumnComposerOpen ? (
+                      <form className="add-column-card__form" data-testid="column-create-form" onSubmit={handleCreateColumn}>
+                        <label htmlFor="new-column-name">Новая колонка</label>
+                        <input
+                          autoFocus
+                          id="new-column-name"
+                          data-testid="column-name-input"
+                          className="field__input"
+                          value={newColumnName}
+                          onChange={(event) => setNewColumnName(event.target.value)}
+                          placeholder="Например, На проверке"
+                        />
+                        <div className="row-actions">
+                          <Button data-testid="column-create-submit" type="submit" variant="primary" disabled={createColumnMutation.isPending || !newColumnName.trim()}>
+                            {createColumnMutation.isPending ? 'Создаём…' : 'Добавить'}
+                          </Button>
+                          <Button type="button" variant="ghost" onClick={() => {
+                            setNewColumnName('');
+                            setColumnComposerOpen(false);
+                          }}>
+                            Отмена
+                          </Button>
+                        </div>
+                      </form>
+                    ) : (
+                      <button type="button" className="add-column-card__button" data-testid="open-column-composer" onClick={() => setColumnComposerOpen(true)}>
+                        <Icon name="plus" size={17} />
+                        Добавить колонку
+                      </button>
+                    )}
+                  </section>
                 </div>
               ) : (
-                <EmptyState title="У board пока нет колонок" description="Сначала создай колонку, после этого появится место для карточек." />
+                <section className="first-column-state">
+                  <Icon name="board" size={28} />
+                  <strong>На доске пока нет колонок</strong>
+                  <span className="muted">Создайте первую, чтобы добавить карточки.</span>
+                  <Button variant="primary" data-testid="open-column-composer" onClick={() => setColumnComposerOpen(true)}>
+                    <Icon name="plus" size={16} />
+                    Создать колонку
+                  </Button>
+                  {isColumnComposerOpen ? (
+                    <form className="add-column-card__form add-column-card__form--first" data-testid="column-create-form" onSubmit={handleCreateColumn}>
+                      <input
+                        autoFocus
+                        data-testid="column-name-input"
+                        className="field__input"
+                        value={newColumnName}
+                        onChange={(event) => setNewColumnName(event.target.value)}
+                        placeholder="Название колонки"
+                        aria-label="Название новой колонки"
+                      />
+                      <Button data-testid="column-create-submit" type="submit" variant="primary" disabled={createColumnMutation.isPending || !newColumnName.trim()}>
+                        {createColumnMutation.isPending ? 'Создаём…' : 'Добавить'}
+                      </Button>
+                    </form>
+                  ) : null}
+                </section>
               )}
             </div>
-
-            <section className="panel board-sidebar-panel" data-testid="activity-feed">
-              <div className="entity-header">
-                <div>
-                  <h3>Board activity</h3>
-                  <p className="muted">Последние user-facing события по board.</p>
-                </div>
-              </div>
-              {boardActivityQuery.isLoading ? <LoadingState label="Загружаем activity…" compact /> : null}
-              {boardActivityQuery.isError ? <ErrorState title="Не удалось загрузить board activity" compact /> : null}
-              {boardActivityQuery.data ? <ActivityFeed items={boardActivityQuery.data.items} emptyTitle="История board пока пустая" /> : null}
-            </section>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+
+        {isActivityOpen ? (
+          <div className="activity-drawer" role="presentation" onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setActivityOpen(false);
+          }}>
+            <aside className="activity-drawer__surface" role="dialog" aria-modal="true" aria-labelledby="activity-title" data-testid="activity-feed">
+              <div className="activity-drawer__header">
+                <div>
+                  <h3 id="activity-title">История доски</h3>
+                  <p className="muted">Последние понятные действия. Технические данные скрыты внутри события.</p>
+                </div>
+                <Button iconOnly variant="ghost" onClick={() => setActivityOpen(false)} title="Закрыть историю" aria-label="Закрыть историю">
+                  <Icon name="close" />
+                </Button>
+              </div>
+              {boardActivityQuery.isLoading ? <LoadingState label="Загружаем историю…" compact /> : null}
+              {boardActivityQuery.isError ? <ErrorState title="Не удалось загрузить историю" compact onRetry={() => void boardActivityQuery.refetch()} /> : null}
+              {boardActivityQuery.data ? <ActivityFeed items={boardActivityQuery.data.items} emptyTitle="История пока пустая" /> : null}
+            </aside>
+          </div>
+        ) : null}
 
         <CardDetailsDrawer />
       </div>

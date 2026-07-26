@@ -9,6 +9,7 @@ import { AppAppearancePreview } from '@/features/appearance/components/Appearanc
 import { useMyAppearanceQuery, useUpdateMyAppearanceMutation } from '@/features/appearance/hooks/useAppearance';
 import { useAppearance } from '@/app/providers/AppearanceProvider';
 import type { Density, UserAppearancePreferences } from '@/shared/types/api';
+import { Icon } from '@/shared/ui/Icon';
 
 export function UserAppearancePage() {
   const myAppearanceQuery = useMyAppearanceQuery();
@@ -40,11 +41,11 @@ export function UserAppearancePage() {
   }, [draft, persistedUserAppearance]);
 
   if (myAppearanceQuery.isLoading || !draft || !effectiveUserAppearance) {
-    return <LoadingState label="Загружаем user appearance…" />;
+    return <LoadingState label="Загружаем оформление…" />;
   }
 
   if (myAppearanceQuery.isError) {
-    return <ErrorState title="Не удалось загрузить user appearance" onRetry={() => void myAppearanceQuery.refetch()} />;
+    return <ErrorState title="Не удалось загрузить оформление" onRetry={() => void myAppearanceQuery.refetch()} />;
   }
 
   const currentDraft = draft;
@@ -68,49 +69,49 @@ export function UserAppearancePage() {
     <div className="page-shell">
       <section className="page-header">
         <div>
-          <h2>User appearance screen</h2>
-          <p className="muted">Персональные app-level preferences. Это не shared board state и не влияет на других участников.</p>
+          <h2>Вид приложения</h2>
+          <p className="muted">Эти настройки видны только вам и не меняют чужой интерфейс.</p>
         </div>
         <div className="page-header__actions">
-          <Badge tone={hasUnsavedChanges ? 'warning' : 'done'}>{hasUnsavedChanges ? 'preview only' : 'persisted'}</Badge>
-          <Button iconOnly onClick={resetDraft} disabled={!hasUnsavedChanges} title="Сбросить изменения" aria-label="Сбросить изменения">↺</Button>
-          <Button variant="primary" iconOnly onClick={() => void handleSave()} disabled={updateAppearanceMutation.isPending || !hasUnsavedChanges} title="Сохранить user appearance" aria-label="Сохранить user appearance">
-            {updateAppearanceMutation.isPending ? '…' : '💾'}
+          <Badge tone={hasUnsavedChanges ? 'warning' : 'done'}>{hasUnsavedChanges ? 'есть изменения' : 'сохранено'}</Badge>
+          <Button iconOnly onClick={resetDraft} disabled={!hasUnsavedChanges} title="Сбросить изменения" aria-label="Сбросить изменения"><Icon name="refresh" /></Button>
+          <Button variant="primary" onClick={() => void handleSave()} disabled={updateAppearanceMutation.isPending || !hasUnsavedChanges}>
+            {updateAppearanceMutation.isPending ? 'Сохраняем…' : <><Icon name="save" size={16} /> Сохранить</>}
           </Button>
         </div>
       </section>
 
       <div className="customization-layout customization-layout--two-columns">
         <div className="grid">
-          <Panel title="App-level tokens" description="Server model maps to top-level web tokens: theme, density and motion policy.">
+          <Panel title="Интерфейс" description="Тема, плотность элементов и анимация.">
             <div className="grid customization-form-grid">
-              <SelectField label="App theme" value={currentDraft.appTheme} onChange={(event) => setDraft({ ...currentDraft, appTheme: event.target.value as UserAppearancePreferences['appTheme'] })}>
-                <option value="system">system</option>
-                <option value="light">light</option>
-                <option value="dark">dark</option>
+              <SelectField label="Тема" value={currentDraft.appTheme} onChange={(event) => setDraft({ ...currentDraft, appTheme: event.target.value as UserAppearancePreferences['appTheme'] })}>
+                <option value="system">Как в системе</option>
+                <option value="light">Светлая</option>
+                <option value="dark">Тёмная</option>
               </SelectField>
-              <SelectField label="Density" value={currentDraft.density} onChange={(event) => setDraft({ ...currentDraft, density: event.target.value as Density })}>
-                <option value="comfortable">comfortable</option>
-                <option value="compact">compact</option>
+              <SelectField label="Плотность" value={currentDraft.density} onChange={(event) => setDraft({ ...currentDraft, density: event.target.value as Density })}>
+                <option value="comfortable">Свободная</option>
+                <option value="compact">Компактная</option>
               </SelectField>
             </div>
 
             <div className="setting-row-list">
               <label className="toggle-row">
                 <span>
-                  <strong>Reduce motion</strong>
-                  <span className="muted">Отключает transition-heavy feedback в web shell.</span>
+                  <strong>Меньше анимации</strong>
+                  <span className="muted">Убирает плавные переходы и вращение индикаторов.</span>
                 </span>
                 <input type="checkbox" checked={currentDraft.reduceMotion} onChange={(event) => setDraft({ ...currentDraft, reduceMotion: event.target.checked })} />
               </label>
             </div>
           </Panel>
 
-          <Panel title="Rules" description="Preview and persistence boundaries for user customization.">
+          <Panel title="Как это работает">
             <ul className="rules-list">
-              <li>Изменения сначала живут как local preview state и применяются только в текущей вкладке.</li>
-              <li>После Save UI делает optimistic update для <code>me/appearance</code> и затем подтверждает результат сервером.</li>
-              <li>Reset возвращает persisted state и очищает purely local preview.</li>
+              <li>Изменения сразу показываются в этой вкладке.</li>
+              <li>Кнопка «Сохранить» переносит их на сервер.</li>
+              <li>Сброс возвращает последнее сохранённое состояние.</li>
             </ul>
           </Panel>
         </div>

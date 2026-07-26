@@ -9,7 +9,7 @@ import { Button } from '@/shared/ui/Button';
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
-  return 'Не удалось выполнить auth-запрос.';
+  return 'Не удалось связаться с сервером.';
 }
 
 export function AuthPage() {
@@ -21,7 +21,7 @@ export function AuthPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const title = useMemo(() => (mode === 'sign_in' ? 'Sign in' : 'Create account'), [mode]);
+  const title = useMemo(() => (mode === 'sign_in' ? 'Вход' : 'Новый аккаунт'), [mode]);
 
   if (status === 'authenticated') {
     return <Navigate to="/" replace />;
@@ -47,30 +47,30 @@ export function AuthPage() {
 
   return (
     <div className="content-stack" data-testid="auth-page" style={{ maxWidth: 560, margin: '40px auto' }}>
-      <Panel title="Security baseline auth" description="Веб-клиент больше не опирается на X-User-Id как основной режим. Вход идет через server session + refresh cookie + short-lived bearer.">
+      <Panel title="p2pKanban" description="Ваши доски в собственном локальном окружении.">
         <div className="toolbar">
           <Button data-testid="auth-mode-sign-in" variant={mode === 'sign_in' ? 'primary' : 'default'} onClick={() => setMode('sign_in')}>
-            Sign in
+            Войти
           </Button>
           <Button data-testid="auth-mode-sign-up" variant={mode === 'sign_up' ? 'primary' : 'default'} onClick={() => setMode('sign_up')}>
-            Sign up
+            Зарегистрироваться
           </Button>
         </div>
       </Panel>
 
-      <Panel title={title} description="После входа access token хранится только в памяти вкладки, а refresh cookie ротируется сервером.">
+      <Panel title={title} description={mode === 'sign_in' ? 'Введите данные своего аккаунта.' : 'Создайте локальный аккаунт для этого сервера.'}>
         <form className="stack" onSubmit={onSubmit}>
           <TextField data-testid="auth-email" label="Email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-          <TextField data-testid="auth-password" label="Password" type="password" autoComplete={mode === 'sign_in' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} required />
+          <TextField data-testid="auth-password" label="Пароль" type="password" autoComplete={mode === 'sign_in' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} required />
           {mode === 'sign_up' ? (
-            <TextField data-testid="auth-display-name" label="Display name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
+            <TextField data-testid="auth-display-name" label="Имя" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
           ) : null}
 
           {submitError ? <p className="error-text" data-testid="auth-error">{submitError}</p> : null}
 
           <div className="toolbar">
             <Button data-testid="auth-submit" type="submit" variant="primary" disabled={isSubmitting}>
-              {isSubmitting ? 'Working…' : mode === 'sign_in' ? 'Sign in' : 'Create account'}
+              {isSubmitting ? 'Подождите…' : mode === 'sign_in' ? 'Войти' : 'Создать аккаунт'}
             </Button>
           </div>
         </form>

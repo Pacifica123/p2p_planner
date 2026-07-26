@@ -26,8 +26,8 @@ describe('WorkspacesPage', () => {
 
     renderWithProviders(<WorkspacesPage />);
 
-    expect(await screen.findByText('Пока нет ни одного workspace')).toBeInTheDocument();
-    expect(screen.getByText('Create workspace')).toBeInTheDocument();
+    expect(await screen.findByText('Пока нет ни одного пространства')).toBeInTheDocument();
+    expect(screen.getByText('Новое пространство')).toBeInTheDocument();
   });
 
   it('submits workspace creation through the real query/mutation layer', async () => {
@@ -56,12 +56,12 @@ describe('WorkspacesPage', () => {
 
     renderWithProviders(<WorkspacesPage />);
 
-    await screen.findByText('Пока нет ни одного workspace');
+    await screen.findByText('Пока нет ни одного пространства');
 
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('Название'), 'Roadmap');
     await user.type(screen.getByLabelText('Описание'), 'Test workspace');
-    await user.click(screen.getByRole('button', { name: '＋ Workspace' }));
+    await user.click(screen.getByRole('button', { name: 'Создать пространство' }));
 
     await waitFor(() => {
       expect(requests.some((request) => request.method === 'POST' && request.url.endsWith('/workspaces'))).toBe(true);

@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -90,6 +91,21 @@ def git_output(*args: str) -> str | None:
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
+
+
+def public_github_repository(remote: str | None) -> str | None:
+    if not remote:
+        return None
+    ssh = re.fullmatch(r"git@github\.com:([^/]+)/([^/]+?)(?:\.git)?", remote)
+    if ssh:
+        return f"https://github.com/{ssh.group(1)}/{ssh.group(2)}"
+    https = re.fullmatch(
+        r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?",
+        remote,
+    )
+    if https:
+        return f"https://github.com/{https.group(1)}/{https.group(2)}"
+    return None
 
 
 def check_git(version: str, *, require_tag: bool, allow_dirty: bool) -> str | None:
@@ -200,8 +216,13 @@ def build(*, require_tag: bool, allow_dirty: bool) -> tuple[Path, Path]:
         "product": "p2pKanban",
         "version": version,
         "gitCommit": commit,
+        "gitRepository": public_github_repository(
+            git_output("remote", "get-url", "origin")
+        ),
+        "updateBranch": "main",
         "runtime": "Docker Compose v2",
         "entrypoint": "python bootstrap.py",
+        "updateEntrypoint": "python bootstrap.py update",
     }
 
     with zipfile.ZipFile(

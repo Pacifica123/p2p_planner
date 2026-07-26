@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { NavLink, Outlet, useParams } from 'react-router-dom';
 import { paths } from '@/app/router/paths';
 import { useAuthSession } from '@/app/providers/AuthSessionProvider';
@@ -6,33 +7,54 @@ import { useBoardsQuery } from '@/features/boards/hooks/useBoards';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { ErrorState } from '@/shared/ui/ErrorState';
 import { Button } from '@/shared/ui/Button';
+import { Icon } from '@/shared/ui/Icon';
+
+const NAV_COLLAPSED_KEY = 'p2pkanban:navigation-collapsed';
+
+function visibilityLabel(value: string) {
+  return value === 'shared' ? 'общая' : 'личная';
+}
 
 export function MainLayout() {
   const { workspaceId, boardId } = useParams();
   const { user, signOutCurrent, signOutEverywhere } = useAuthSession();
   const workspacesQuery = useWorkspacesQuery();
   const boardsQuery = useBoardsQuery(workspaceId);
+  const [isNavigationCollapsed, setNavigationCollapsed] = useState(
+    () => window.localStorage.getItem(NAV_COLLAPSED_KEY) === 'true',
+  );
+
+  function toggleNavigation() {
+    setNavigationCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem(NAV_COLLAPSED_KEY, String(next));
+      return next;
+    });
+  }
 
   return (
-    <div className="app-shell" data-testid="app-shell">
+    <div className={`app-shell ${isNavigationCollapsed ? 'app-shell--navigation-collapsed' : ''}`} data-testid="app-shell">
       <aside className="app-sidebar" data-testid="main-nav">
         <div className="app-sidebar__brand">
           <NavLink to={paths.home} className="brand-link">
-            P2P Planner
+            p2pKanban
           </NavLink>
-          <p className="brand-copy">Web client v0 alpha</p>
+          <p className="brand-copy">Локальный планировщик</p>
         </div>
 
-        <section className="sidebar-section">
-          <div className="sidebar-section__header">Workspace switcher</div>
+        <details className="sidebar-group" open>
+          <summary className="sidebar-group__summary">
+            <span>Пространства</span>
+            <span className="nav-list__meta">{workspacesQuery.data?.items.length ?? 0}</span>
+          </summary>
           {workspacesQuery.isLoading ? (
-            <LoadingState label="Загружаем workspace list…" compact />
+            <LoadingState label="Загружаем пространства…" compact />
           ) : workspacesQuery.isError ? (
-            <ErrorState title="Не удалось загрузить workspaces" compact />
+            <ErrorState title="Не удалось загрузить пространства" compact />
           ) : (
             <nav className="nav-list nav-list--scroll">
               <NavLink to={paths.home} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`} end>
-                Все workspaces
+                Все пространства
               </NavLink>
               {workspacesQuery.data?.items.map((workspace) => (
                 <NavLink
@@ -41,71 +63,94 @@ export function MainLayout() {
                   className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}
                 >
                   <span>{workspace.name}</span>
-                  <span className="nav-list__meta">{workspace.visibility}</span>
+                  <span className="nav-list__meta">{visibilityLabel(workspace.visibility)}</span>
                 </NavLink>
               ))}
             </nav>
           )}
-        </section>
-
-        <section className="sidebar-section">
-          <div className="sidebar-section__header">Customization</div>
-          <nav className="nav-list">
-            <NavLink to={paths.userAppearance} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}>
-              <span>User appearance</span>
-              <span className="nav-list__meta">app</span>
-            </NavLink>
-            {workspaceId && boardId ? (
-              <NavLink to={paths.boardAppearance(workspaceId, boardId)} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}>
-                <span>Board appearance</span>
-                <span className="nav-list__meta">board</span>
-              </NavLink>
-            ) : null}
-          </nav>
-        </section>
+        </details>
 
         {workspaceId ? (
-          <section className="sidebar-section sidebar-section--flex">
-            <div className="sidebar-section__header">Boards in workspace</div>
+          <details className="sidebar-group sidebar-group--boards" open>
+            <summary className="sidebar-group__summary">
+              <span>Доски</span>
+              <span className="nav-list__meta">{boardsQuery.data?.items.length ?? 0}</span>
+            </summary>
             {boardsQuery.isLoading ? (
-              <LoadingState label="Загружаем boards…" compact />
+              <LoadingState label="Загружаем доски…" compact />
             ) : boardsQuery.isError ? (
-              <ErrorState title="Не удалось загрузить boards" compact />
-            ) : (
-              <nav className="nav-list nav-list--scroll">
-                {boardsQuery.data?.items.map((board) => (
+              <ErrorState title="Не удалось загрузить доски" compact />
+            ) : boardsQuery.data?.items.length ? (
+              <nav className="nav-list nav-list--scroll nav-list--boards">
+                {boardsQuery.data.items.map((board) => (
                   <NavLink
                     key={board.id}
                     to={paths.board(workspaceId, board.id)}
                     className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}
                   >
                     <span>{board.name}</span>
-                    <span className="nav-list__meta">{board.boardType}</span>
                   </NavLink>
                 ))}
               </nav>
+            ) : (
+              <p className="sidebar-empty">В этом пространстве пока нет досок.</p>
             )}
-          </section>
+          </details>
         ) : null}
+
+        <details className="sidebar-group sidebar-group--settings">
+          <summary className="sidebar-group__summary">
+            <span>Настройки</span>
+            <Icon name="settings" size={15} />
+          </summary>
+          <nav className="nav-list">
+            <NavLink to={paths.userAppearance} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}>
+              <span>Вид приложения</span>
+            </NavLink>
+            {workspaceId && boardId ? (
+              <NavLink to={paths.boardAppearance(workspaceId, boardId)} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}>
+                <span>Вид текущей доски</span>
+              </NavLink>
+            ) : null}
+          </nav>
+        </details>
       </aside>
 
       <div className="app-main">
         <header className="topbar">
-          <div>
-            <h1 className="topbar__title">P2P Planner: secured session baseline</h1>
-            <p className="topbar__subtitle">Auth теперь идет через session/refresh flow, а доступ к API больше не строится вокруг X-User-Id.</p>
+          <div className="topbar__context">
+            <Button
+              iconOnly
+              variant="ghost"
+              onClick={toggleNavigation}
+              title={isNavigationCollapsed ? 'Показать навигацию' : 'Скрыть навигацию'}
+              aria-label={isNavigationCollapsed ? 'Показать навигацию' : 'Скрыть навигацию'}
+              aria-expanded={!isNavigationCollapsed}
+            >
+              <Icon name="menu" />
+            </Button>
+            <span className="topbar__product">p2pKanban</span>
           </div>
 
-          <div className="topbar__controls">
-            <div className="topbar__hint">
-              <strong>{user?.displayName || 'Unknown user'}</strong>
-              <div>{user?.email}</div>
+          <details className="account-menu">
+            <summary className="account-menu__summary">
+              <span className="account-menu__avatar">{(user?.displayName || user?.email || '?').slice(0, 1).toUpperCase()}</span>
+              <span className="account-menu__name">{user?.displayName || 'Пользователь'}</span>
+              <Icon name="chevron" size={15} />
+            </summary>
+            <div className="account-menu__popover">
+              <div className="account-menu__identity">
+                <strong>{user?.displayName || 'Пользователь'}</strong>
+                <span>{user?.email}</span>
+              </div>
+              <Button variant="ghost" onClick={() => void signOutCurrent()}>
+                Выйти на этом устройстве
+              </Button>
+              <Button variant="danger" onClick={() => void signOutEverywhere()}>
+                Выйти везде
+              </Button>
             </div>
-            <Button onClick={() => void signOutCurrent()}>Sign out</Button>
-            <Button variant="danger" onClick={() => void signOutEverywhere()}>
-              Sign out all
-            </Button>
-          </div>
+          </details>
         </header>
 
         <main className="content-area" data-testid="route-outlet">

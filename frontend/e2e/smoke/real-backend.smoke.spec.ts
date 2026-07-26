@@ -25,33 +25,34 @@ test('real backend core kanban path uses API without mocks', async ({ page }) =>
   });
 
   await page.goto('/auth');
-  await page.getByRole('button', { name: 'Sign up' }).click();
+  await page.getByRole('button', { name: 'Зарегистрироваться' }).click();
   await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill(password);
-  await page.getByLabel('Display name').fill('Real Browser Smoke');
-  await page.locator('form').getByRole('button', { name: 'Create account' }).click();
+  await page.getByLabel('Пароль').fill(password);
+  await page.getByLabel('Имя').fill('Real Browser Smoke');
+  await page.locator('form').getByRole('button', { name: 'Создать аккаунт' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Workspace list / switcher' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Рабочие пространства' })).toBeVisible();
 
   await page.getByLabel('Название').fill(workspaceName);
   await page.getByLabel('Описание').fill('Created by the real-backend browser smoke gate.');
-  await page.getByRole('button', { name: '＋ Workspace' }).click();
+  await page.getByRole('button', { name: 'Создать пространство' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Create board' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Новая доска' })).toBeVisible();
   await page.getByLabel('Название').fill(boardName);
   await page.getByLabel('Описание').fill('Created without Playwright API mocks.');
-  await page.getByRole('button', { name: '＋ Board' }).click();
+  await page.getByRole('button', { name: 'Создать доску' }).click();
 
   await expect(page.getByRole('heading', { name: boardName })).toBeVisible();
-  await page.getByLabel('Название колонки').fill(columnName);
-  await page.getByRole('button', { name: '＋ Колонка' }).click();
+  await page.getByRole('button', { name: 'Создать колонку' }).click();
+  await page.getByLabel('Название новой колонки').fill(columnName);
+  await page.getByRole('button', { name: 'Добавить' }).click();
 
   const createdColumn = page
     .locator('.column-card')
     .filter({ has: page.getByRole('heading', { name: columnName }) });
   await expect(createdColumn.getByRole('heading', { name: columnName })).toBeVisible();
 
-  await createdColumn.getByPlaceholder('Новая карточка').fill(cardName);
+  await createdColumn.getByPlaceholder('Добавить карточку').fill(cardName);
   await createdColumn.getByRole('button', { name: 'Добавить карточку' }).click();
   await expect(createdColumn.locator('.card-tile').filter({ hasText: cardName })).toBeVisible();
 

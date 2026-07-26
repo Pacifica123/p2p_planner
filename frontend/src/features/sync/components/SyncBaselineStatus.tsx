@@ -1,35 +1,59 @@
 import type { SyncBaselineRuntime } from '@/features/sync/hooks/useSyncBaseline';
 import { Button } from '@/shared/ui/Button';
+import { Icon } from '@/shared/ui/Icon';
 
 interface SyncBaselineStatusProps {
   runtime: SyncBaselineRuntime;
 }
 
-export function SyncBaselineStatus({ runtime }: SyncBaselineStatusProps) {
-  if (runtime.state === 'idle') return null;
-
-  const parts = [`state: ${runtime.state}`];
-  if (runtime.replica?.id) parts.push(`replica: ${runtime.replica.id.slice(0, 8)}`);
-  if (runtime.status?.maxServerOrder !== undefined && runtime.status?.maxServerOrder !== null) {
-    parts.push(`server order: ${runtime.status.maxServerOrder}`);
+function friendlyError(error: string | null) {
+  const normalized = (error || '').toLowerCase();
+  if (normalized.includes('too many requests') || normalized.includes('429')) {
+    return 'Сервер получил слишком много запросов. Подождите немного и повторите.';
   }
-  if (runtime.lastPulledAt) parts.push(`pulled: ${new Date(runtime.lastPulledAt).toLocaleTimeString()}`);
+  if (normalized.includes('network') || normalized.includes('fetch')) {
+    return 'Сервер временно недоступен. Локальные изменения не потеряны.';
+  }
+  return 'Не удалось связаться с сервером. Локальные изменения не потеряны.';
+}
+
+export function SyncBaselineStatus({ runtime }: SyncBaselineStatusProps) {
+  if (runtime.state === 'idle' || runtime.state === 'ready') return null;
+
+  if (runtime.state === 'offline') {
+    return (
+      <div className="sync-notice" data-testid="sync-baseline-status">
+        <span className="sync-notice__dot" />
+        <span>Нет сети. Можно продолжать работу — изменения сохраняются локально.</span>
+      </div>
+    );
+  }
+
+  if (runtime.state === 'registering' || runtime.state === 'pulling') {
+    return (
+      <div className="sync-notice sync-notice--progress" data-testid="sync-baseline-status">
+        <span className="sync-notice__spinner" />
+        <span>{runtime.state === 'registering' ? 'Подключаем устройство…' : 'Синхронизируем изменения…'}</span>
+      </div>
+    );
+  }
 
   return (
-    <div className={`inline-banner sync-baseline-banner ${runtime.state === 'error' ? 'inline-banner--error' : ''}`} data-testid="sync-baseline-status">
+    <div className="inline-banner inline-banner--error sync-baseline-banner" data-testid="sync-baseline-status">
       <div>
-        <strong>Sync baseline</strong>
-        <span>{parts.join(' · ')}</span>
-        {runtime.lastError ? <span className="muted">{runtime.lastError}</span> : null}
+        <strong>Синхронизация приостановлена</strong>
+        <span>{friendlyError(runtime.lastError)}</span>
+        {runtime.lastError ? (
+          <details className="technical-details">
+            <summary>Техническая причина</summary>
+            <code>{runtime.lastError}</code>
+          </details>
+        ) : null}
       </div>
-      <div className="row-actions">
-        <Button variant="ghost" onClick={() => void runtime.refreshStatus()} disabled={!runtime.replica?.id || runtime.state === 'registering'}>
-          Status
-        </Button>
-        <Button variant="ghost" onClick={() => void runtime.pullWorkspace()} disabled={!runtime.replica?.id || runtime.state === 'registering' || runtime.state === 'pulling'}>
-          Pull
-        </Button>
-      </div>
+      <Button variant="ghost" onClick={() => void runtime.pullWorkspace()} disabled={!runtime.replica?.id}>
+        <Icon name="refresh" size={16} />
+        Повторить
+      </Button>
     </div>
   );
 }

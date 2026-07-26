@@ -64,6 +64,26 @@ def check_python() -> None:
     require("http://127.0.0.1:18088" in result.stdout, result.stdout)
     require("POSTGRES" not in result.stdout or "внутри Docker" in result.stdout, result.stdout)
 
+    update_plan = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "bootstrap.py",
+            "update",
+            "--dry-run",
+            "--source-dir",
+            ".",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    require(update_plan.returncode == 0, update_plan.stdout)
+    require("PostgreSQL backup" in update_plan.stdout, update_plan.stdout)
+    require("Docker volumes" in update_plan.stdout, update_plan.stdout)
+
 
 def check_compose_contract() -> None:
     compose_path = ROOT / "deploy/bootstrap/compose.yaml"
@@ -82,6 +102,14 @@ def check_compose_contract() -> None:
     require("service_completed_successfully" in init + postgres + backend, "init ordering is missing")
     require("bootstrap_secrets:" in text, "persistent secret volume is missing")
     require("postgres_data:" in text, "persistent PostgreSQL volume is missing")
+    require(
+        "image: p2pkanban/backend:${P2PKANBAN_IMAGE_TAG:-local}" in backend,
+        "backend does not use a rollback-safe versioned image tag",
+    )
+    require(
+        "image: p2pkanban/web:${P2PKANBAN_IMAGE_TAG:-local}" in web,
+        "web does not use a rollback-safe versioned image tag",
+    )
     require("VITE_API_BASE_URL: /api/v1" in web, "frontend API must be same-origin")
     require("change-me" not in text.lower(), "compose contains a placeholder secret")
     require("POSTGRES_PASSWORD:" not in text, "compose must not embed a DB password")
@@ -121,6 +149,18 @@ def check_manifest_and_readme() -> None:
     require("python bootstrap.py" in readme, "README has no primary bootstrap command")
     require("docs/deployment/zero-config-bootstrap-v1.md" in readme, "README has no bootstrap runbook link")
     require(len(readme.splitlines()) <= 220, "README became dense again")
+
+    release_builder = (ROOT / "tools/build_release_bundle.py").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '"gitRepository": public_github_repository(' in release_builder,
+        "release bundle does not embed its public update repository",
+    )
+    require(
+        '"updateEntrypoint": "python bootstrap.py update"' in release_builder,
+        "release bundle does not advertise the update entrypoint",
+    )
 
 
 def optional_compose_validation() -> None:

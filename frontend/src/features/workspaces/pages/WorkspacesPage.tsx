@@ -10,6 +10,7 @@ import { LoadingState } from '@/shared/ui/LoadingState';
 import { Badge } from '@/shared/ui/Badge';
 import { formatDateTime } from '@/shared/lib/date';
 import { ApiError } from '@/shared/api/errors';
+import { Icon } from '@/shared/ui/Icon';
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
@@ -49,13 +50,13 @@ export function WorkspacesPage() {
   }
 
   async function handleRename(workspaceId: string, currentName: string) {
-    const next = window.prompt('Новое название workspace', currentName)?.trim();
+    const next = window.prompt('Новое название пространства', currentName)?.trim();
     if (!next || next === currentName) return;
     await updateWorkspaceMutation.mutateAsync({ workspaceId, input: { name: next } });
   }
 
   async function handleArchive(workspaceId: string, nameValue: string) {
-    if (!window.confirm(`Архивировать workspace «${nameValue}»?`)) return;
+    if (!window.confirm(`Архивировать пространство «${nameValue}»?`)) return;
     await archiveWorkspaceMutation.mutateAsync(workspaceId);
   }
 
@@ -63,44 +64,44 @@ export function WorkspacesPage() {
     <div className="page-shell" data-testid="workspace-list-page">
       <section className="page-header">
         <div>
-          <h2>Workspace list / switcher</h2>
-          <p className="muted">Основная точка входа в подтвержденный core flow. Отсюда создаются и выбираются workspaces.</p>
+          <h2>Рабочие пространства</h2>
+          <p className="muted">Отдельные проекты, команды и личные планы.</p>
         </div>
       </section>
 
       <section className="panel">
         <div className="entity-header">
           <div>
-            <h3>Create workspace</h3>
-            <p className="muted">Минимальный happy-path поверх текущего backend CRUD.</p>
+            <h3>Новое пространство</h3>
+            <p className="muted">Название и доступ можно изменить позже.</p>
           </div>
         </div>
 
         <form className="inline-form" data-testid="workspace-create-form" onSubmit={handleCreate}>
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <TextField data-testid="workspace-name-input" label="Название" value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, Personal" />
-            <SelectField label="Visibility" value={visibility} onChange={(event) => setVisibility(event.target.value as 'private' | 'shared')}>
-              <option value="private">private</option>
-              <option value="shared">shared</option>
+            <TextField data-testid="workspace-name-input" label="Название" value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, Учёба" />
+            <SelectField label="Доступ" value={visibility} onChange={(event) => setVisibility(event.target.value as 'private' | 'shared')}>
+              <option value="private">Личное</option>
+              <option value="shared">Общее</option>
             </SelectField>
           </div>
-          <TextAreaField data-testid="workspace-description-input" label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Короткое описание workspace" />
+          <TextAreaField data-testid="workspace-description-input" label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Необязательно" />
           <div className="inline-actions">
             <Button data-testid="workspace-create-submit" type="submit" variant="primary" disabled={createWorkspaceMutation.isPending}>
-              {createWorkspaceMutation.isPending ? 'Создаем…' : '＋ Workspace'}
+              {createWorkspaceMutation.isPending ? 'Создаём…' : 'Создать пространство'}
             </Button>
           </div>
           {createWorkspaceMutation.isError ? (
-            <ErrorState compact title="Не удалось создать workspace" description={getErrorMessage(createWorkspaceMutation.error, 'Проверь backend и введенные данные.')} />
+            <ErrorState compact title="Не удалось создать пространство" description={getErrorMessage(createWorkspaceMutation.error, 'Проверьте соединение и введённые данные.')} />
           ) : null}
         </form>
       </section>
 
-      {workspacesQuery.isLoading ? <LoadingState label="Загружаем workspaces…" /> : null}
+      {workspacesQuery.isLoading ? <LoadingState label="Загружаем пространства…" /> : null}
       {workspacesQuery.isError ? (
         <ErrorState
-          title="Не удалось загрузить список workspaces"
-          description={getErrorMessage(workspacesQuery.error, 'Попробуй обновить данные или проверь backend.')}
+          title="Не удалось загрузить пространства"
+          description={getErrorMessage(workspacesQuery.error, 'Обновите данные или проверьте соединение с сервером.')}
           onRetry={() => void workspacesQuery.refetch()}
         />
       ) : null}
@@ -116,28 +117,28 @@ export function WorkspacesPage() {
                     <p className="muted">{workspace.description || 'Без описания'}</p>
                   </div>
                   <div className="row-actions">
-                    <Badge tone={workspace.visibility}>{workspace.visibility}</Badge>
-                    {workspace.isArchived ? <Badge tone="warning">archived</Badge> : null}
+                    <Badge tone={workspace.visibility}>{workspace.visibility === 'shared' ? 'общее' : 'личное'}</Badge>
+                    {workspace.isArchived ? <Badge tone="warning">в архиве</Badge> : null}
                   </div>
                 </div>
 
                 <div className="grid" style={{ marginTop: 12 }}>
-                  <div className="meta-line">updated: {formatDateTime(workspace.updatedAt)}</div>
-                  <div className="meta-line">members: {workspace.memberCount ?? 0}</div>
+                  <div className="meta-line">Изменено {formatDateTime(workspace.updatedAt)}</div>
+                  <div className="meta-line">Участников: {workspace.memberCount ?? 0}</div>
                 </div>
 
                 <div className="page-header__actions" style={{ marginTop: 16 }}>
                   <Button data-testid="workspace-open-boards" variant="primary" onClick={() => navigate(paths.workspaceBoards(workspace.id))}>
-                    Открыть boards
+                    Открыть доски
                   </Button>
                   <Button
                     iconOnly
                     onClick={() => void handleRename(workspace.id, workspace.name)}
                     disabled={updateWorkspaceMutation.isPending}
-                    title="Переименовать workspace"
-                    aria-label="Переименовать workspace"
+                    title="Переименовать пространство"
+                    aria-label="Переименовать пространство"
                   >
-                    ✏️
+                    <Icon name="edit" size={16} />
                   </Button>
                   {!workspace.isArchived ? (
                     <Button
@@ -145,10 +146,10 @@ export function WorkspacesPage() {
                       variant="danger"
                       onClick={() => void handleArchive(workspace.id, workspace.name)}
                       disabled={archiveWorkspaceMutation.isPending}
-                      title="Архивировать workspace"
-                      aria-label="Архивировать workspace"
+                      title="Архивировать пространство"
+                      aria-label="Архивировать пространство"
                     >
-                      📦
+                      <Icon name="archive" size={16} />
                     </Button>
                   ) : null}
                 </div>
@@ -156,7 +157,7 @@ export function WorkspacesPage() {
             ))}
           </div>
         ) : (
-          <EmptyState title="Пока нет ни одного workspace" description="Создай первый workspace, чтобы перейти к boards, columns и cards." />
+          <EmptyState title="Пока нет ни одного пространства" description="Создайте первое пространство для своих досок." />
         )
       ) : null}
     </div>

@@ -40,27 +40,28 @@ import { Button } from '@/shared/ui/Button';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { ErrorState } from '@/shared/ui/ErrorState';
 import { SelectField, TextAreaField, TextField } from '@/shared/ui/Field';
+import { Icon } from '@/shared/ui/Icon';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { formatDateTime } from '@/shared/lib/date';
 import type { BoardLabel, CardPriority, CardStatus, Checklist, ChecklistItem, Comment } from '@/shared/types/api';
 
 const STATUS_OPTIONS = [
   { value: '', label: '—' },
-  { value: 'active', label: 'active' },
-  { value: 'completed', label: 'completed' },
-  { value: 'cancelled', label: 'cancelled' },
-  { value: 'todo', label: 'todo (legacy)' },
-  { value: 'in_progress', label: 'in_progress (legacy)' },
-  { value: 'blocked', label: 'blocked (legacy)' },
-  { value: 'done', label: 'done (legacy)' },
+  { value: 'active', label: 'Активна' },
+  { value: 'completed', label: 'Завершена' },
+  { value: 'cancelled', label: 'Отменена' },
+  { value: 'todo', label: 'Запланирована (старый формат)' },
+  { value: 'in_progress', label: 'В работе (старый формат)' },
+  { value: 'blocked', label: 'Заблокирована (старый формат)' },
+  { value: 'done', label: 'Готово (старый формат)' },
 ];
 
 const PRIORITY_OPTIONS = [
   { value: '', label: '—' },
-  { value: 'low', label: 'low' },
-  { value: 'medium', label: 'medium' },
-  { value: 'high', label: 'high' },
-  { value: 'urgent', label: 'urgent' },
+  { value: 'low', label: 'Низкий' },
+  { value: 'medium', label: 'Средний' },
+  { value: 'high', label: 'Высокий' },
+  { value: 'urgent', label: 'Срочный' },
 ];
 
 export function CardDetailsDrawer() {
@@ -202,13 +203,13 @@ export function CardDetailsDrawer() {
   }
 
   async function handleRenameLabel(label: BoardLabel) {
-    const nextName = window.prompt('Новое название label', label.name)?.trim();
+    const nextName = window.prompt('Новое название метки', label.name)?.trim();
     if (!nextName || nextName === label.name) return;
     await updateLabelMutation.mutateAsync({ labelId: label.id, input: { name: nextName } });
   }
 
   async function handleDeleteLabel(label: BoardLabel) {
-    if (!window.confirm(`Удалить label «${label.name}» и снять его со всех карточек?`)) return;
+    if (!window.confirm(`Удалить метку «${label.name}» и снять её со всех карточек?`)) return;
     await deleteLabelMutation.mutateAsync(label.id);
   }
 
@@ -221,13 +222,13 @@ export function CardDetailsDrawer() {
   }
 
   async function handleRenameChecklist(checklist: Checklist) {
-    const nextTitle = window.prompt('Новое название checklist', checklist.title)?.trim();
+    const nextTitle = window.prompt('Новое название чек-листа', checklist.title)?.trim();
     if (!nextTitle || nextTitle === checklist.title) return;
     await updateChecklistMutation.mutateAsync({ checklistId: checklist.id, input: { title: nextTitle } });
   }
 
   async function handleDeleteChecklist(checklist: Checklist) {
-    if (!window.confirm(`Удалить checklist «${checklist.title}»?`)) return;
+    if (!window.confirm(`Удалить чек-лист «${checklist.title}»?`)) return;
     await deleteChecklistMutation.mutateAsync(checklist.id);
   }
 
@@ -243,13 +244,13 @@ export function CardDetailsDrawer() {
   }
 
   async function handleRenameChecklistItem(item: ChecklistItem) {
-    const nextTitle = window.prompt('Новое название item', item.title)?.trim();
+    const nextTitle = window.prompt('Новое название пункта', item.title)?.trim();
     if (!nextTitle || nextTitle === item.title) return;
     await updateChecklistItemMutation.mutateAsync({ itemId: item.id, input: { title: nextTitle } });
   }
 
   async function handleDeleteChecklistItem(item: ChecklistItem) {
-    if (!window.confirm(`Удалить checklist item «${item.title}»?`)) return;
+    if (!window.confirm(`Удалить пункт «${item.title}»?`)) return;
     await deleteChecklistItemMutation.mutateAsync(item.id);
   }
 
@@ -262,13 +263,13 @@ export function CardDetailsDrawer() {
   }
 
   async function handleEditComment(comment: Comment) {
-    const nextBody = window.prompt('Новый текст comment', comment.body)?.trim();
+    const nextBody = window.prompt('Новый текст комментария', comment.body)?.trim();
     if (!nextBody || nextBody === comment.body) return;
     await updateCommentMutation.mutateAsync({ commentId: comment.id, body: nextBody });
   }
 
   async function handleDeleteComment(comment: Comment) {
-    if (!window.confirm('Удалить comment?')) return;
+    if (!window.confirm('Удалить комментарий?')) return;
     await deleteCommentMutation.mutateAsync(comment.id);
   }
 
@@ -279,37 +280,37 @@ export function CardDetailsDrawer() {
       <aside className="drawer__surface" onClick={(event) => event.stopPropagation()}>
         <div className="drawer__header">
           <div>
-            <h3>Card details</h3>
-            <p className="muted">Минимально полезная карточка: labels, checklists, comments и history.</p>
+            <h3>Карточка</h3>
+            <p className="muted">Описание, метки, чек-листы, комментарии и история.</p>
           </div>
           <Button variant="ghost" iconOnly onClick={closeDrawer} title="Закрыть" aria-label="Закрыть">
-            ✕
+            <Icon name="close" />
           </Button>
         </div>
 
-        {cardQuery.isLoading && !card ? <LoadingState label="Загружаем card detail…" /> : null}
+        {cardQuery.isLoading && !card ? <LoadingState label="Загружаем карточку…" /> : null}
         {cardQuery.isError && !card ? <ErrorState title="Не удалось загрузить карточку" onRetry={() => void cardQuery.refetch()} /> : null}
 
         {card ? (
           <>
             <div className="grid" style={{ gap: 14 }}>
-              <TextField label="Title" value={title} onChange={(event) => setTitle(event.target.value)} />
-              <TextAreaField label="Description" value={description} onChange={(event) => setDescription(event.target.value)} />
-              <SelectField label="Status" value={status ?? ''} onChange={(event) => setStatus(event.target.value ? (event.target.value as CardStatus) : null)}>
+              <TextField label="Название" value={title} onChange={(event) => setTitle(event.target.value)} />
+              <TextAreaField label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} />
+              <SelectField label="Статус" value={status ?? ''} onChange={(event) => setStatus(event.target.value ? (event.target.value as CardStatus) : null)}>
                 {STATUS_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>
                 ))}
               </SelectField>
-              <SelectField label="Priority" value={priority ?? ''} onChange={(event) => setPriority(event.target.value ? (event.target.value as CardPriority) : null)}>
+              <SelectField label="Приоритет" value={priority ?? ''} onChange={(event) => setPriority(event.target.value ? (event.target.value as CardPriority) : null)}>
                 {PRIORITY_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>
                 ))}
               </SelectField>
-              <SelectField label="Column" value={columnId} onChange={(event) => setColumnId(event.target.value)}>
+              <SelectField label="Колонка" value={columnId} onChange={(event) => setColumnId(event.target.value)}>
                 {columnOptions.map((column) => (
                   <option key={column.id} value={column.id}>
                     {column.name}
@@ -319,28 +320,28 @@ export function CardDetailsDrawer() {
             </div>
 
             <div className="grid">
-              <div className="key-value"><span className="muted">Created</span><span>{formatDateTime(card.createdAt)}</span></div>
-              <div className="key-value"><span className="muted">Updated</span><span>{formatDateTime(card.updatedAt)}</span></div>
-              <div className="key-value"><span className="muted">Archived</span><span>{card.isArchived ? 'yes' : 'no'}</span></div>
-              <div className="key-value"><span className="muted">Local sync</span><span><Badge tone={cardSyncStatus === 'failed' ? 'urgent' : cardSyncStatus === 'pending' ? 'warning' : 'done'}>{cardSyncStatus === 'pending' ? 'saved locally' : cardSyncStatus === 'failed' ? 'sync failed' : 'synced'}</Badge></span></div>
+              <div className="key-value"><span className="muted">Создана</span><span>{formatDateTime(card.createdAt)}</span></div>
+              <div className="key-value"><span className="muted">Изменена</span><span>{formatDateTime(card.updatedAt)}</span></div>
+              <div className="key-value"><span className="muted">Архив</span><span>{card.isArchived ? 'да' : 'нет'}</span></div>
+              <div className="key-value"><span className="muted">Синхронизация</span><span><Badge tone={cardSyncStatus === 'failed' ? 'urgent' : cardSyncStatus === 'pending' ? 'warning' : 'done'}>{cardSyncStatus === 'pending' ? 'сохранено локально' : cardSyncStatus === 'failed' ? 'ошибка' : 'готово'}</Badge></span></div>
             </div>
 
             <div className="inline-actions">
               <Button variant="primary" iconOnly onClick={() => void handleSave()} disabled={updateCardMutation.isPending || moveCardMutation.isPending} title="Сохранить карточку" aria-label="Сохранить карточку">
-                {updateCardMutation.isPending || moveCardMutation.isPending ? '…' : '💾'}
+                {updateCardMutation.isPending || moveCardMutation.isPending ? '…' : <Icon name="save" />}
               </Button>
               <Button iconOnly onClick={() => void handleArchiveToggle()} disabled={archiveCardMutation.isPending || unarchiveCardMutation.isPending || isLocalPendingCard} title={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'} aria-label={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'}>
-                {archiveCardMutation.isPending || unarchiveCardMutation.isPending ? '…' : card.isArchived ? '📤' : '📦'}
+                {archiveCardMutation.isPending || unarchiveCardMutation.isPending ? '…' : <Icon name="archive" />}
               </Button>
               <Button variant="danger" iconOnly onClick={() => void handleDelete()} disabled={deleteCardMutation.isPending || isLocalPendingCard} title="Удалить карточку" aria-label="Удалить карточку">
-                {deleteCardMutation.isPending ? '…' : '🗑️'}
+                {deleteCardMutation.isPending ? '…' : <Icon name="trash" />}
               </Button>
             </div>
 
             {isLocalPendingCard ? (
               <div className="inline-banner">
-                <strong>Card saved locally.</strong>
-                <span>Labels, checklists, comments and server history will unlock after this new card syncs.</span>
+                <strong>Карточка сохранена локально.</strong>
+                <span>Метки, чек-листы, комментарии и история станут доступны после синхронизации.</span>
               </div>
             ) : null}
 
@@ -349,17 +350,17 @@ export function CardDetailsDrawer() {
                 <section className="panel">
                   <div className="entity-header">
                     <div>
-                      <h4>Labels</h4>
-                  <p className="muted">Создать label на board и назначить/снять его с карточки.</p>
+                      <h4>Метки</h4>
+                  <p className="muted">Создайте метку доски и назначьте её карточке.</p>
                 </div>
               </div>
               <form className="inline-form__row inline-form__row--tight" onSubmit={handleCreateLabel}>
-                <TextField label="Label" value={newLabelName} onChange={(event) => setNewLabelName(event.target.value)} placeholder="Например, bug" />
-                <TextField label="Color" value={newLabelColor} onChange={(event) => setNewLabelColor(event.target.value)} placeholder="#60a5fa" />
-                <Button type="submit" variant="primary" disabled={createLabelMutation.isPending}>＋</Button>
+                <TextField label="Метка" value={newLabelName} onChange={(event) => setNewLabelName(event.target.value)} placeholder="Например, Ошибка" />
+                <TextField label="Цвет" value={newLabelColor} onChange={(event) => setNewLabelColor(event.target.value)} placeholder="#60a5fa" />
+                <Button type="submit" variant="primary" iconOnly disabled={createLabelMutation.isPending} title="Добавить метку" aria-label="Добавить метку"><Icon name="plus" size={16} /></Button>
               </form>
-              {labelsQuery.isLoading ? <LoadingState label="Загружаем labels…" compact /> : null}
-              {labelsQuery.isError ? <ErrorState title="Не удалось загрузить labels" compact /> : null}
+              {labelsQuery.isLoading ? <LoadingState label="Загружаем метки…" compact /> : null}
+              {labelsQuery.isError ? <ErrorState title="Не удалось загрузить метки" compact /> : null}
               {labelsQuery.data?.items.length ? (
                 <div className="grid" style={{ gap: 8 }}>
                   {labelsQuery.data.items.map((label) => {
@@ -378,30 +379,30 @@ export function CardDetailsDrawer() {
                           </span>
                         </label>
                         <div className="row-actions">
-                          <Button iconOnly onClick={() => void handleRenameLabel(label)} disabled={updateLabelMutation.isPending} title="Переименовать label" aria-label="Переименовать label">✏️</Button>
-                          <Button variant="danger" iconOnly onClick={() => void handleDeleteLabel(label)} disabled={deleteLabelMutation.isPending} title="Удалить label" aria-label="Удалить label">🗑️</Button>
+                          <Button iconOnly onClick={() => void handleRenameLabel(label)} disabled={updateLabelMutation.isPending} title="Переименовать метку" aria-label="Переименовать метку"><Icon name="edit" size={16} /></Button>
+                          <Button variant="danger" iconOnly onClick={() => void handleDeleteLabel(label)} disabled={deleteLabelMutation.isPending} title="Удалить метку" aria-label="Удалить метку"><Icon name="trash" size={16} /></Button>
                         </div>
                       </div>
                     );
                   })}
                 </div>
               ) : null}
-              {!labelsQuery.isLoading && !labelsQuery.isError && !labelsQuery.data?.items.length ? <EmptyState title="Labels пока нет" compact /> : null}
+              {!labelsQuery.isLoading && !labelsQuery.isError && !labelsQuery.data?.items.length ? <EmptyState title="Меток пока нет" compact /> : null}
             </section>
 
             <section className="panel">
               <div className="entity-header">
                 <div>
-                  <h4>Checklists</h4>
-                  <p className="muted">Минимальный checklist flow: создать список, добавить item, отметить done/undone, удалить item.</p>
+                  <h4>Чек-листы</h4>
+                  <p className="muted">Создавайте списки и отмечайте выполненные пункты.</p>
                 </div>
               </div>
               <form className="inline-form__row inline-form__row--tight" onSubmit={handleCreateChecklist}>
-                <TextField label="New checklist" value={newChecklistTitle} onChange={(event) => setNewChecklistTitle(event.target.value)} placeholder="Acceptance criteria" />
-                <Button type="submit" variant="primary" disabled={createChecklistMutation.isPending}>＋</Button>
+                <TextField label="Новый чек-лист" value={newChecklistTitle} onChange={(event) => setNewChecklistTitle(event.target.value)} placeholder="Критерии готовности" />
+                <Button type="submit" variant="primary" iconOnly disabled={createChecklistMutation.isPending} title="Добавить чек-лист" aria-label="Добавить чек-лист"><Icon name="plus" size={16} /></Button>
               </form>
-              {checklistsQuery.isLoading ? <LoadingState label="Загружаем checklists…" compact /> : null}
-              {checklistsQuery.isError ? <ErrorState title="Не удалось загрузить checklists" compact /> : null}
+              {checklistsQuery.isLoading ? <LoadingState label="Загружаем чек-листы…" compact /> : null}
+              {checklistsQuery.isError ? <ErrorState title="Не удалось загрузить чек-листы" compact /> : null}
               {checklistsQuery.data?.items.length ? (
                 <div className="grid" style={{ gap: 14 }}>
                   {checklistsQuery.data.items.map((checklist) => (
@@ -409,11 +410,11 @@ export function CardDetailsDrawer() {
                       <div className="entity-header">
                         <div>
                           <strong>{checklist.title}</strong>
-                          <p className="muted">{checklist.items.filter((item) => item.isDone).length}/{checklist.items.length} done</p>
+                          <p className="muted">{checklist.items.filter((item) => item.isDone).length}/{checklist.items.length} выполнено</p>
                         </div>
                         <div className="row-actions">
-                          <Button iconOnly onClick={() => void handleRenameChecklist(checklist)} disabled={updateChecklistMutation.isPending} title="Переименовать checklist" aria-label="Переименовать checklist">✏️</Button>
-                          <Button variant="danger" iconOnly onClick={() => void handleDeleteChecklist(checklist)} disabled={deleteChecklistMutation.isPending} title="Удалить checklist" aria-label="Удалить checklist">🗑️</Button>
+                          <Button iconOnly onClick={() => void handleRenameChecklist(checklist)} disabled={updateChecklistMutation.isPending} title="Переименовать чек-лист" aria-label="Переименовать чек-лист"><Icon name="edit" size={16} /></Button>
+                          <Button variant="danger" iconOnly onClick={() => void handleDeleteChecklist(checklist)} disabled={deleteChecklistMutation.isPending} title="Удалить чек-лист" aria-label="Удалить чек-лист"><Icon name="trash" size={16} /></Button>
                         </div>
                       </div>
                       <div className="grid" style={{ gap: 8 }}>
@@ -429,53 +430,53 @@ export function CardDetailsDrawer() {
                               <span style={{ textDecoration: item.isDone ? 'line-through' : undefined }}>{item.title}</span>
                             </label>
                             <div className="row-actions">
-                              <Button iconOnly onClick={() => void handleRenameChecklistItem(item)} disabled={updateChecklistItemMutation.isPending} title="Переименовать item" aria-label="Переименовать item">✏️</Button>
-                              <Button variant="danger" iconOnly onClick={() => void handleDeleteChecklistItem(item)} disabled={deleteChecklistItemMutation.isPending} title="Удалить item" aria-label="Удалить item">🗑️</Button>
+                              <Button iconOnly onClick={() => void handleRenameChecklistItem(item)} disabled={updateChecklistItemMutation.isPending} title="Переименовать пункт" aria-label="Переименовать пункт"><Icon name="edit" size={16} /></Button>
+                              <Button variant="danger" iconOnly onClick={() => void handleDeleteChecklistItem(item)} disabled={deleteChecklistItemMutation.isPending} title="Удалить пункт" aria-label="Удалить пункт"><Icon name="trash" size={16} /></Button>
                             </div>
                           </div>
                         ))}
                         <div className="inline-form__row inline-form__row--tight">
                           <TextField
-                            label="New item"
+                            label="Новый пункт"
                             value={newItemByChecklist[checklist.id] || ''}
                             onChange={(event) => setNewItemByChecklist((current) => ({ ...current, [checklist.id]: event.target.value }))}
                             placeholder="Сделать smoke"
                           />
-                          <Button type="button" variant="primary" onClick={() => void handleCreateChecklistItem(checklist.id)} disabled={createChecklistItemMutation.isPending}>＋</Button>
+                          <Button type="button" variant="primary" iconOnly onClick={() => void handleCreateChecklistItem(checklist.id)} disabled={createChecklistItemMutation.isPending} title="Добавить пункт" aria-label="Добавить пункт"><Icon name="plus" size={16} /></Button>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : null}
-              {!checklistsQuery.isLoading && !checklistsQuery.isError && !checklistsQuery.data?.items.length ? <EmptyState title="Checklists пока нет" compact /> : null}
+              {!checklistsQuery.isLoading && !checklistsQuery.isError && !checklistsQuery.data?.items.length ? <EmptyState title="Чек-листов пока нет" compact /> : null}
             </section>
 
             <section className="panel">
               <div className="entity-header">
                 <div>
-                  <h4>Comments</h4>
-                  <p className="muted">Comments timeline внутри карточки.</p>
+                  <h4>Комментарии</h4>
+                  <p className="muted">Заметки и обсуждение внутри карточки.</p>
                 </div>
               </div>
               <form className="grid" style={{ gap: 10 }} onSubmit={handleCreateComment}>
-                <TextAreaField label="New comment" value={newCommentBody} onChange={(event) => setNewCommentBody(event.target.value)} placeholder="Оставить заметку по карточке…" />
-                <Button type="submit" variant="primary" disabled={createCommentMutation.isPending}>＋ Comment</Button>
+                <TextAreaField label="Новый комментарий" value={newCommentBody} onChange={(event) => setNewCommentBody(event.target.value)} placeholder="Оставить заметку по карточке…" />
+                <Button type="submit" variant="primary" disabled={createCommentMutation.isPending}><Icon name="plus" size={16} /> Добавить</Button>
               </form>
-              {commentsQuery.isLoading ? <LoadingState label="Загружаем comments…" compact /> : null}
-              {commentsQuery.isError ? <ErrorState title="Не удалось загрузить comments" compact /> : null}
+              {commentsQuery.isLoading ? <LoadingState label="Загружаем комментарии…" compact /> : null}
+              {commentsQuery.isError ? <ErrorState title="Не удалось загрузить комментарии" compact /> : null}
               {commentsQuery.data?.items.length ? (
                 <div className="grid" style={{ gap: 10 }}>
                   {commentsQuery.data.items.map((comment) => (
                     <article key={comment.id} className="activity-item">
                       <div className="activity-item__header">
                         <div>
-                          <strong>Comment</strong>
-                          <p className="muted">{formatDateTime(comment.createdAt)}{comment.editedAt ? ` · edited ${formatDateTime(comment.editedAt)}` : ''}</p>
+                          <strong>Комментарий</strong>
+                          <p className="muted">{formatDateTime(comment.createdAt)}{comment.editedAt ? ` · изменён ${formatDateTime(comment.editedAt)}` : ''}</p>
                         </div>
                         <div className="row-actions">
-                          <Button iconOnly onClick={() => void handleEditComment(comment)} disabled={updateCommentMutation.isPending} title="Редактировать comment" aria-label="Редактировать comment">✏️</Button>
-                          <Button variant="danger" iconOnly onClick={() => void handleDeleteComment(comment)} disabled={deleteCommentMutation.isPending} title="Удалить comment" aria-label="Удалить comment">🗑️</Button>
+                          <Button iconOnly onClick={() => void handleEditComment(comment)} disabled={updateCommentMutation.isPending} title="Редактировать комментарий" aria-label="Редактировать комментарий"><Icon name="edit" size={16} /></Button>
+                          <Button variant="danger" iconOnly onClick={() => void handleDeleteComment(comment)} disabled={deleteCommentMutation.isPending} title="Удалить комментарий" aria-label="Удалить комментарий"><Icon name="trash" size={16} /></Button>
                         </div>
                       </div>
                       <p>{comment.body}</p>
@@ -483,17 +484,17 @@ export function CardDetailsDrawer() {
                   ))}
                 </div>
               ) : null}
-              {!commentsQuery.isLoading && !commentsQuery.isError && !commentsQuery.data?.items.length ? <EmptyState title="Comments пока нет" compact /> : null}
+              {!commentsQuery.isLoading && !commentsQuery.isError && !commentsQuery.data?.items.length ? <EmptyState title="Комментариев пока нет" compact /> : null}
             </section>
 
             <section className="panel">
               <div className="entity-header">
                 <div>
-                  <h4>Card history</h4>
-                  <p className="muted">User-facing timeline из activity read-model.</p>
+                  <h4>История карточки</h4>
+                  <p className="muted">Последние понятные действия с карточкой.</p>
                 </div>
               </div>
-              {activityQuery.isLoading ? <LoadingState label="Загружаем card history…" compact /> : null}
+              {activityQuery.isLoading ? <LoadingState label="Загружаем историю карточки…" compact /> : null}
               {activityQuery.isError ? <ErrorState title="Не удалось загрузить историю карточки" compact /> : null}
               {activityQuery.data ? <ActivityFeed items={activityQuery.data.items} emptyTitle="История карточки пока пустая" /> : null}
               {!activityQuery.isLoading && !activityQuery.isError && !activityQuery.data ? <EmptyState title="История карточки пока пустая" compact /> : null}

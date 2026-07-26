@@ -3,6 +3,22 @@ import { Badge } from '@/shared/ui/Badge';
 import { getBoardPresetDefinition, getBoardSurfaceStyle } from '@/shared/appearance/theme';
 import type { BoardAppearanceSettings, UserAppearancePreferences } from '@/shared/types/api';
 
+const themeLabels: Record<string, string> = {
+  dark: 'тёмная',
+  light: 'светлая',
+  system: 'системная',
+};
+
+const densityLabels: Record<string, string> = {
+  comfortable: 'свободная',
+  compact: 'компактная',
+};
+
+const cardModeLabels: Record<string, string> = {
+  compact: 'компактные',
+  expanded: 'подробные',
+};
+
 export function AppAppearancePreview({ appearance }: { appearance: UserAppearancePreferences }) {
   const { resolvedTheme } = useAppearance();
 
@@ -10,35 +26,35 @@ export function AppAppearancePreview({ appearance }: { appearance: UserAppearanc
     <div className="appearance-preview-card">
       <div className="appearance-preview-card__header">
         <div>
-          <h4>App preview</h4>
-          <p className="muted">Текущая web shell preview без сохранения на сервер до нажатия Save.</p>
+          <h4>Предпросмотр приложения</h4>
+          <p className="muted">Так будет выглядеть интерфейс после сохранения.</p>
         </div>
         <div className="row-actions">
-          <Badge tone={appearance.appTheme}>{appearance.appTheme}</Badge>
-          <Badge tone={resolvedTheme}>resolved: {resolvedTheme}</Badge>
-          <Badge tone={appearance.density}>{appearance.density}</Badge>
+          <Badge tone={appearance.appTheme}>{themeLabels[appearance.appTheme] || appearance.appTheme}</Badge>
+          <Badge tone={resolvedTheme}>{resolvedTheme === 'dark' ? 'тёмная' : 'светлая'}</Badge>
+          <Badge tone={appearance.density}>{densityLabels[appearance.density] || appearance.density}</Badge>
         </div>
       </div>
       <div className="app-preview-shell">
         <aside className="app-preview-shell__sidebar">
-          <strong>P2P Planner</strong>
-          <span className="muted">Navigation / settings</span>
+          <strong>p2pKanban</strong>
+          <span className="muted">Навигация</span>
         </aside>
         <div className="app-preview-shell__main">
           <div className="app-preview-shell__topbar">
-            <strong>User appearance</strong>
-            <span className="muted">reduceMotion: {appearance.reduceMotion ? 'on' : 'off'}</span>
+            <strong>Вид приложения</strong>
+            <span className="muted">анимация: {appearance.reduceMotion ? 'снижена' : 'обычная'}</span>
           </div>
           <div className="app-preview-shell__content">
             <div className="app-preview-shell__panel">
-              <strong>Preview panel</strong>
-              <p className="muted">Theme and density are applied through app tokens.</p>
+              <strong>Рабочая панель</strong>
+              <p className="muted">Тема и плотность применяются сразу.</p>
             </div>
             <div className="app-preview-shell__panel">
-              <strong>Form surface</strong>
+              <strong>Форма</strong>
               <div className="app-preview-shell__chips">
-                <span className="badge badge--default">comfortable</span>
-                <span className="badge badge--default">compact</span>
+                <span className="badge badge--default">обычная</span>
+                <span className="badge badge--default">компактная</span>
               </div>
             </div>
           </div>
@@ -56,24 +72,24 @@ export function BoardAppearancePreview({ appearance }: { appearance: BoardAppear
     <div className="appearance-preview-card">
       <div className="appearance-preview-card__header">
         <div>
-          <h4>Board preview</h4>
-          <p className="muted">Отдельный preview canvas для board-level appearance без вмешательства в core editor screen.</p>
+          <h4>Предпросмотр доски</h4>
+          <p className="muted">Фон, колонки и карточки до сохранения.</p>
         </div>
         <div className="row-actions">
           <Badge tone="default">{preset.label}</Badge>
-          <Badge tone={resolvedTheme}>app {resolvedTheme}</Badge>
+          <Badge tone={resolvedTheme}>{resolvedTheme === 'dark' ? 'тёмная' : 'светлая'}</Badge>
         </div>
       </div>
       <div className="board-preview-surface" style={getBoardSurfaceStyle(appearance, resolvedTheme)}>
         <div className="board-preview-surface__topbar">
-          <strong>Roadmap</strong>
+          <strong>План</strong>
           <div className="row-actions">
-            <Badge tone={appearance.columnDensity}>{appearance.columnDensity}</Badge>
-            <Badge tone={appearance.cardPreviewMode}>{appearance.cardPreviewMode}</Badge>
+            <Badge tone={appearance.columnDensity}>{densityLabels[appearance.columnDensity] || appearance.columnDensity}</Badge>
+            <Badge tone={appearance.cardPreviewMode}>{cardModeLabels[appearance.cardPreviewMode] || appearance.cardPreviewMode}</Badge>
           </div>
         </div>
         <div className="board-preview-columns">
-          {['Todo', 'Doing', 'Done'].map((title, index) => (
+          {['Будущее', 'Настоящее', 'Готово'].map((title, index) => (
             <section key={title} className="board-preview-column">
               <div className="column-card__header">
                 <strong>{title}</strong>
@@ -82,11 +98,11 @@ export function BoardAppearancePreview({ appearance }: { appearance: BoardAppear
               <div className="card-list">
                 {Array.from({ length: cards }).map((_, cardIndex) => (
                   <article key={`${title}-${cardIndex}`} className="card-tile">
-                    <strong>{cardIndex === 0 ? 'Board appearance draft' : 'Preview card'}</strong>
-                    {appearance.showCardDescription ? <p className="muted">Description visibility follows board settings.</p> : null}
+                    <strong>{cardIndex === 0 ? 'Черновик оформления' : 'Карточка'}</strong>
+                    {appearance.showCardDescription ? <p className="muted">Описание карточки.</p> : null}
                     <div className="card-tile__footer">
-                      {appearance.showCardDates ? <Badge tone="default">date</Badge> : null}
-                      {appearance.showChecklistProgress ? <Badge tone="done">checklist</Badge> : null}
+                      {appearance.showCardDates ? <Badge tone="default">дата</Badge> : null}
+                      {appearance.showChecklistProgress ? <Badge tone="done">чек-лист</Badge> : null}
                     </div>
                   </article>
                 ))}

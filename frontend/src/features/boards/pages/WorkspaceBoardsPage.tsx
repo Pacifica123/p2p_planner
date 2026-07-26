@@ -11,6 +11,7 @@ import { LoadingState } from '@/shared/ui/LoadingState';
 import { Badge } from '@/shared/ui/Badge';
 import { formatDateTime } from '@/shared/lib/date';
 import { BoardImportPanel } from '@/features/integrations/components/BoardImportPanel';
+import { Icon } from '@/shared/ui/Icon';
 
 export function WorkspaceBoardsPage() {
   const navigate = useNavigate();
@@ -45,47 +46,50 @@ export function WorkspaceBoardsPage() {
   }
 
   async function handleRename(boardId: string, currentName: string) {
-    const next = window.prompt('Новое название board', currentName)?.trim();
+    const next = window.prompt('Новое название доски', currentName)?.trim();
     if (!next || next === currentName) return;
     await updateBoardMutation.mutateAsync({ boardId, input: { name: next } });
   }
 
   async function handleArchive(boardId: string, boardName: string) {
-    if (!window.confirm(`Архивировать board «${boardName}»?`)) return;
+    if (!window.confirm(`Архивировать доску «${boardName}»?`)) return;
     await archiveBoardMutation.mutateAsync(boardId);
   }
 
   if (!workspaceId) {
-    return <ErrorState title="Workspace не выбран" description="Выбери workspace в sidebar." />;
+    return <ErrorState title="Пространство не выбрано" description="Выберите его в боковой панели." />;
   }
 
   return (
     <div className="page-shell" data-testid="workspace-boards-page">
       <section className="page-header">
         <div>
-          <h2>{workspace?.name || 'Boards'}</h2>
-          <p className="muted">Boards list для выбранного workspace и быстрый переход к board screen.</p>
+          <h2>{workspace?.name || 'Доски'}</h2>
+          <p className="muted">Доски выбранного пространства.</p>
         </div>
         <div className="page-header__actions">
-          <Button onClick={() => navigate(paths.home)}>К workspace list</Button>
+          <Button variant="ghost" onClick={() => navigate(paths.home)}>
+            <Icon name="back" size={16} />
+            К пространствам
+          </Button>
         </div>
       </section>
 
       <section className="panel">
         <div className="entity-header">
           <div>
-            <h3>Create board</h3>
-            <p className="muted">Минимальное создание kanban board внутри выбранного workspace.</p>
+            <h3>Новая доска</h3>
+            <p className="muted">Название можно изменить позже.</p>
           </div>
         </div>
         <form className="inline-form" data-testid="board-create-form" onSubmit={handleCreate}>
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <TextField data-testid="board-name-input" label="Название" value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, Roadmap" />
-            <TextAreaField data-testid="board-description-input" label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Необязательное описание board" />
+            <TextField data-testid="board-name-input" label="Название" value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, План релиза" />
+            <TextAreaField data-testid="board-description-input" label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Необязательно" />
           </div>
           <div className="inline-actions">
             <Button data-testid="board-create-submit" type="submit" variant="primary" disabled={createBoardMutation.isPending}>
-              {createBoardMutation.isPending ? 'Создаем…' : '＋ Board'}
+              {createBoardMutation.isPending ? 'Создаём…' : 'Создать доску'}
             </Button>
           </div>
         </form>
@@ -100,8 +104,8 @@ export function WorkspaceBoardsPage() {
         }}
       />
 
-      {boardsQuery.isLoading ? <LoadingState label="Загружаем boards…" /> : null}
-      {boardsQuery.isError ? <ErrorState title="Не удалось загрузить boards" onRetry={() => void boardsQuery.refetch()} /> : null}
+      {boardsQuery.isLoading ? <LoadingState label="Загружаем доски…" /> : null}
+      {boardsQuery.isError ? <ErrorState title="Не удалось загрузить доски" onRetry={() => void boardsQuery.refetch()} /> : null}
 
       {!boardsQuery.isLoading && !boardsQuery.isError ? (
         boardsQuery.data?.items.length ? (
@@ -114,27 +118,26 @@ export function WorkspaceBoardsPage() {
                     <p className="muted">{board.description || 'Без описания'}</p>
                   </div>
                   <div className="row-actions">
-                    <Badge tone={board.boardType}>{board.boardType}</Badge>
-                    {board.isArchived ? <Badge tone="warning">archived</Badge> : null}
+                    {board.isArchived ? <Badge tone="warning">в архиве</Badge> : null}
                   </div>
                 </div>
 
                 <div className="grid" style={{ marginTop: 12 }}>
-                  <div className="meta-line">updated: {formatDateTime(board.updatedAt)}</div>
+                  <div className="meta-line">Изменена {formatDateTime(board.updatedAt)}</div>
                 </div>
 
                 <div className="page-header__actions" style={{ marginTop: 16 }}>
                   <Button data-testid="board-open" variant="primary" onClick={() => navigate(paths.board(workspaceId, board.id))}>
-                    Открыть board
+                    Открыть
                   </Button>
                   <Button
                     iconOnly
                     onClick={() => void handleRename(board.id, board.name)}
                     disabled={updateBoardMutation.isPending}
-                    title="Переименовать board"
-                    aria-label="Переименовать board"
+                    title="Переименовать доску"
+                    aria-label="Переименовать доску"
                   >
-                    ✏️
+                    <Icon name="edit" size={16} />
                   </Button>
                   {!board.isArchived ? (
                     <Button
@@ -142,10 +145,10 @@ export function WorkspaceBoardsPage() {
                       variant="danger"
                       onClick={() => void handleArchive(board.id, board.name)}
                       disabled={archiveBoardMutation.isPending}
-                      title="Архивировать board"
-                      aria-label="Архивировать board"
-                    >
-                      📦
+                      title="Архивировать доску"
+                      aria-label="Архивировать доску"
+                  >
+                    <Icon name="archive" size={16} />
                     </Button>
                   ) : null}
                 </div>
@@ -153,7 +156,7 @@ export function WorkspaceBoardsPage() {
             ))}
           </div>
         ) : (
-          <EmptyState title="В этом workspace пока нет boards" description="Создай первую board, чтобы перейти к columns и cards." />
+          <EmptyState title="Здесь пока нет досок" description="Создайте первую доску или импортируйте резервную копию." />
         )
       ) : null}
     </div>

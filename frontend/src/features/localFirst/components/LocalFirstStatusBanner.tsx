@@ -1,5 +1,6 @@
 import type { LocalFirstBoardRuntime } from '@/features/localFirst/types';
 import { Button } from '@/shared/ui/Button';
+import { Icon } from '@/shared/ui/Icon';
 
 interface LocalFirstStatusBannerProps {
   runtime: LocalFirstBoardRuntime;
@@ -9,36 +10,44 @@ export function LocalFirstStatusBanner({ runtime }: LocalFirstStatusBannerProps)
   const hasPending = runtime.pendingCount > 0;
   const hasFailed = runtime.failedCount > 0;
   const isOffline = !runtime.isOnline;
-  const shouldShow = isOffline || hasPending || hasFailed || runtime.hasWarmSnapshot || runtime.isFlushing;
 
-  if (!shouldShow) return null;
+  if (!isOffline && !hasPending && !hasFailed && !runtime.isFlushing) return null;
 
-  const statusParts: string[] = [];
-  if (isOffline) statusParts.push('offline');
-  if (runtime.hasWarmSnapshot) statusParts.push('warm start из local snapshot');
-  if (runtime.isFlushing) statusParts.push('syncing');
-  if (hasPending) statusParts.push(`${runtime.pendingCount} saved locally`);
-  if (hasFailed) statusParts.push(`${runtime.failedCount} sync failed`);
+  if (!hasFailed) {
+    let label = 'Изменения сохранены';
+    if (isOffline) label = 'Работаем без сети — изменения сохранены на устройстве';
+    else if (runtime.isFlushing) label = 'Синхронизируем изменения…';
+    else if (hasPending) label = `${runtime.pendingCount} изменений сохранено локально`;
+
+    return (
+      <div className={`sync-notice ${runtime.isFlushing ? 'sync-notice--progress' : ''}`} data-testid="local-first-status">
+        {runtime.isFlushing ? <span className="sync-notice__spinner" /> : <Icon name="check" size={16} />}
+        <span>{label}</span>
+        {hasPending && !runtime.isFlushing && runtime.isOnline ? (
+          <Button variant="ghost" onClick={() => void runtime.flushPendingOperations()}>
+            Отправить сейчас
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
-    <div className={`inline-banner local-first-banner ${hasFailed ? 'inline-banner--error' : ''}`} data-testid="local-first-status">
+    <div className="inline-banner inline-banner--error local-first-banner" data-testid="local-first-status">
       <div>
-        <strong>Local-first runtime</strong>
-        <span>{statusParts.join(' · ')}</span>
-        {runtime.lastError ? <span className="muted">{runtime.lastError}</span> : null}
-      </div>
-      <div className="row-actions">
-        {hasFailed ? (
-          <Button variant="primary" onClick={() => void runtime.retryFailedOperations()} disabled={runtime.isFlushing || !runtime.isOnline}>
-            Retry failed
-          </Button>
-        ) : null}
-        {hasPending ? (
-          <Button variant="ghost" onClick={() => void runtime.flushPendingOperations()} disabled={runtime.isFlushing || !runtime.isOnline}>
-            Flush now
-          </Button>
+        <strong>Часть изменений пока не синхронизирована</strong>
+        <span>Они остаются на этом устройстве и не потеряны.</span>
+        {runtime.lastError ? (
+          <details className="technical-details">
+            <summary>Техническая причина</summary>
+            <code>{runtime.lastError}</code>
+          </details>
         ) : null}
       </div>
+      <Button variant="primary" onClick={() => void runtime.retryFailedOperations()} disabled={runtime.isFlushing || !runtime.isOnline}>
+        <Icon name="refresh" size={16} />
+        Повторить
+      </Button>
     </div>
   );
 }
