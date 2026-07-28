@@ -1889,6 +1889,61 @@ components:
           oneOf:
           - $ref: '#/components/schemas/Replica'
           - type: 'null'
+    CreateRoamingCapabilityRequest:
+      type: object
+      required:
+      - boardId
+      properties:
+        boardId:
+          type: string
+          format: uuid
+    RoamingCapabilityResponse:
+      type: object
+      required:
+      - formatVersion
+      - protocolVersion
+      - workspaceId
+      - boardId
+      - boardTag
+      - boardKey
+      - relays
+      - eventKind
+      - minimumRelayAcks
+      - provisionedAt
+      properties:
+        formatVersion:
+          type: integer
+          enum:
+          - 1
+        protocolVersion:
+          type: string
+          enum:
+          - p2p-kanban-roaming/1
+        workspaceId:
+          type: string
+          format: uuid
+        boardId:
+          type: string
+          format: uuid
+        boardTag:
+          type: string
+        boardKey:
+          type: string
+          description: Per-board secret capability. Clients must store it as sensitive data.
+        relays:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uri
+        eventKind:
+          type: integer
+        minimumRelayAcks:
+          type: integer
+          minimum: 1
+        provisionedAt:
+          type: string
+          format: date-time
     TransportAdapterStatus:
       type: object
       required:
@@ -3078,6 +3133,47 @@ components:
           format: uuid
         user:
           $ref: '#/components/schemas/User'
+    NativeRefreshTokenRequest:
+      type: object
+      required:
+      - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+    NativeAuthSuccessResponse:
+      type: object
+      required:
+      - authenticated
+      - mode
+      - accessToken
+      - accessTokenExpiresAt
+      - refreshToken
+      - sessionId
+      - deviceId
+      - user
+      properties:
+        authenticated:
+          type: boolean
+        mode:
+          type: string
+          enum:
+          - native_refresh_token_plus_bearer
+        accessToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          description: Unix timestamp in seconds encoded as a string.
+        refreshToken:
+          type: string
+        sessionId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/User'
     SessionResponse:
       type: object
       required:
@@ -3242,6 +3338,112 @@ paths:
           $ref: '#/components/responses/InternalError'
       x-v1Status: real_v1
       x-frontendUsed: true
+  /auth/native/sign-up:
+    post:
+      tags:
+      - auth
+      summary: Create an account and return tokens to a native client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignUpRequest'
+      responses:
+        '201':
+          description: Signed up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NativeAuthSuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-nativeClientUsed: true
+  /auth/native/sign-in:
+    post:
+      tags:
+      - auth
+      summary: Sign in and return access and refresh tokens to a native client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NativeAuthSuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-nativeClientUsed: true
+  /auth/native/refresh:
+    post:
+      tags:
+      - auth
+      summary: Rotate a native refresh token and issue a new token pair
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NativeRefreshTokenRequest'
+      responses:
+        '200':
+          description: Refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NativeAuthSuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-nativeClientUsed: true
+  /auth/native/sign-out:
+    post:
+      tags:
+      - auth
+      summary: Revoke a native refresh session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NativeRefreshTokenRequest'
+      responses:
+        '200':
+          description: Signed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignOutResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-nativeClientUsed: true
   /auth/session:
     get:
       tags:
@@ -5090,6 +5292,38 @@ paths:
           $ref: '#/components/responses/Forbidden'
       x-v1Status: real_v1
       x-frontendUsed: true
+  /sync/roaming/capability:
+    post:
+      tags:
+      - sync
+      summary: Provision encrypted roaming capability for one board
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoamingCapabilityRequest'
+      responses:
+        '200':
+          description: Per-board relay capability and encryption material
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoamingCapabilityResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+      x-v1Status: experimental
+      x-nativeClientUsed: true
   /integrations/providers:
     get:
       tags:

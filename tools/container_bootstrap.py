@@ -161,21 +161,43 @@ def safe_identifier(value: str, *, fallback: str = "update") -> str:
 
 def source_fingerprint(source_root: Path) -> str:
     digest = hashlib.sha256()
-    candidates = (
-        "VERSION",
-        "bootstrap.py",
-        "tools/container_bootstrap.py",
-        "deploy/bootstrap/compose.yaml",
-        "backend/Cargo.toml",
-        "backend/Cargo.lock",
-        "frontend/package.json",
-        "frontend/package-lock.json",
+    exact_candidates = (
+        Path("VERSION"),
+        Path("bootstrap.py"),
+        Path("tools/container_bootstrap.py"),
+        Path("backend/Cargo.toml"),
+        Path("backend/Cargo.lock"),
+        Path("backend/build.rs"),
+        Path("frontend/package.json"),
+        Path("frontend/package-lock.json"),
+        Path("frontend/index.html"),
+        Path("frontend/vite.config.ts"),
     )
-    for relative in candidates:
+    runtime_trees = (
+        Path("deploy/bootstrap"),
+        Path("backend/config"),
+        Path("backend/crates"),
+        Path("backend/migrations"),
+        Path("backend/src"),
+        Path("frontend/public"),
+        Path("frontend/src"),
+    )
+
+    candidates = set(exact_candidates)
+    for relative_root in runtime_trees:
+        tree = source_root / relative_root
+        if tree.is_dir():
+            candidates.update(
+                path.relative_to(source_root)
+                for path in tree.rglob("*")
+                if path.is_file()
+            )
+
+    for relative in sorted(candidates, key=lambda path: path.as_posix()):
         path = source_root / relative
         if not path.is_file():
             continue
-        digest.update(relative.encode("utf-8"))
+        digest.update(relative.as_posix().encode("utf-8"))
         digest.update(b"\0")
         with path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):

@@ -16,5 +16,9 @@ pub fn router() -> Router<AppState> {
         .route("/auth/sign-out", post(handler::sign_out))
         .route("/auth/sign-out-all", post(handler::sign_out_all))
         .route("/auth/session", get(handler::get_session))
+        .route("/auth/native/sign-up", post(handler::native_sign_up))
+        .route("/auth/native/sign-in", post(handler::native_sign_in))
+        .route("/auth/native/refresh", post(handler::native_refresh))
+        .route("/auth/native/sign-out", post(handler::native_sign_out))
         .route("/auth/dev-bootstrap", post(handler::bootstrap_dev_user))
 }

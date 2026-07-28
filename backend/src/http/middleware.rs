@@ -61,7 +61,8 @@ fn rate_limit_key(category: &str, headers: &HeaderMap) -> String {
 }
 
 fn classify_request(path: &str) -> Option<(&'static str, u64, u32)> {
-    if path.starts_with("/api/v1/auth/sign-in")
+    if path.starts_with("/api/v1/auth/native/")
+        || path.starts_with("/api/v1/auth/sign-in")
         || path.starts_with("/api/v1/auth/sign-up")
         || path.starts_with("/api/v1/auth/refresh")
         || path.starts_with("/api/v1/auth/sign-out")

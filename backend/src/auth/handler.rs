@@ -13,7 +13,11 @@ use crate::{
 };
 
 use super::{
-    dto::{DevBootstrapUserRequest, DevBootstrapUserResponse, SessionResponse, SignInRequest, SignUpRequest},
+    dto::{
+        DevBootstrapUserRequest, DevBootstrapUserResponse, NativeAuthSuccessResponse,
+        NativeRefreshRequest, NativeSignOutRequest, SessionResponse, SignInRequest,
+        SignOutResponse, SignUpRequest,
+    },
     service,
 };
 
@@ -67,6 +71,48 @@ pub async fn sign_out_all(
     let actor = actor_user_id(&state, &headers).await?;
     let result = service::sign_out_all(&state, &headers, actor).await?;
     response_with_cookies(StatusCode::OK, result.payload, &[result.refresh_cookie])
+}
+
+pub async fn native_sign_up(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<SignUpRequest>,
+) -> AppResult<Response> {
+    let result = service::sign_up(&state, &headers, payload).await?;
+    Ok((
+        StatusCode::CREATED,
+        ok::<NativeAuthSuccessResponse>(result.into_native_payload()),
+    )
+        .into_response())
+}
+
+pub async fn native_sign_in(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<SignInRequest>,
+) -> AppResult<Response> {
+    let result = service::sign_in(&state, &headers, payload).await?;
+    Ok((
+        StatusCode::OK,
+        ok::<NativeAuthSuccessResponse>(result.into_native_payload()),
+    )
+        .into_response())
+}
+
+pub async fn native_refresh(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<NativeRefreshRequest>,
+) -> AppResult<Json<ApiEnvelope<NativeAuthSuccessResponse>>> {
+    let result = service::native_refresh(&state, &headers, payload).await?;
+    Ok(ok(result.into_native_payload()))
+}
+
+pub async fn native_sign_out(
+    State(state): State<AppState>,
+    Json(payload): Json<NativeSignOutRequest>,
+) -> AppResult<Json<ApiEnvelope<SignOutResponse>>> {
+    Ok(ok(service::native_sign_out(&state, payload).await?))
 }
 
 pub async fn bootstrap_dev_user(

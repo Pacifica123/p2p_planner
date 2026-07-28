@@ -17,6 +17,18 @@ pub struct SignInRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct NativeRefreshRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSignOutRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DevBootstrapUserRequest {
     pub user_id: Option<String>,
     pub email: Option<String>,
@@ -47,6 +59,19 @@ pub struct AuthSuccessResponse {
     pub mode: &'static str,
     pub access_token: String,
     pub access_token_expires_at: String,
+    pub session_id: String,
+    pub device_id: String,
+    pub user: SessionUserResponse,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAuthSuccessResponse {
+    pub authenticated: bool,
+    pub mode: &'static str,
+    pub access_token: String,
+    pub access_token_expires_at: String,
+    pub refresh_token: String,
     pub session_id: String,
     pub device_id: String,
     pub user: SessionUserResponse,

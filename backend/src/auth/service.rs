@@ -14,7 +14,8 @@ use crate::{
 
 use super::{
     dto::{
-        AuthSuccessResponse, DevBootstrapUserRequest, DevBootstrapUserResponse, SessionResponse,
+        AuthSuccessResponse, DevBootstrapUserRequest, DevBootstrapUserResponse,
+        NativeAuthSuccessResponse, NativeRefreshRequest, NativeSignOutRequest, SessionResponse,
         SessionUserResponse, SignInRequest, SignOutResponse, SignUpRequest,
     },
     repo::{self, AuthUserRecord, DeviceRecord, SessionLookupRecord, SessionRecord},
@@ -28,8 +29,30 @@ const DEVICE_COOKIE_MAX_AGE_SECONDS: i64 = 60 * 60 * 24 * 365;
 
 pub struct AuthSuccessEnvelope {
     pub payload: AuthSuccessResponse,
+    pub refresh_token: String,
     pub refresh_cookie: String,
     pub device_cookie: String,
+}
+
+impl AuthSuccessEnvelope {
+    pub fn into_native_payload(self) -> NativeAuthSuccessResponse {
+        let AuthSuccessEnvelope {
+            payload,
+            refresh_token,
+            ..
+        } = self;
+
+        NativeAuthSuccessResponse {
+            authenticated: payload.authenticated,
+            mode: "native_refresh_token_plus_bearer",
+            access_token: payload.access_token,
+            access_token_expires_at: payload.access_token_expires_at,
+            refresh_token,
+            session_id: payload.session_id,
+            device_id: payload.device_id,
+            user: payload.user,
+        }
+    }
 }
 
 pub struct SignOutEnvelope {
@@ -82,7 +105,18 @@ fn verify_password(password: &str, password_hash: &str) -> AppResult<bool> {
         .is_ok())
 }
 
-fn infer_platform(user_agent: Option<&str>) -> &'static str {
+fn is_android_native(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-p2pkanban-client")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("android-native"))
+}
+
+fn infer_platform(headers: &HeaderMap, user_agent: Option<&str>) -> &'static str {
+    if is_android_native(headers) {
+        return "android";
+    }
+
     let ua = user_agent.unwrap_or_default().to_ascii_lowercase();
     if ua.contains("android") {
         "android_web"
@@ -99,7 +133,11 @@ fn infer_platform(user_agent: Option<&str>) -> &'static str {
     }
 }
 
-fn infer_device_display_name(user_agent: Option<&str>) -> String {
+fn infer_device_display_name(headers: &HeaderMap, user_agent: Option<&str>) -> String {
+    if is_android_native(headers) {
+        return "p2pKanban Android".to_string();
+    }
+
     let ua = user_agent.unwrap_or_default().to_ascii_lowercase();
     if ua.contains("firefox") {
         "Firefox browser".to_string()
@@ -256,6 +294,7 @@ async fn complete_session_auth(
 
     Ok(AuthSuccessEnvelope {
         payload,
+        refresh_token,
         refresh_cookie,
         device_cookie,
     })
@@ -276,8 +315,8 @@ async fn create_authenticated_session(
         &state.db,
         cookie_device_id,
         user.id,
-        &infer_device_display_name(agent.as_deref()),
-        infer_platform(agent.as_deref()),
+        &infer_device_display_name(headers, agent.as_deref()),
+        infer_platform(headers, agent.as_deref()),
     )
     .await?;
 
@@ -356,11 +395,11 @@ async fn resolve_refresh_session(state: &AppState, refresh_token: &str) -> AppRe
     Ok(session)
 }
 
-pub async fn refresh(state: &AppState, headers: &HeaderMap) -> AppResult<AuthSuccessEnvelope> {
-    ensure_cookie_request_origin_allowed(state, headers)?;
-
-    let refresh_token = cookie_value(headers, &state.settings.auth.refresh_cookie_name)
-        .ok_or_else(|| AppError::unauthorized("Refresh cookie is missing"))?;
+async fn rotate_refresh_session(
+    state: &AppState,
+    headers: &HeaderMap,
+    refresh_token: String,
+) -> AppResult<AuthSuccessEnvelope> {
     let session_lookup = resolve_refresh_session(state, &refresh_token).await?;
 
     let Some(device_id) = session_lookup.device_id else {
@@ -395,11 +434,31 @@ pub async fn refresh(state: &AppState, headers: &HeaderMap) -> AppResult<AuthSuc
     };
     let device = DeviceRecord {
         id: device_id,
-        display_name: infer_device_display_name(agent.as_deref()),
-        platform: infer_platform(agent.as_deref()).to_string(),
+        display_name: infer_device_display_name(headers, agent.as_deref()),
+        platform: infer_platform(headers, agent.as_deref()).to_string(),
     };
 
     complete_session_auth(state, &user, &device, &session, new_refresh_token).await
+}
+
+pub async fn refresh(state: &AppState, headers: &HeaderMap) -> AppResult<AuthSuccessEnvelope> {
+    ensure_cookie_request_origin_allowed(state, headers)?;
+
+    let refresh_token = cookie_value(headers, &state.settings.auth.refresh_cookie_name)
+        .ok_or_else(|| AppError::unauthorized("Refresh cookie is missing"))?;
+    rotate_refresh_session(state, headers, refresh_token).await
+}
+
+pub async fn native_refresh(
+    state: &AppState,
+    headers: &HeaderMap,
+    payload: NativeRefreshRequest,
+) -> AppResult<AuthSuccessEnvelope> {
+    let refresh_token = payload.refresh_token.trim().to_string();
+    if refresh_token.is_empty() {
+        return Err(AppError::unauthorized("Refresh token is missing"));
+    }
+    rotate_refresh_session(state, headers, refresh_token).await
 }
 
 pub async fn sign_out(state: &AppState, headers: &HeaderMap) -> AppResult<SignOutEnvelope> {
@@ -417,6 +476,23 @@ pub async fn sign_out(state: &AppState, headers: &HeaderMap) -> AppResult<SignOu
             mode: "session_cookie_plus_bearer",
         },
         refresh_cookie: clear_cookie(&state.settings.auth.refresh_cookie_name, state),
+    })
+}
+
+pub async fn native_sign_out(
+    state: &AppState,
+    payload: NativeSignOutRequest,
+) -> AppResult<SignOutResponse> {
+    let refresh_token = payload.refresh_token.trim();
+    if !refresh_token.is_empty() {
+        if let Ok(session) = resolve_refresh_session(state, refresh_token).await {
+            let _ = repo::revoke_session(&state.db, session.session_id).await;
+        }
+    }
+
+    Ok(SignOutResponse {
+        signed_out: true,
+        mode: "native_refresh_token_plus_bearer",
     })
 }
 
