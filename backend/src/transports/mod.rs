@@ -1,4 +1,6 @@
 pub(crate) mod repo;
+#[cfg(feature = "nostr-shadow")]
+mod roaming;
 mod worker;
 
 use std::sync::Arc;
@@ -10,5 +12,6 @@ use crate::config::Settings;
 pub use repo::transport_queue_status;
 
 pub fn spawn_workers(settings: Arc<Settings>, db: PgPool) {
-    worker::spawn_nostr_worker(settings, db);
+    worker::spawn_nostr_worker(settings.clone(), db.clone());
+    worker::spawn_roaming_worker(settings, db);
 }

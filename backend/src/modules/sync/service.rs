@@ -3,12 +3,13 @@ use p2p_kanban_sync_core::validate_client_event;
 
 use crate::{
     error::{AppError, AppResult},
-    modules::common::AuthContext,
+    modules::common::{board_workspace_id, require_workspace_admin, AuthContext},
     state::AppState,
 };
 
 use super::dto::{
-    ClientChangeEvent, PullChangesQuery, PullChangesResponse, PushChangesRequest, PushChangesResponse,
+    ClientChangeEvent, CreateRoamingCapabilityRequest, PullChangesQuery, PullChangesResponse,
+    PushChangesRequest, PushChangesResponse, RoamingCapabilityResponse,
     RegisterReplicaRequest, RegisterReplicaResponse, ReplicaListResponse, SyncStatusQuery, SyncStatusResponse,
     TransportAdapterStatus, TransportStatusResponse,
 };
@@ -16,6 +17,59 @@ use super::dto::{
 const MAX_PUSH_EVENTS: usize = 500;
 const DEFAULT_PULL_LIMIT: i64 = 100;
 const MAX_PULL_LIMIT: i64 = 1000;
+
+pub async fn create_roaming_capability(
+    state: &AppState,
+    auth: AuthContext,
+    payload: CreateRoamingCapabilityRequest,
+) -> AppResult<RoamingCapabilityResponse> {
+    #[cfg(not(feature = "nostr-shadow"))]
+    {
+        let _ = (state, auth, payload);
+        return Err(AppError::conflict(
+            "This backend build does not include independent board sync",
+        ));
+    }
+
+    #[cfg(feature = "nostr-shadow")]
+    {
+        let nostr = &state.settings.transports.nostr;
+        if !nostr.enabled {
+            return Err(AppError::conflict(
+                "Independent board sync is not enabled on this node",
+            ));
+        }
+
+        let workspace_id = board_workspace_id(&state.db, payload.board_id).await?;
+        require_workspace_admin(&state.db, workspace_id, auth.user_id).await?;
+        let master_key = nostr.master_key().map_err(|_| AppError::internal())?;
+        let codec = p2p_kanban_nostr_transport::NostrCodec::new(master_key)
+            .map_err(|_| AppError::internal())?;
+        let material = codec
+            .roaming_capability(&payload.board_id.to_string())
+            .map_err(|_| AppError::internal())?;
+        let provisioned_at = sqlx::query_scalar::<_, String>(
+            r#"select to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')"#,
+        )
+        .fetch_one(&state.db)
+        .await?;
+
+        Ok(RoamingCapabilityResponse {
+            format_version: 1,
+            protocol_version: material.protocol_version,
+            workspace_id: workspace_id.to_string(),
+            board_id: payload.board_id.to_string(),
+            board_tag: material.board_tag,
+            board_key: material.board_key,
+            relays: nostr.relays.clone(),
+            event_kind: nostr
+                .event_kind
+                .saturating_add(p2p_kanban_nostr_transport::ROAMING_EVENT_KIND_OFFSET),
+            minimum_relay_acks: nostr.min_relay_acks,
+            provisioned_at,
+        })
+    }
+}
 
 fn parse_uuid(value: &str, field: &str) -> AppResult<Uuid> {
     Uuid::parse_str(value).map_err(|_| AppError::bad_request(format!("{field} must be a valid UUID")))

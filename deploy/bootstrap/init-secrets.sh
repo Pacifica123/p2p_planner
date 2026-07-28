@@ -10,6 +10,11 @@ generate_hex() {
   od -An -N "$byte_count" -tx1 /dev/urandom | tr -d ' \n'
 }
 
+generate_base64() {
+  byte_count="$1"
+  head -c "$byte_count" /dev/urandom | base64 | tr -d '\r\n'
+}
+
 ensure_secret() {
   target="$1"
   byte_count="$2"
@@ -26,7 +31,13 @@ ensure_secret() {
 
 ensure_secret "$SECRETS_DIR/postgres-password" 32
 ensure_secret "$SECRETS_DIR/jwt-secret" 64
-printf '1\n' > "$SECRETS_DIR/schema-version"
+ensure_secret "$SECRETS_DIR/nostr-secret-key" 32
+if [ ! -s "$SECRETS_DIR/nostr-master-key" ]; then
+  generate_base64 32 > "$SECRETS_DIR/nostr-master-key"
+  printf '\n' >> "$SECRETS_DIR/nostr-master-key"
+  chmod 0444 "$SECRETS_DIR/nostr-master-key"
+fi
+printf '2\n' > "$SECRETS_DIR/schema-version"
 chmod 0444 "$SECRETS_DIR/schema-version"
 
 echo "p2pKanban bootstrap secrets are ready."

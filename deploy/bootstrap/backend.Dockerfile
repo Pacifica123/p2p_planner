@@ -7,7 +7,6 @@ COPY backend ./backend
 RUN cargo build \
     --manifest-path backend/Cargo.toml \
     --release \
-    --no-default-features \
     --bin p2p-planner-backend
 
 FROM debian:bookworm-slim

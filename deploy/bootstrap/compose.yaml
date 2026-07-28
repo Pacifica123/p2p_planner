@@ -66,7 +66,12 @@ services:
       AUTH__AUTH_RATE_LIMIT_MAX_ATTEMPTS: 20
       AUTH__SENSITIVE_RATE_LIMIT_WINDOW_SECS: 60
       AUTH__SENSITIVE_RATE_LIMIT_MAX_ATTEMPTS: 60
-      TRANSPORTS__NOSTR__ENABLED: "false"
+      TRANSPORTS__NOSTR__ENABLED: "true"
+      TRANSPORTS__NOSTR__RELAYS: "${P2PKANBAN_NOSTR_RELAYS:-wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net}"
+      TRANSPORTS__NOSTR__EVENT_KIND: "1978"
+      TRANSPORTS__NOSTR__FETCH_TIMEOUT_SECS: "10"
+      TRANSPORTS__NOSTR__MIN_RELAY_ACKS: "${P2PKANBAN_NOSTR_MIN_RELAY_ACKS:-2}"
+      TRANSPORTS__NOSTR__BACKFILL_ON_START: "true"
       TRANSPORTS__IROH__ENABLED: "false"
     volumes:
       - bootstrap_secrets:/run/p2pkanban-secrets:ro

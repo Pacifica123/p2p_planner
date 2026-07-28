@@ -13,7 +13,10 @@ use crate::{
 };
 
 use super::{
-    dto::{PullChangesQuery, PushChangesRequest, RegisterReplicaRequest, SyncStatusQuery},
+    dto::{
+        CreateRoamingCapabilityRequest, PullChangesQuery, PushChangesRequest,
+        RegisterReplicaRequest, SyncStatusQuery,
+    },
     service,
 };
 
@@ -73,4 +76,14 @@ pub async fn pull_changes(
     let auth = auth_context(&state, &headers).await?;
     let result = service::pull_changes(&state, auth, query).await?;
     Ok(ok(result))
+}
+
+pub async fn create_roaming_capability(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateRoamingCapabilityRequest>,
+) -> AppResult<impl IntoResponse> {
+    let auth = auth_context(&state, &headers).await?;
+    let capability = service::create_roaming_capability(&state, auth, payload).await?;
+    Ok(ok(capability))
 }

@@ -26,6 +26,21 @@ pub fn spawn_nostr_worker(settings: Arc<Settings>, _db: PgPool) {
 }
 
 #[cfg(feature = "nostr-shadow")]
+pub fn spawn_roaming_worker(settings: Arc<Settings>, db: PgPool) {
+    if !settings.transports.nostr.enabled {
+        return;
+    }
+    tokio::spawn(async move {
+        if let Err(error) = super::roaming::run(settings, db).await {
+            tracing::error!(error = %error, "roaming board worker stopped");
+        }
+    });
+}
+
+#[cfg(not(feature = "nostr-shadow"))]
+pub fn spawn_roaming_worker(_settings: Arc<Settings>, _db: PgPool) {}
+
+#[cfg(feature = "nostr-shadow")]
 async fn run_nostr_worker(settings: Arc<Settings>, db: PgPool) -> anyhow::Result<()> {
     use p2p_kanban_nostr_transport::{NostrTransport, NostrTransportConfig};
 

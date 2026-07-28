@@ -190,7 +190,7 @@ fn default_transport_max_attempts() -> i32 {
 }
 
 fn default_nostr_event_kind() -> u16 {
-    20_078
+    1_978
 }
 
 fn default_nostr_fetch_timeout_secs() -> u64 {
@@ -339,11 +339,11 @@ impl Settings {
                         .to_string(),
                 ));
             }
-            if self.transports.nostr.min_relay_acks < 3
+            if self.transports.nostr.min_relay_acks < 2
                 || self.transports.nostr.min_relay_acks > self.transports.nostr.relays.len()
             {
                 return Err(ConfigError::Message(
-                    "TRANSPORTS__NOSTR__MIN_RELAY_ACKS must be at least 3 and not exceed the configured relay count"
+                    "TRANSPORTS__NOSTR__MIN_RELAY_ACKS must be at least 2 and not exceed the configured relay count"
                         .to_string(),
                 ));
             }

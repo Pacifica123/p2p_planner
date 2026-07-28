@@ -15,4 +15,5 @@ pub fn router() -> Router<AppState> {
         .route("/sync/replicas", post(handler::register_replica))
         .route("/sync/push", post(handler::push_changes))
         .route("/sync/pull", get(handler::pull_changes))
+        .route("/sync/roaming/capability", post(handler::create_roaming_capability))
 }

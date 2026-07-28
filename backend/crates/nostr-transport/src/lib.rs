@@ -19,7 +19,45 @@ type HmacSha256 = Hmac<Sha256>;
 
 const CIPHERTEXT_VERSION: u8 = 1;
 const WORKSPACE_KEY_DOMAIN: &[u8] = b"p2p-kanban:workspace-key:v1";
+const ROAMING_BOARD_KEY_DOMAIN: &[u8] = b"p2p-kanban:roaming-board-key:v1";
 const BOARD_TAG_DOMAIN: &[u8] = b"p2p-kanban:board-tag:v1";
+pub const ROAMING_PROTOCOL_VERSION: &str = "p2p-kanban-roaming/1";
+pub const ROAMING_EVENT_KIND_OFFSET: u16 = 1;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoamingCapabilityMaterial {
+    pub protocol_version: String,
+    pub board_tag: String,
+    pub board_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoamingBoardEvent {
+    pub protocol_version: String,
+    pub event_id: String,
+    pub workspace_id: String,
+    pub board_id: String,
+    pub replica_id: String,
+    pub replica_seq: i64,
+    pub logical_clock: i64,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub operation: String,
+    #[serde(default)]
+    pub field_mask: Vec<String>,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+    pub occurred_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecoveredRoamingEvent {
+    pub nostr_event_id: String,
+    pub author_public_key: String,
+    pub event: RoamingBoardEvent,
+}
 
 #[derive(Debug, Clone)]
 pub struct NostrTransportConfig {
@@ -90,8 +128,89 @@ impl NostrCodec {
         derive_tag(&self.master_key, BOARD_TAG_DOMAIN, workspace_id)
     }
 
+    pub fn roaming_board_tag(&self, board_id: &str) -> Result<String> {
+        derive_tag(
+            &self.roaming_board_key(board_id)?,
+            BOARD_TAG_DOMAIN,
+            board_id,
+        )
+    }
+
+    pub fn roaming_capability(&self, board_id: &str) -> Result<RoamingCapabilityMaterial> {
+        Ok(RoamingCapabilityMaterial {
+            protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
+            board_tag: self.roaming_board_tag(board_id)?,
+            board_key: URL_SAFE_NO_PAD.encode(self.roaming_board_key(board_id)?),
+        })
+    }
+
+    pub fn seal_roaming(&self, event: &RoamingBoardEvent) -> Result<String> {
+        if event.protocol_version != ROAMING_PROTOCOL_VERSION {
+            bail!("unsupported roaming protocol version");
+        }
+        if event.replica_seq < 1 || event.logical_clock < 1 {
+            bail!("roaming event counters must be positive");
+        }
+        let board_key = self.roaming_board_key(&event.board_id)?;
+        let plaintext = serde_json::to_vec(event).context("could not serialize roaming event")?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&board_key)
+            .map_err(|_| anyhow!("could not initialize XChaCha20-Poly1305"))?;
+        let mut nonce_bytes = [0u8; 24];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(XNonce::from_slice(&nonce_bytes), plaintext.as_ref())
+            .map_err(|_| anyhow!("could not encrypt roaming event"))?;
+
+        serde_json::to_string(&CiphertextRecord {
+            version: CIPHERTEXT_VERSION,
+            board_tag: self.roaming_board_tag(&event.board_id)?,
+            nonce: URL_SAFE_NO_PAD.encode(nonce_bytes),
+            ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
+        })
+        .context("could not serialize roaming ciphertext record")
+    }
+
+    pub fn open_roaming(
+        &self,
+        board_id: &str,
+        content: &str,
+    ) -> Result<RoamingBoardEvent> {
+        let record: CiphertextRecord =
+            serde_json::from_str(content).context("Nostr event content is not a ciphertext record")?;
+        if record.version != CIPHERTEXT_VERSION {
+            bail!("unsupported roaming ciphertext version");
+        }
+        if record.board_tag != self.roaming_board_tag(board_id)? {
+            bail!("roaming event belongs to another board");
+        }
+        let nonce = URL_SAFE_NO_PAD
+            .decode(record.nonce)
+            .context("roaming nonce is not valid base64url")?;
+        if nonce.len() != 24 {
+            bail!("roaming nonce must contain 24 bytes");
+        }
+        let ciphertext = URL_SAFE_NO_PAD
+            .decode(record.ciphertext)
+            .context("roaming ciphertext is not valid base64url")?;
+        let board_key = self.roaming_board_key(board_id)?;
+        let plaintext = XChaCha20Poly1305::new_from_slice(&board_key)
+            .map_err(|_| anyhow!("could not initialize XChaCha20-Poly1305"))?
+            .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
+            .map_err(|_| anyhow!("roaming ciphertext authentication failed"))?;
+        let event: RoamingBoardEvent =
+            serde_json::from_slice(&plaintext).context("decrypted roaming payload is invalid")?;
+        if event.protocol_version != ROAMING_PROTOCOL_VERSION || event.board_id != board_id {
+            bail!("decrypted roaming event has incompatible scope");
+        }
+        Ok(event)
+    }
+
     fn workspace_key(&self, workspace_id: &str) -> Result<[u8; 32]> {
         derive_key(&self.master_key, WORKSPACE_KEY_DOMAIN, workspace_id)
+    }
+
+    fn roaming_board_key(&self, board_id: &str) -> Result<[u8; 32]> {
+        derive_key(&self.master_key, ROAMING_BOARD_KEY_DOMAIN, board_id)
     }
 
     pub fn seal(&self, envelope: SyncEnvelope) -> Result<String> {
@@ -216,6 +335,81 @@ impl NostrTransport {
         })
     }
 
+    pub async fn publish_roaming(
+        &self,
+        event: &RoamingBoardEvent,
+    ) -> Result<NostrDeliveryReceipt> {
+        let board_tag = self.codec.roaming_board_tag(&event.board_id)?;
+        let content = self.codec.seal_roaming(event)?;
+        let identifier = Tag::identifier(board_tag.clone());
+        let marker = Tag::hashtag("p2pkanban-roaming");
+        let builder = EventBuilder::new(
+            Kind::Custom(self.config.event_kind.saturating_add(ROAMING_EVENT_KIND_OFFSET)),
+            content,
+        )
+        .tags([identifier, marker]);
+        let output = self
+            .client
+            .send_event_builder(builder)
+            .await
+            .context("Nostr relays did not accept the roaming event")?;
+        if output.success.len() < self.config.min_relay_acks {
+            bail!(
+                "roaming event reached only {}/{} required relays",
+                output.success.len(),
+                self.config.min_relay_acks
+            );
+        }
+        Ok(NostrDeliveryReceipt {
+            nostr_event_id: output.val.to_string(),
+            configured_relays: self.config.relays.len(),
+            accepted_relays: output.success.iter().map(ToString::to_string).collect(),
+            failed_relays: output.failed.keys().map(ToString::to_string).collect(),
+            board_tag,
+        })
+    }
+
+    pub async fn recover_roaming(
+        &self,
+        board_id: &str,
+    ) -> Result<Vec<RecoveredRoamingEvent>> {
+        let expected_tag = self.codec.roaming_board_tag(board_id)?;
+        let filter = Filter::new()
+            .kind(Kind::Custom(
+                self.config.event_kind.saturating_add(ROAMING_EVENT_KIND_OFFSET),
+            ))
+            .identifier(expected_tag.clone());
+        let events = self
+            .client
+            .fetch_events(filter, self.config.fetch_timeout)
+            .await
+            .context("could not fetch roaming Nostr events")?;
+        let mut recovered = Vec::new();
+        for nostr_event in events.iter() {
+            let record = match serde_json::from_str::<CiphertextRecord>(&nostr_event.content) {
+                Ok(record) if record.board_tag == expected_tag => record,
+                _ => continue,
+            };
+            let content = serde_json::to_string(&record)?;
+            if let Ok(event) = self.codec.open_roaming(board_id, &content) {
+                recovered.push(RecoveredRoamingEvent {
+                    nostr_event_id: nostr_event.id.to_string(),
+                    author_public_key: nostr_event.pubkey.to_string(),
+                    event,
+                });
+            }
+        }
+        recovered.sort_by(|left, right| {
+            left.event
+                .logical_clock
+                .cmp(&right.event.logical_clock)
+                .then_with(|| left.event.replica_id.cmp(&right.event.replica_id))
+                .then_with(|| left.event.event_id.cmp(&right.event.event_id))
+        });
+        recovered.dedup_by(|left, right| left.event.event_id == right.event.event_id);
+        Ok(recovered)
+    }
+
     pub async fn recover_workspace(&self, workspace_id: &str) -> Result<Vec<SignedSyncEnvelope>> {
         let filter = Filter::new()
             .author(self.keys.public_key())
@@ -309,6 +503,24 @@ mod tests {
         envelope
     }
 
+    fn roaming_event() -> RoamingBoardEvent {
+        RoamingBoardEvent {
+            protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
+            event_id: "018f22e2-1d58-7f08-9a36-1f96bd9854b1".to_string(),
+            workspace_id: "018f22e2-355a-7ba2-8ef0-d7bc788ceec8".to_string(),
+            board_id: "018f22e2-355a-7ba2-8ef0-d7bc788ceec9".to_string(),
+            replica_id: "018f22e2-29cc-7ad6-aa57-b61d74a14e52".to_string(),
+            replica_seq: 1,
+            logical_clock: 7,
+            entity_type: "card".to_string(),
+            entity_id: "018f22e2-355a-7ba2-8ef0-d7bc788ceeca".to_string(),
+            operation: "card.put".to_string(),
+            field_mask: vec!["title".to_string()],
+            payload: json!({"card": {"title": "relay copy"}}),
+            occurred_at: "2026-07-28T12:00:00.000Z".to_string(),
+        }
+    }
+
     #[test]
     fn encrypted_record_round_trips_and_hides_workspace_id() {
         let codec = NostrCodec::new(vec![7; 32]).unwrap();
@@ -329,6 +541,22 @@ mod tests {
         let content = codec.seal(envelope()).unwrap();
         assert!(codec
             .open_for_workspace("018f22e2-aaaa-7aaa-8aaa-aaaaaaaaaaaa", &content)
+            .is_err());
+    }
+
+    #[test]
+    fn roaming_record_is_scoped_to_one_board() {
+        let codec = NostrCodec::new(vec![7; 32]).unwrap();
+        let original = roaming_event();
+        let content = codec.seal_roaming(&original).unwrap();
+        assert!(!content.contains(&original.board_id));
+        assert!(!content.contains("relay copy"));
+        assert_eq!(
+            codec.open_roaming(&original.board_id, &content).unwrap(),
+            original
+        );
+        assert!(codec
+            .open_roaming("018f22e2-aaaa-7aaa-8aaa-aaaaaaaaaaaa", &content)
             .is_err());
     }
 }

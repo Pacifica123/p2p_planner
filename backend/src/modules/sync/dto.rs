@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 pub use p2p_kanban_sync_core::{ClientChangeEvent, ServerChangeEvent};
 
@@ -148,4 +149,25 @@ pub struct TransportStatusResponse {
     pub nostr: TransportAdapterStatus,
     pub iroh: TransportAdapterStatus,
     pub queue: Vec<TransportQueueCount>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRoamingCapabilityRequest {
+    pub board_id: Uuid,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoamingCapabilityResponse {
+    pub format_version: i32,
+    pub protocol_version: String,
+    pub workspace_id: String,
+    pub board_id: String,
+    pub board_tag: String,
+    pub board_key: String,
+    pub relays: Vec<String>,
+    pub event_kind: u16,
+    pub minimum_relay_acks: usize,
+    pub provisioned_at: String,
 }
