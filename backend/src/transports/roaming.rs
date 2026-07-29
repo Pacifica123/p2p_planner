@@ -5,7 +5,7 @@ use p2p_kanban_nostr_transport::{
     ROAMING_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use crate::config::Settings;
@@ -22,6 +22,7 @@ const CARD_FIELDS: &[&str] = &[
     "dueAt",
     "completedAt",
     "isArchived",
+    "checklists",
 ];
 
 pub async fn run(settings: std::sync::Arc<Settings>, db: PgPool) -> anyhow::Result<()> {
@@ -103,14 +104,64 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             'completedAt', case when c.completed_at is null then null else to_char(c.completed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
             'isArchived', c.archived_at is not null,
             'labelIds', '[]'::jsonb,
-            'checklistCount', 0,
-            'checklistCompletedItemCount', 0,
+            'checklistCount', (
+              select count(*)::bigint
+              from checklists ch
+              where ch.card_id = c.id and ch.deleted_at is null
+            ),
+            'checklistItemCount', (
+              select count(*)::bigint
+              from checklist_items chi
+              join checklists ch on ch.id = chi.checklist_id
+              where ch.card_id = c.id and ch.deleted_at is null and chi.deleted_at is null
+            ),
+            'checklistCompletedItemCount', (
+              select count(*)::bigint
+              from checklist_items chi
+              join checklists ch on ch.id = chi.checklist_id
+              where ch.card_id = c.id
+                and ch.deleted_at is null
+                and chi.deleted_at is null
+                and chi.is_done = true
+            ),
             'commentCount', 0,
             'createdByUserId', c.created_by_user_id::text,
             'createdAt', to_char(c.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
             'updatedAt', to_char(c.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
             'archivedAt', case when c.archived_at is null then null else to_char(c.archived_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end
-          ) as card
+          ) as card,
+          coalesce((
+            select jsonb_agg(
+              jsonb_build_object(
+                'id', ch.id::text,
+                'cardId', ch.card_id::text,
+                'title', ch.title,
+                'position', ch.position::double precision,
+                'items', coalesce((
+                  select jsonb_agg(
+                    jsonb_build_object(
+                      'id', chi.id::text,
+                      'checklistId', chi.checklist_id::text,
+                      'title', chi.title,
+                      'isDone', chi.is_done,
+                      'position', chi.position::double precision,
+                      'completedAt', case when chi.completed_at is null then null else to_char(chi.completed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
+                      'createdAt', to_char(chi.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                      'updatedAt', to_char(chi.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                    )
+                    order by chi.position, chi.id
+                  )
+                  from checklist_items chi
+                  where chi.checklist_id = ch.id and chi.deleted_at is null
+                ), '[]'::jsonb),
+                'createdAt', to_char(ch.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                'updatedAt', to_char(ch.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+              )
+              order by ch.position, ch.id
+            )
+            from checklists ch
+            where ch.card_id = c.id and ch.deleted_at is null
+          ), '[]'::jsonb) as checklists
         from roaming_board_outbox o
         join cards c on c.id = o.card_id
         where o.status in ('pending', 'retry')
@@ -147,7 +198,10 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             entity_id: row.try_get::<Uuid, _>("card_id").unwrap().to_string(),
             operation: "card.put".to_string(),
             field_mask: vec!["*".to_string()],
-            payload: json!({ "card": row.try_get::<Value, _>("card").unwrap_or_else(|_| json!({})) }),
+            payload: json!({
+                "card": row.try_get::<Value, _>("card").unwrap_or_else(|_| json!({})),
+                "checklists": row.try_get::<Value, _>("checklists").unwrap_or_else(|_| json!([])),
+            }),
             occurred_at: row.try_get("occurred_at").unwrap_or_default(),
         };
         match transport.publish_roaming(&event).await {
@@ -231,6 +285,82 @@ async fn ingest_remote(pool: &PgPool, transport: &NostrTransport) {
 
 fn string_field<'a>(card: &'a Value, field: &str) -> Option<&'a str> {
     card.get(field).and_then(Value::as_str)
+}
+
+async fn apply_checklist_bundle(
+    tx: &mut Transaction<'_, Postgres>,
+    card_id: Uuid,
+    checklists: &Value,
+) -> anyhow::Result<()> {
+    let values = checklists
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("checklists payload must be an array"))?;
+    for checklist in values {
+        let checklist_id = Uuid::parse_str(
+            string_field(checklist, "id")
+                .ok_or_else(|| anyhow::anyhow!("checklist id is missing"))?,
+        )?;
+        let checklist_card_id = Uuid::parse_str(
+            string_field(checklist, "cardId")
+                .ok_or_else(|| anyhow::anyhow!("checklist card id is missing"))?,
+        )?;
+        if checklist_card_id != card_id {
+            anyhow::bail!("checklist payload scope mismatch");
+        }
+        let checklist_exists = sqlx::query_scalar::<_, bool>(
+            "select exists(select 1 from checklists where id = $1 and card_id = $2 and deleted_at is null)",
+        )
+        .bind(checklist_id)
+        .bind(card_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !checklist_exists {
+            anyhow::bail!("checklist does not belong to card");
+        }
+        let items = checklist
+            .get("items")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("checklist items must be an array"))?;
+        for item in items {
+            let item_id = Uuid::parse_str(
+                string_field(item, "id")
+                    .ok_or_else(|| anyhow::anyhow!("checklist item id is missing"))?,
+            )?;
+            let item_checklist_id = Uuid::parse_str(
+                string_field(item, "checklistId")
+                    .ok_or_else(|| anyhow::anyhow!("checklist item checklist id is missing"))?,
+            )?;
+            if item_checklist_id != checklist_id {
+                anyhow::bail!("checklist item payload scope mismatch");
+            }
+            let is_done = item
+                .get("isDone")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| anyhow::anyhow!("checklist item state is missing"))?;
+            let updated = sqlx::query(
+                r#"
+                update checklist_items
+                set
+                  is_done = $3,
+                  completed_at = case
+                    when $3 then coalesce(completed_at, now())
+                    else null
+                  end,
+                  updated_at = now()
+                where id = $1 and checklist_id = $2 and deleted_at is null
+                "#,
+            )
+            .bind(item_id)
+            .bind(checklist_id)
+            .bind(is_done)
+            .execute(&mut **tx)
+            .await?;
+            if updated.rows_affected() != 1 {
+                anyhow::bail!("checklist item does not belong to checklist");
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn apply_remote_event(
@@ -438,6 +568,12 @@ async fn apply_remote_event(
         .bind(board_id)
         .execute(&mut *tx)
         .await?;
+    }
+
+    if winning.contains("checklists") {
+        if let Some(checklists) = event.payload.get("checklists") {
+            apply_checklist_bundle(&mut tx, entity_id, checklists).await?;
+        }
     }
 
     for field in winning {

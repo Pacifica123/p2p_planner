@@ -305,6 +305,13 @@ export function getBoardSurfaceStyle(
     '--board-column-width': appearance.columnDensity === 'compact' ? '280px' : '320px',
     '--board-card-gap': appearance.columnDensity === 'compact' ? '10px' : '12px',
   };
+  if (appearance.wallpaper.kind === 'image' && appearance.wallpaper.value) {
+    style.backgroundColor = resolvePresetVariables(preset, themeMode)['--bg'];
+    style.backgroundImage = `linear-gradient(rgba(2, 6, 23, 0.28), rgba(2, 6, 23, 0.28)), url(${JSON.stringify(appearance.wallpaper.value)})`;
+    style.backgroundPosition = 'center';
+    style.backgroundRepeat = 'no-repeat';
+    style.backgroundSize = 'cover';
+  }
   return style;
 }
 

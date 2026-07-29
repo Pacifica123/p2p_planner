@@ -76,8 +76,10 @@ backup и только затем переключает backend/web на пре
 - перемещение карточек;
 - описание, статус и приоритет карточки;
 - labels, checklists и comments;
+- прогресс чек-листов прямо на карточках доски;
+- 84-дневная сетка продуктивности по реальным действиям;
 - история активности и audit API;
-- настройки внешнего вида пользователя и доски;
+- настройки внешнего вида пользователя и доски, включая wallpaper по URL;
 - безопасное обновление Docker-связки с backup и rollback images;
 - локальный snapshot и очередь pending operations;
 - backend-координируемая push/pull синхронизация;
@@ -85,11 +87,13 @@ backup и только затем переключает backend/web на пре
 - независимый `sync-core`;
 - Nostr shadow outbox/recovery и native Iroh adapter как экспериментальный
   transport foundation.
+- отдельный Android-клиент с native auth, локальными snapshot и независимой
+  Nostr-синхронизацией карточек и чек-листов.
 
 ## Что пока не готово
 
 - coordinator-free P2P как основной режим;
-- полноценный mobile-клиент;
+- полное равенство функций web и Android;
 - merge и destructive restore/import поверх существующих данных;
 - законченный conflict-resolution UI;
 - production-ready integrations/webhooks.

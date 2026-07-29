@@ -1,5 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { boardActivityQueryKey, cardActivityQueryKey } from '@/features/activity/hooks/useActivity';
+import {
+  boardActivityQueryKey,
+  boardProductivityQueryKey,
+  cardActivityQueryKey,
+} from '@/features/activity/hooks/useActivity';
 import { cardDetailQueryKey, cardsQueryKey } from '@/features/cards/hooks/useCards';
 import {
   createChecklist,
@@ -18,6 +22,7 @@ function invalidateChecklistSurface(queryClient: ReturnType<typeof useQueryClien
   void queryClient.invalidateQueries({ queryKey: cardDetailQueryKey(cardId) });
   void queryClient.invalidateQueries({ queryKey: cardChecklistsQueryKey(cardId) });
   void queryClient.invalidateQueries({ queryKey: boardActivityQueryKey(boardId) });
+  void queryClient.invalidateQueries({ queryKey: boardProductivityQueryKey(boardId) });
   void queryClient.invalidateQueries({ queryKey: cardActivityQueryKey(cardId) });
 }
 

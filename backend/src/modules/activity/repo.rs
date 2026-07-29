@@ -7,7 +7,10 @@ use crate::{
     modules::common::{board_workspace_id, card_board_and_workspace_id, normalize_limit, require_workspace_access},
 };
 
-use super::dto::{ActivityActorResponse, ActivityEntryResponse, ActivityListResponse, ListActivityQuery};
+use super::dto::{
+    ActivityActorResponse, ActivityEntryResponse, ActivityListResponse,
+    BoardProductivityResponse, ListActivityQuery, ProductivityDayResponse,
+};
 
 const BOARD_FEED_KINDS: &[&str] = &[
     "board.created",
@@ -211,6 +214,54 @@ where
     .await?;
 
     Ok(id)
+}
+
+pub async fn get_board_productivity(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    board_id: Uuid,
+    days: i64,
+) -> AppResult<BoardProductivityResponse> {
+    let workspace_id = board_workspace_id(pool, board_id).await?;
+    require_workspace_access(pool, workspace_id, actor_user_id).await?;
+    let days = days.clamp(28, 366) as i32;
+    let rows = sqlx::query(
+        r#"
+        select
+          to_char(series.day, 'YYYY-MM-DD') as day,
+          count(ae.id)::bigint as action_count
+        from generate_series(
+          current_date - ($2::int - 1),
+          current_date,
+          interval '1 day'
+        ) as series(day)
+        left join activity_entries ae
+          on ae.board_id = $1
+         and ae.created_at >= series.day
+         and ae.created_at < series.day + interval '1 day'
+        group by series.day
+        order by series.day asc
+        "#,
+    )
+    .bind(board_id)
+    .bind(days)
+    .fetch_all(pool)
+    .await?;
+
+    let values = rows
+        .iter()
+        .map(|row| {
+            Ok(ProductivityDayResponse {
+                date: row.try_get("day")?,
+                action_count: row.try_get("action_count")?,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    let total_actions = values.iter().map(|day| day.action_count).sum();
+    Ok(BoardProductivityResponse {
+        days: values,
+        total_actions,
+    })
 }
 
 pub async fn list_board_activity(

@@ -12,7 +12,21 @@ use crate::{
     state::AppState,
 };
 
-use super::{dto::ListActivityQuery, service};
+use super::{
+    dto::{BoardProductivityQuery, ListActivityQuery},
+    service,
+};
+
+pub async fn get_board_productivity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(board_id): Path<Uuid>,
+    Query(query): Query<BoardProductivityQuery>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let productivity = service::get_board_productivity(&state, actor, board_id, query).await?;
+    Ok(ok(productivity))
+}
 
 pub async fn list_board_activity(
     State(state): State<AppState>,

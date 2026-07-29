@@ -83,13 +83,14 @@ export function BoardAppearancePage() {
             <PresetPicker value={currentDraft.themePreset} onChange={(next) => setDraft({ ...currentDraft, themePreset: next })} />
           </Panel>
 
-          <Panel title="Фон" description="Готовый фон, сплошной цвет или CSS-градиент.">
+          <Panel title="Фон" description="Готовый фон, цвет, градиент или изображение по ссылке.">
             <div className="grid customization-form-grid">
               <SelectField label="Тип фона" value={currentDraft.wallpaper.kind} onChange={(event) => setDraft({ ...currentDraft, wallpaper: { ...currentDraft.wallpaper, kind: event.target.value as BoardAppearanceSettings['wallpaper']['kind'], value: event.target.value === 'none' ? null : currentDraft.wallpaper.value } })}>
                 <option value="none">По схеме</option>
                 <option value="solid">Цвет</option>
                 <option value="gradient">Градиент</option>
                 <option value="preset">Готовый фон</option>
+                <option value="image">Изображение по URL</option>
               </SelectField>
 
               {currentDraft.wallpaper.kind === 'preset' ? (
@@ -100,10 +101,18 @@ export function BoardAppearancePage() {
                 </SelectField>
               ) : currentDraft.wallpaper.kind !== 'none' ? (
                 <TextField
-                  label={currentDraft.wallpaper.kind === 'solid' ? 'CSS-цвет' : 'CSS-градиент'}
+                  label={currentDraft.wallpaper.kind === 'solid'
+                    ? 'CSS-цвет'
+                    : currentDraft.wallpaper.kind === 'image'
+                      ? 'Ссылка на изображение'
+                      : 'CSS-градиент'}
                   value={currentDraft.wallpaper.value || ''}
                   onChange={(event) => setDraft({ ...currentDraft, wallpaper: { kind: currentDraft.wallpaper.kind, value: event.target.value } })}
-                  placeholder={currentDraft.wallpaper.kind === 'solid' ? '#0f172a' : 'linear-gradient(135deg, #1e293b, #0f172a)'}
+                  placeholder={currentDraft.wallpaper.kind === 'solid'
+                    ? '#0f172a'
+                    : currentDraft.wallpaper.kind === 'image'
+                      ? 'https://example.org/wallpaper.jpg'
+                      : 'linear-gradient(135deg, #1e293b, #0f172a)'}
                 />
               ) : null}
             </div>

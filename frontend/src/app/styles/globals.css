@@ -626,6 +626,89 @@ body {
   gap: 3px;
 }
 
+.productivity-panel {
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg-soft) 86%, transparent);
+}
+
+.productivity-panel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.productivity-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.productivity-panel > summary > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.productivity-panel > summary .muted {
+  font-size: 0.76rem;
+  font-weight: 400;
+}
+
+.productivity-panel__total {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.productivity-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 12px);
+  grid-auto-columns: 12px;
+  gap: 4px;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 12px 1px 5px;
+}
+
+.productivity-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--surface-strong) 55%, transparent);
+}
+
+.productivity-cell--empty {
+  visibility: hidden;
+}
+
+.productivity-cell--1 {
+  background: color-mix(in srgb, var(--accent) 26%, var(--bg-soft));
+}
+
+.productivity-cell--2 {
+  background: color-mix(in srgb, var(--accent) 46%, var(--bg-soft));
+}
+
+.productivity-cell--3 {
+  background: color-mix(in srgb, var(--accent) 70%, var(--bg-soft));
+}
+
+.productivity-cell--4 {
+  background: var(--accent);
+}
+
+.productivity-panel__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
 .columns-strip {
   display: grid;
   grid-auto-flow: column;
@@ -686,6 +769,39 @@ body {
   gap: var(--board-card-gap, 12px);
   align-content: start;
   min-height: 58px;
+}
+
+.card-checklist-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-checklist-progress__track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+}
+
+.card-checklist-progress__track > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.card-checklist-progress__track > span.is-complete {
+  background: #22c55e;
+}
+
+.card-checklist-progress__value {
+  color: var(--text-soft);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .card-list--dragging {

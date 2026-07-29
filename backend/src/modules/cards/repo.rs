@@ -44,6 +44,7 @@ fn map_card(row: &sqlx::postgres::PgRow) -> AppResult<CardResponse> {
             .map(|id| id.to_string())
             .collect(),
         checklist_count: row.try_get("checklist_count")?,
+        checklist_item_count: row.try_get("checklist_item_count")?,
         checklist_completed_item_count: row.try_get("checklist_completed_item_count")?,
         comment_count: row.try_get("comment_count")?,
         created_by_user_id: row
@@ -80,6 +81,11 @@ pub async fn fetch_card(pool: &PgPool, card_id: Uuid) -> AppResult<CardResponse>
             select count(*)::bigint from checklists ch
             where ch.card_id = c.id and ch.deleted_at is null
           ) as checklist_count,
+          (
+            select count(*)::bigint from checklist_items chi
+            join checklists ch on ch.id = chi.checklist_id
+            where ch.card_id = c.id and ch.deleted_at is null and chi.deleted_at is null
+          ) as checklist_item_count,
           (
             select count(*)::bigint from checklist_items chi
             join checklists ch on ch.id = chi.checklist_id
@@ -169,6 +175,11 @@ pub async fn list_cards(
             select count(*)::bigint from checklists ch
             where ch.card_id = c.id and ch.deleted_at is null
           ) as checklist_count,
+          (
+            select count(*)::bigint from checklist_items chi
+            join checklists ch on ch.id = chi.checklist_id
+            where ch.card_id = c.id and ch.deleted_at is null and chi.deleted_at is null
+          ) as checklist_item_count,
           (
             select count(*)::bigint from checklist_items chi
             join checklists ch on ch.id = chi.checklist_id

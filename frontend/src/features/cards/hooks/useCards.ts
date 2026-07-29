@@ -11,7 +11,11 @@ import {
   updateCard,
 } from '@/features/cards/api/cards';
 import { columnsQueryKey } from '@/features/columns/hooks/useColumns';
-import { boardActivityQueryKey, cardActivityQueryKey } from '@/features/activity/hooks/useActivity';
+import {
+  boardActivityQueryKey,
+  boardProductivityQueryKey,
+  cardActivityQueryKey,
+} from '@/features/activity/hooks/useActivity';
 import type { CardPriority, CardStatus } from '@/shared/types/api';
 
 export const cardsQueryKey = (boardId?: string) => ['cards', boardId];
@@ -21,6 +25,7 @@ function invalidateBoardSurface(queryClient: ReturnType<typeof useQueryClient>, 
   void queryClient.invalidateQueries({ queryKey: cardsQueryKey(boardId) });
   void queryClient.invalidateQueries({ queryKey: columnsQueryKey(boardId) });
   void queryClient.invalidateQueries({ queryKey: boardActivityQueryKey(boardId) });
+  void queryClient.invalidateQueries({ queryKey: boardProductivityQueryKey(boardId) });
   if (cardId) {
     void queryClient.invalidateQueries({ queryKey: cardDetailQueryKey(cardId) });
     void queryClient.invalidateQueries({ queryKey: cardActivityQueryKey(cardId) });

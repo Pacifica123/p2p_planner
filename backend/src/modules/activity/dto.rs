@@ -10,6 +10,26 @@ pub struct ListActivityQuery {
     pub actor_user_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardProductivityQuery {
+    pub days: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductivityDayResponse {
+    pub date: String,
+    pub action_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardProductivityResponse {
+    pub days: Vec<ProductivityDayResponse>,
+    pub total_actions: i64,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityActorResponse {

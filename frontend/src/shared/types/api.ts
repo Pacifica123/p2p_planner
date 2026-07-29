@@ -84,6 +84,7 @@ export interface Card {
   isArchived: boolean;
   labelIds?: string[];
   checklistCount?: number;
+  checklistItemCount?: number;
   checklistCompletedItemCount?: number;
   commentCount?: number;
   createdByUserId?: string | null;
@@ -177,10 +178,20 @@ export interface ActivityListResponse {
   nextCursor: string | null;
 }
 
+export interface ProductivityDay {
+  date: string;
+  actionCount: number;
+}
+
+export interface BoardProductivityResponse {
+  days: ProductivityDay[];
+  totalActions: number;
+}
+
 
 export type AppTheme = 'system' | 'light' | 'dark';
 export type Density = 'comfortable' | 'compact';
-export type WallpaperKind = 'none' | 'solid' | 'gradient' | 'preset';
+export type WallpaperKind = 'none' | 'solid' | 'gradient' | 'preset' | 'image';
 export type CardPreviewMode = 'compact' | 'expanded';
 
 export interface WallpaperConfig {

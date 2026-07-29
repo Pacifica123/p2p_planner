@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createColumn, deleteColumn, getColumns, updateColumn } from '@/features/columns/api/columns';
+import { boardProductivityQueryKey } from '@/features/activity/hooks/useActivity';
 
 export const columnsQueryKey = (boardId?: string) => ['columns', boardId];
 
@@ -17,6 +18,7 @@ export function useCreateColumnMutation(boardId?: string) {
     mutationFn: (input: { name: string; description?: string }) => createColumn(boardId!, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: columnsQueryKey(boardId) });
+      void queryClient.invalidateQueries({ queryKey: boardProductivityQueryKey(boardId) });
     },
   });
 }
@@ -28,6 +30,7 @@ export function useUpdateColumnMutation(boardId?: string) {
       updateColumn(boardId!, columnId, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: columnsQueryKey(boardId) });
+      void queryClient.invalidateQueries({ queryKey: boardProductivityQueryKey(boardId) });
     },
   });
 }
@@ -38,6 +41,7 @@ export function useDeleteColumnMutation(boardId?: string) {
     mutationFn: (columnId: string) => deleteColumn(boardId!, columnId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: columnsQueryKey(boardId) });
+      void queryClient.invalidateQueries({ queryKey: boardProductivityQueryKey(boardId) });
     },
   });
 }

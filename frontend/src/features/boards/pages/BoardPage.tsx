@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { paths } from '@/app/router/paths';
 import { useAppearance } from '@/app/providers/AppearanceProvider';
 import { ActivityFeed } from '@/features/activity/components/ActivityFeed';
+import { ProductivityGraph } from '@/features/activity/components/ProductivityGraph';
 import { useBoardActivityQuery } from '@/features/activity/hooks/useActivity';
 import { useBoardAppearanceQuery } from '@/features/appearance/hooks/useAppearance';
 import { BoardColumnSection } from '@/features/boards/components/BoardColumnSection';
@@ -16,6 +17,7 @@ import {
   reorderBoardPreview,
   sortCardsByPosition,
 } from '@/features/boards/lib/cardDnd';
+import { getChecklistProgress } from '@/features/boards/lib/checklistProgress';
 import { useColumnsQuery, useCreateColumnMutation, useDeleteColumnMutation, useUpdateColumnMutation } from '@/features/columns/hooks/useColumns';
 import { CardDetailsDrawer } from '@/features/cards/components/CardDetailsDrawer';
 import { useCardsQuery } from '@/features/cards/hooks/useCards';
@@ -339,6 +341,7 @@ export function BoardPage() {
       }
 
       const currentVisibleIndex = visibleIndex;
+      const checklistProgress = getChecklistProgress(card);
       rows.push(
         <div key={card.id} className="card-slot">
           <article
@@ -363,6 +366,22 @@ export function BoardPage() {
             </div>
             {(boardAppearance?.showCardDescription ?? true) && boardAppearance?.cardPreviewMode !== 'compact' && card.description ? (
               <p className="muted">{card.description}</p>
+            ) : null}
+            {(boardAppearance?.showChecklistProgress ?? true) && checklistProgress ? (
+              <div
+                className="card-checklist-progress"
+                aria-label={`Чек-лист выполнен на ${checklistProgress.percent}%`}
+              >
+                <div className="card-checklist-progress__track">
+                  <span
+                    className={checklistProgress.percent === 100 ? 'is-complete' : ''}
+                    style={{ width: `${checklistProgress.percent}%` }}
+                  />
+                </div>
+                <span className="card-checklist-progress__value">
+                  {checklistProgress.completed}/{checklistProgress.total}
+                </span>
+              </div>
             ) : null}
             <div className="card-tile__footer">
               {card.status ? <Badge tone={statusTone[card.status] || 'default'}>{statusLabel[card.status] || card.status}</Badge> : null}
@@ -462,6 +481,7 @@ export function BoardPage() {
               columnCount={orderedColumns.length}
               cardCount={currentCards.length}
             />
+            <ProductivityGraph boardId={boardId} />
             <div className="board-main">
               {orderedColumns.length ? (
                 <div className="columns-strip columns-strip--board-surface">

@@ -101,6 +101,7 @@ pub struct CardResponse {
     pub is_archived: bool,
     pub label_ids: Vec<String>,
     pub checklist_count: i64,
+    pub checklist_item_count: i64,
     pub checklist_completed_item_count: i64,
     pub comment_count: i64,
     pub created_by_user_id: Option<String>,

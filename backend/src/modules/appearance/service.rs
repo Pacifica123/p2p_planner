@@ -14,7 +14,7 @@ use super::dto::{
 
 const APP_THEMES: &[&str] = &["system", "light", "dark"];
 const DENSITIES: &[&str] = &["comfortable", "compact"];
-const WALLPAPER_KINDS: &[&str] = &["none", "solid", "gradient", "preset"];
+const WALLPAPER_KINDS: &[&str] = &["none", "solid", "gradient", "preset", "image"];
 const CARD_PREVIEW_MODES: &[&str] = &["compact", "expanded"];
 
 fn normalize_choice(value: Option<String>, allowed: &[&str], field_name: &str) -> AppResult<Option<String>> {
@@ -115,6 +115,19 @@ pub async fn upsert_board_appearance(
                         return Err(AppError::bad_request(
                             "wallpaper.value is required for non-none wallpapers",
                         ));
+                    }
+                    if kind == "image" {
+                        let image_url = value.as_deref().unwrap_or_default();
+                        if image_url.len() > 2_048
+                            || image_url.contains('\r')
+                            || image_url.contains('\n')
+                            || !(image_url.starts_with("https://")
+                                || image_url.starts_with("http://"))
+                        {
+                            return Err(AppError::bad_request(
+                                "wallpaper image must be an http(s) URL up to 2048 characters",
+                            ));
+                        }
                     }
                     value
                 }
