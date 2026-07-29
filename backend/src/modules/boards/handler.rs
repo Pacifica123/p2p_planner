@@ -7,14 +7,14 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    error::AppResult,
-    http::response::ok,
-    modules::common::actor_user_id,
-    state::AppState,
+    error::AppResult, http::response::ok, modules::common::actor_user_id, state::AppState,
 };
 
 use super::{
-    dto::{CreateBoardRequest, CreateColumnRequest, ListBoardsQuery, UpdateBoardRequest, UpdateColumnRequest},
+    dto::{
+        CreateBoardRequest, CreateColumnRequest, ListBoardsQuery, UpdateBoardRequest,
+        UpdateColumnRequest,
+    },
     service,
 };
 
@@ -122,7 +122,6 @@ pub async fn delete_column(
     let column = service::delete_column(&state, actor, column_id).await?;
     Ok(ok(column))
 }
-
 
 pub async fn update_column_scoped(
     State(state): State<AppState>,

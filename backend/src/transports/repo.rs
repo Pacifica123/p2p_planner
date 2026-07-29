@@ -11,10 +11,7 @@ pub struct ClaimedMirrorEvent {
     pub envelope: SyncEnvelope,
 }
 
-pub async fn ensure_nostr_outbox(
-    pool: &PgPool,
-    change_event_id: Uuid,
-) -> AppResult<()> {
+pub async fn ensure_nostr_outbox(pool: &PgPool, change_event_id: Uuid) -> AppResult<()> {
     sqlx::query(
         r#"
         insert into sync_transport_outbox (

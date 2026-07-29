@@ -31,6 +31,8 @@ export function useCardChecklistsQuery(cardId?: string) {
     queryKey: cardChecklistsQueryKey(cardId),
     queryFn: () => getCardChecklists(cardId!),
     enabled: Boolean(cardId),
+    refetchInterval: 4_000,
+    refetchIntervalInBackground: false,
   });
 }
 

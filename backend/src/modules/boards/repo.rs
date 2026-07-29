@@ -8,8 +8,9 @@ use crate::{
         activity::repo::{record_activity, NewActivityEntry},
         audit::repo::{record_audit, NewAuditLogEntry},
         common::{
-            board_workspace_id, column_board_and_workspace_id, ensure_user_exists, next_position_for_column,
-            normalize_limit, require_workspace_access, require_workspace_admin, trim_to_option,
+            board_workspace_id, column_board_and_workspace_id, ensure_user_exists,
+            next_position_for_column, normalize_limit, require_workspace_access,
+            require_workspace_admin, trim_to_option,
         },
     },
 };
@@ -281,7 +282,11 @@ pub async fn create_board(
             kind: "board.created",
             entity_type: "board",
             entity_id: board_id,
-            field_mask: vec!["name".to_string(), "description".to_string(), "boardType".to_string()],
+            field_mask: vec![
+                "name".to_string(),
+                "description".to_string(),
+                "boardType".to_string(),
+            ],
             payload_jsonb: json!({
                 "name": board.name.clone(),
                 "description": board.description.clone(),
@@ -297,7 +302,11 @@ pub async fn create_board(
     Ok(board)
 }
 
-pub async fn get_board(pool: &PgPool, actor_user_id: Uuid, board_id: Uuid) -> AppResult<BoardResponse> {
+pub async fn get_board(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    board_id: Uuid,
+) -> AppResult<BoardResponse> {
     let workspace_id = board_workspace_id(pool, board_id).await?;
     require_workspace_access(pool, workspace_id, actor_user_id).await?;
     fetch_board(pool, board_id).await
@@ -342,11 +351,17 @@ pub async fn update_board(
     let mut changes = serde_json::Map::new();
     if before.name != board.name {
         field_mask.push("name".to_string());
-        changes.insert("name".to_string(), json!({"before": before.name, "after": board.name.clone()}));
+        changes.insert(
+            "name".to_string(),
+            json!({"before": before.name, "after": board.name.clone()}),
+        );
     }
     if before.description != board.description {
         field_mask.push("description".to_string());
-        changes.insert("description".to_string(), json!({"before": before.description, "after": board.description.clone()}));
+        changes.insert(
+            "description".to_string(),
+            json!({"before": before.description, "after": board.description.clone()}),
+        );
     }
     if !field_mask.is_empty() {
         let audit_id = record_audit(
@@ -599,9 +614,9 @@ pub async fn create_column(
             .await?;
             Ok(column)
         }
-        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-            Err(AppError::conflict("Column name already exists on this board"))
-        }
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => Err(
+            AppError::conflict("Column name already exists on this board"),
+        ),
         Err(err) => Err(err.into()),
     }
 }
@@ -663,26 +678,45 @@ pub async fn update_column(
             let mut changes = serde_json::Map::new();
             if before.name != column.name {
                 field_mask.push("name".to_string());
-                changes.insert("name".to_string(), json!({"before": before.name, "after": column.name.clone()}));
+                changes.insert(
+                    "name".to_string(),
+                    json!({"before": before.name, "after": column.name.clone()}),
+                );
             }
             if before.description != column.description {
                 field_mask.push("description".to_string());
-                changes.insert("description".to_string(), json!({"before": before.description, "after": column.description.clone()}));
+                changes.insert(
+                    "description".to_string(),
+                    json!({"before": before.description, "after": column.description.clone()}),
+                );
             }
             if (before.position - column.position).abs() > f64::EPSILON {
                 field_mask.push("position".to_string());
-                changes.insert("position".to_string(), json!({"before": before.position, "after": column.position}));
+                changes.insert(
+                    "position".to_string(),
+                    json!({"before": before.position, "after": column.position}),
+                );
             }
             if before.color_token != column.color_token {
                 field_mask.push("colorToken".to_string());
-                changes.insert("colorToken".to_string(), json!({"before": before.color_token, "after": column.color_token.clone()}));
+                changes.insert(
+                    "colorToken".to_string(),
+                    json!({"before": before.color_token, "after": column.color_token.clone()}),
+                );
             }
             if before.wip_limit != column.wip_limit {
                 field_mask.push("wipLimit".to_string());
-                changes.insert("wipLimit".to_string(), json!({"before": before.wip_limit, "after": column.wip_limit}));
+                changes.insert(
+                    "wipLimit".to_string(),
+                    json!({"before": before.wip_limit, "after": column.wip_limit}),
+                );
             }
             if !field_mask.is_empty() {
-                let kind = if field_mask.len() == 1 && field_mask[0] == "position" { "column.reordered" } else { "column.updated" };
+                let kind = if field_mask.len() == 1 && field_mask[0] == "position" {
+                    "column.reordered"
+                } else {
+                    "column.updated"
+                };
                 let audit_id = record_audit(
                     pool,
                     &NewAuditLogEntry {
@@ -720,9 +754,9 @@ pub async fn update_column(
             Ok(column)
         }
         Err(sqlx::Error::RowNotFound) => Err(AppError::not_found("Column not found")),
-        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-            Err(AppError::conflict("Column name already exists on this board"))
-        }
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => Err(
+            AppError::conflict("Column name already exists on this board"),
+        ),
         Err(err) => Err(err.into()),
     }
 }

@@ -18,6 +18,8 @@ export function useCardCommentsQuery(cardId?: string) {
     queryKey: cardCommentsQueryKey(cardId),
     queryFn: () => getCardComments(cardId!),
     enabled: Boolean(cardId),
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
   });
 }
 

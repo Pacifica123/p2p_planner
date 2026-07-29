@@ -32,12 +32,15 @@ pub async fn auth_context(state: &AppState, headers: &HeaderMap) -> AppResult<Au
             .device_id()?
             .ok_or_else(|| AppError::unauthorized("Access token is missing device binding"))?;
 
-        let Some(session) = repo::find_session_principal(&state.db, user_id, session_id).await? else {
+        let Some(session) = repo::find_session_principal(&state.db, user_id, session_id).await?
+        else {
             return Err(AppError::unauthorized("Session is no longer active"));
         };
 
         if session.device_id != device_id {
-            return Err(AppError::unauthorized("Access token device binding mismatch"));
+            return Err(AppError::unauthorized(
+                "Access token device binding mismatch",
+            ));
         }
 
         return Ok(AuthContext {
@@ -101,7 +104,9 @@ pub async fn ensure_user_exists(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
     if exists {
         Ok(())
     } else {
-        Err(AppError::unauthorized("Authenticated user is not active anymore"))
+        Err(AppError::unauthorized(
+            "Authenticated user is not active anymore",
+        ))
     }
 }
 
@@ -157,7 +162,9 @@ pub async fn require_workspace_access(
 ) -> AppResult<Option<String>> {
     let role = workspace_role(pool, workspace_id, user_id).await?;
     if role.is_none() {
-        return Err(AppError::forbidden("Workspace is not accessible for current user"));
+        return Err(AppError::forbidden(
+            "Workspace is not accessible for current user",
+        ));
     }
     Ok(role)
 }
@@ -207,7 +214,10 @@ pub async fn board_workspace_id(pool: &PgPool, board_id: Uuid) -> AppResult<Uuid
     .ok_or_else(|| AppError::not_found("Board not found"))
 }
 
-pub async fn column_board_and_workspace_id(pool: &PgPool, column_id: Uuid) -> AppResult<(Uuid, Uuid)> {
+pub async fn column_board_and_workspace_id(
+    pool: &PgPool,
+    column_id: Uuid,
+) -> AppResult<(Uuid, Uuid)> {
     let row = sqlx::query(
         r#"
         select c.board_id, b.workspace_id
@@ -260,7 +270,11 @@ pub async fn next_position_for_column(pool: &PgPool, board_id: Uuid) -> AppResul
     Ok(max_position.unwrap_or(0.0) + POSITION_GAP)
 }
 
-pub async fn next_position_for_card(pool: &PgPool, board_id: Uuid, column_id: Uuid) -> AppResult<f64> {
+pub async fn next_position_for_card(
+    pool: &PgPool,
+    board_id: Uuid,
+    column_id: Uuid,
+) -> AppResult<f64> {
     let max_position = sqlx::query_scalar::<_, Option<f64>>(
         r#"
         select max(position::double precision)

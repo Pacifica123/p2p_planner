@@ -1,6 +1,9 @@
 use uuid::Uuid;
 
-use crate::{error::{AppError, AppResult}, state::AppState};
+use crate::{
+    error::{AppError, AppResult},
+    state::AppState,
+};
 
 use super::dto::{
     BoardListResponse, BoardResponse, ColumnListResponse, ColumnResponse, CreateBoardRequest,
@@ -27,7 +30,9 @@ pub async fn create_board(
     }
     if let Some(board_type) = &payload.board_type {
         if board_type != "kanban" {
-            return Err(AppError::bad_request("Only kanban boards are supported in v1"));
+            return Err(AppError::bad_request(
+                "Only kanban boards are supported in v1",
+            ));
         }
     }
 

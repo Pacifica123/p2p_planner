@@ -57,7 +57,10 @@ async fn run_nostr_worker(settings: Arc<Settings>, db: PgPool) -> anyhow::Result
 
     if nostr.backfill_on_start {
         let queued = super::repo::enqueue_nostr_backfill(&db).await?;
-        tracing::info!(queued, "queued existing sync events for Nostr shadow backfill");
+        tracing::info!(
+            queued,
+            "queued existing sync events for Nostr shadow backfill"
+        );
     }
 
     let poll = Duration::from_millis(settings.transports.worker_poll_interval_ms);

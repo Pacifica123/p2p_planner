@@ -26,9 +26,11 @@ pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .get(axum::http::header::COOKIE)
         .and_then(|value| value.to_str().ok())
         .and_then(|raw| {
-            raw.split(';')
-                .map(str::trim)
-                .find_map(|pair| pair.split_once('=').filter(|(key, _)| key.trim() == name).map(|(_, value)| value.trim().to_string()))
+            raw.split(';').map(str::trim).find_map(|pair| {
+                pair.split_once('=')
+                    .filter(|(key, _)| key.trim() == name)
+                    .map(|(_, value)| value.trim().to_string())
+            })
         })
         .filter(|value| !value.is_empty())
 }
@@ -49,7 +51,13 @@ fn client_ip(headers: &HeaderMap) -> String {
         .and_then(|value| value.split(',').next())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .or_else(|| headers.get("x-real-ip").and_then(|value| value.to_str().ok()).map(str::trim).filter(|value| !value.is_empty()))
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
         .unwrap_or("unknown")
         .to_string()
 }
@@ -106,7 +114,9 @@ pub async fn rate_limit_middleware(
             .lock()
             .expect("rate limit store mutex poisoned");
 
-        store.retain(|_, bucket| now.duration_since(bucket.window_started_at) < Duration::from_secs(window_secs * 2));
+        store.retain(|_, bucket| {
+            now.duration_since(bucket.window_started_at) < Duration::from_secs(window_secs * 2)
+        });
 
         let key = rate_limit_key(category, &headers);
         let bucket = store.entry(key).or_insert_with(|| RateLimitBucket {

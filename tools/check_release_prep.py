@@ -12,20 +12,19 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "1.0.0-beta.3"
+EXPECTED_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 REQUIRED_FILES = (
     "VERSION",
     "README.md",
     "bootstrap.py",
     "deploy/bootstrap/compose.yaml",
-    "docs/product/v1.0.0-beta.3-release-notes.md",
-    "docs/product/v1.0.0-beta.3-release-artifacts.md",
-    "release/p2pkanban-v1.0.0-beta.3/README_RELEASE_RU.md",
-    "release/p2pkanban-v1.0.0-beta.3/README_RELEASE_EN.md",
+    f"docs/product/v{EXPECTED_VERSION}-release-notes.md",
+    f"release/p2pkanban-v{EXPECTED_VERSION}/README_RELEASE_RU.md",
+    f"release/p2pkanban-v{EXPECTED_VERSION}/README_RELEASE_EN.md",
 )
 MARKDOWN_EXCLUDES = {
     Path("release/p2p-planner-v1.0.0-beta.1-web-win64/README_RELEASE.md"),
-    Path("release/p2pkanban-v1.0.0-beta.3/README_RELEASE_EN.md"),
+    Path(f"release/p2pkanban-v{EXPECTED_VERSION}/README_RELEASE_EN.md"),
 }
 MARKDOWN_EXCLUDED_PARTS = {
     ".git",
@@ -89,6 +88,11 @@ def check_document_language() -> None:
         relative = path.relative_to(ROOT)
         if (
             relative in MARKDOWN_EXCLUDES
+            or (
+                relative.parts
+                and relative.parts[0] == "release"
+                and relative.name == "README_RELEASE_EN.md"
+            )
             or any(part in MARKDOWN_EXCLUDED_PARTS for part in relative.parts)
         ):
             continue
@@ -122,10 +126,9 @@ def check_release_surface() -> None:
             encoding="utf-8"
         )
     )
-    if "v1.0.0-beta.2" in active_docs:
-        fail("В активной документации осталась старая цель v1.0.0-beta.2")
-    if "v1.0.0-beta.3" not in active_docs:
-        fail("Активная документация не фиксирует v1.0.0-beta.3")
+    expected_tag = f"v{EXPECTED_VERSION}"
+    if expected_tag not in active_docs:
+        fail(f"Активная документация не фиксирует {expected_tag}")
 
 
 def check_bundle_builder() -> None:

@@ -61,7 +61,15 @@ pub struct SignOutEnvelope {
 }
 
 fn ensure_dev_bootstrap_allowed(state: &AppState) -> AppResult<()> {
-    match state.settings.app.env.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+    match state
+        .settings
+        .app
+        .env
+        .trim()
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .as_str()
+    {
         "local" | "dev" | "development" | "test" | "testing" => Ok(()),
         _ => Err(AppError::not_found("Not found")),
     }
@@ -70,7 +78,9 @@ fn ensure_dev_bootstrap_allowed(state: &AppState) -> AppResult<()> {
 fn normalize_email(value: &str) -> AppResult<String> {
     let normalized = value.trim().to_ascii_lowercase();
     if normalized.is_empty() || !normalized.contains('@') {
-        return Err(AppError::bad_request("email must look like an email address"));
+        return Err(AppError::bad_request(
+            "email must look like an email address",
+        ));
     }
     Ok(normalized)
 }
@@ -78,14 +88,18 @@ fn normalize_email(value: &str) -> AppResult<String> {
 fn normalize_display_name(value: &str) -> AppResult<String> {
     let display_name = value.trim();
     if display_name.len() < 2 {
-        return Err(AppError::bad_request("displayName must be at least 2 characters"));
+        return Err(AppError::bad_request(
+            "displayName must be at least 2 characters",
+        ));
     }
     Ok(display_name.to_string())
 }
 
 fn validate_password(value: &str) -> AppResult<()> {
     if value.len() < 8 {
-        return Err(AppError::bad_request("password must be at least 8 characters"));
+        return Err(AppError::bad_request(
+            "password must be at least 8 characters",
+        ));
     }
     Ok(())
 }
@@ -194,7 +208,9 @@ fn ensure_cookie_request_origin_allowed(state: &AppState, headers: &HeaderMap) -
     if allowed {
         Ok(())
     } else {
-        Err(AppError::forbidden("Origin is not allowed for cookie-bound auth action"))
+        Err(AppError::forbidden(
+            "Origin is not allowed for cookie-bound auth action",
+        ))
     }
 }
 
@@ -209,7 +225,10 @@ fn set_cookie(
         format!("{name}={value}"),
         "Path=/".to_string(),
         format!("Max-Age={max_age_seconds}"),
-        format!("SameSite={}", state.settings.auth.cookie_same_site.as_set_cookie_value()),
+        format!(
+            "SameSite={}",
+            state.settings.auth.cookie_same_site.as_set_cookie_value()
+        ),
     ];
 
     if http_only {
@@ -227,7 +246,10 @@ fn clear_cookie(name: &str, state: &AppState) -> String {
         format!("{name}="),
         "Path=/".to_string(),
         "Max-Age=0".to_string(),
-        format!("SameSite={}", state.settings.auth.cookie_same_site.as_set_cookie_value()),
+        format!(
+            "SameSite={}",
+            state.settings.auth.cookie_same_site.as_set_cookie_value()
+        ),
         "HttpOnly".to_string(),
     ];
 
@@ -349,12 +371,24 @@ pub async fn sign_up(
     let display_name = normalize_display_name(&payload.display_name)?;
     validate_password(&payload.password)?;
 
-    if repo::find_active_user_by_email(&state.db, &email).await?.is_some() {
-        return Err(AppError::conflict("An active account already uses this email"));
+    if repo::find_active_user_by_email(&state.db, &email)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::conflict(
+            "An active account already uses this email",
+        ));
     }
 
     let password_hash = hash_password(&payload.password)?;
-    let user = repo::create_user(&state.db, Uuid::now_v7(), &email, &display_name, &password_hash).await?;
+    let user = repo::create_user(
+        &state.db,
+        Uuid::now_v7(),
+        &email,
+        &display_name,
+        &password_hash,
+    )
+    .await?;
     create_authenticated_session(state, &user, headers).await
 }
 
@@ -371,7 +405,9 @@ pub async fn sign_in(
     };
 
     let Some(password_hash) = user.password_hash.as_deref() else {
-        return Err(AppError::unauthorized("Password sign-in is not available for this account"));
+        return Err(AppError::unauthorized(
+            "Password sign-in is not available for this account",
+        ));
     };
 
     if !verify_password(&payload.password, password_hash)? {
@@ -381,15 +417,22 @@ pub async fn sign_in(
     create_authenticated_session(state, &user, headers).await
 }
 
-async fn resolve_refresh_session(state: &AppState, refresh_token: &str) -> AppResult<SessionLookupRecord> {
+async fn resolve_refresh_session(
+    state: &AppState,
+    refresh_token: &str,
+) -> AppResult<SessionLookupRecord> {
     let refresh_hash = hash_opaque_token(refresh_token);
     let Some(session) = repo::find_session_by_refresh_hash(&state.db, &refresh_hash).await? else {
-        return Err(AppError::unauthorized("Refresh session is missing or expired"));
+        return Err(AppError::unauthorized(
+            "Refresh session is missing or expired",
+        ));
     };
 
     if session.revoked {
         let _ = repo::revoke_all_sessions_for_user(&state.db, session.user_id).await?;
-        return Err(AppError::unauthorized("Refresh token reuse detected; all sessions revoked"));
+        return Err(AppError::unauthorized(
+            "Refresh token reuse detected; all sessions revoked",
+        ));
     }
 
     Ok(session)
@@ -403,11 +446,15 @@ async fn rotate_refresh_session(
     let session_lookup = resolve_refresh_session(state, &refresh_token).await?;
 
     let Some(device_id) = session_lookup.device_id else {
-        return Err(AppError::unauthorized("Refresh session is missing device binding"));
+        return Err(AppError::unauthorized(
+            "Refresh session is missing device binding",
+        ));
     };
 
     let Some(user) = repo::find_active_user_by_id(&state.db, session_lookup.user_id).await? else {
-        return Err(AppError::unauthorized("Refresh session user no longer exists"));
+        return Err(AppError::unauthorized(
+            "Refresh session user no longer exists",
+        ));
     };
 
     let new_refresh_token = generate_refresh_token();
@@ -496,7 +543,11 @@ pub async fn native_sign_out(
     })
 }
 
-pub async fn sign_out_all(state: &AppState, headers: &HeaderMap, current_user_id: Uuid) -> AppResult<SignOutEnvelope> {
+pub async fn sign_out_all(
+    state: &AppState,
+    headers: &HeaderMap,
+    current_user_id: Uuid,
+) -> AppResult<SignOutEnvelope> {
     ensure_cookie_request_origin_allowed(state, headers)?;
     let _ = repo::revoke_all_sessions_for_user(&state.db, current_user_id).await?;
 
@@ -518,7 +569,9 @@ pub async fn get_session(state: &AppState, headers: &HeaderMap) -> AppResult<Ses
         ) {
             let user_id = claims.user_id()?;
             let session_id = claims.session_id()?;
-            if let Some(session) = repo::find_session_principal(&state.db, user_id, session_id).await? {
+            if let Some(session) =
+                repo::find_session_principal(&state.db, user_id, session_id).await?
+            {
                 return Ok(SessionResponse {
                     authenticated: true,
                     mode: "session_cookie_plus_bearer",
@@ -584,7 +637,9 @@ pub async fn bootstrap_dev_user(
         .unwrap_or_else(|| "Smoke Test User".to_string());
 
     if !email.contains('@') {
-        return Err(AppError::bad_request("email must look like an email address"));
+        return Err(AppError::bad_request(
+            "email must look like an email address",
+        ));
     }
 
     repo::bootstrap_dev_user(&state.db, user_id, &email, &display_name).await

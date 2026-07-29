@@ -436,7 +436,10 @@ pub async fn delete_workspace(
     Ok(workspace)
 }
 
-async fn fetch_members(pool: &PgPool, workspace_id: Uuid) -> AppResult<Vec<WorkspaceMemberResponse>> {
+async fn fetch_members(
+    pool: &PgPool,
+    workspace_id: Uuid,
+) -> AppResult<Vec<WorkspaceMemberResponse>> {
     let rows = sqlx::query(
         r#"
         select

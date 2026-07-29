@@ -7,16 +7,22 @@ use crate::{
     modules::{
         activity::repo::{record_activity, NewActivityEntry},
         audit::repo::{record_audit, NewAuditLogEntry},
-        common::{card_board_and_workspace_id, require_workspace_access, require_workspace_admin, POSITION_GAP},
+        common::{
+            card_board_and_workspace_id, require_workspace_access, require_workspace_admin,
+            POSITION_GAP,
+        },
     },
 };
 
 use super::dto::{
-    ChecklistItemResponse, ChecklistListResponse, ChecklistResponse, CreateChecklistItemRequest, CreateChecklistRequest,
-    UpdateChecklistItemRequest, UpdateChecklistRequest,
+    ChecklistItemResponse, ChecklistListResponse, ChecklistResponse, CreateChecklistItemRequest,
+    CreateChecklistRequest, UpdateChecklistItemRequest, UpdateChecklistRequest,
 };
 
-fn map_checklist(row: &sqlx::postgres::PgRow, items: Vec<ChecklistItemResponse>) -> AppResult<ChecklistResponse> {
+fn map_checklist(
+    row: &sqlx::postgres::PgRow,
+    items: Vec<ChecklistItemResponse>,
+) -> AppResult<ChecklistResponse> {
     Ok(ChecklistResponse {
         id: row.try_get::<Uuid, _>("id")?.to_string(),
         card_id: row.try_get::<Uuid, _>("card_id")?.to_string(),
@@ -41,7 +47,10 @@ fn map_item(row: &sqlx::postgres::PgRow) -> AppResult<ChecklistItemResponse> {
     })
 }
 
-async fn fetch_items_for_checklist(pool: &PgPool, checklist_id: Uuid) -> AppResult<Vec<ChecklistItemResponse>> {
+async fn fetch_items_for_checklist(
+    pool: &PgPool,
+    checklist_id: Uuid,
+) -> AppResult<Vec<ChecklistItemResponse>> {
     let rows = sqlx::query(
         r#"
         select
@@ -128,7 +137,11 @@ async fn checklist_context(pool: &PgPool, checklist_id: Uuid) -> AppResult<(Uuid
     .await?
     .ok_or_else(|| AppError::not_found("Checklist not found"))?;
 
-    Ok((row.try_get("card_id")?, row.try_get("board_id")?, row.try_get("workspace_id")?))
+    Ok((
+        row.try_get("card_id")?,
+        row.try_get("board_id")?,
+        row.try_get("workspace_id")?,
+    ))
 }
 
 async fn item_context(pool: &PgPool, item_id: Uuid) -> AppResult<(Uuid, Uuid, Uuid, Uuid)> {
@@ -151,7 +164,12 @@ async fn item_context(pool: &PgPool, item_id: Uuid) -> AppResult<(Uuid, Uuid, Uu
     .await?
     .ok_or_else(|| AppError::not_found("Checklist item not found"))?;
 
-    Ok((row.try_get("checklist_id")?, row.try_get("card_id")?, row.try_get("board_id")?, row.try_get("workspace_id")?))
+    Ok((
+        row.try_get("checklist_id")?,
+        row.try_get("card_id")?,
+        row.try_get("board_id")?,
+        row.try_get("workspace_id")?,
+    ))
 }
 
 async fn next_checklist_position(pool: &PgPool, card_id: Uuid) -> AppResult<f64> {
@@ -174,7 +192,11 @@ async fn next_item_position(pool: &PgPool, checklist_id: Uuid) -> AppResult<f64>
     Ok(max_position.unwrap_or(0.0) + POSITION_GAP)
 }
 
-pub async fn list_checklists(pool: &PgPool, actor_user_id: Uuid, card_id: Uuid) -> AppResult<ChecklistListResponse> {
+pub async fn list_checklists(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    card_id: Uuid,
+) -> AppResult<ChecklistListResponse> {
     let (_board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
     require_workspace_access(pool, workspace_id, actor_user_id).await?;
 
@@ -278,11 +300,17 @@ pub async fn update_checklist(
     let mut changes = serde_json::Map::new();
     if before.title != checklist.title {
         field_mask.push("title".to_string());
-        changes.insert("title".to_string(), json!({"before": before.title, "after": checklist.title.clone()}));
+        changes.insert(
+            "title".to_string(),
+            json!({"before": before.title, "after": checklist.title.clone()}),
+        );
     }
     if (before.position - checklist.position).abs() > f64::EPSILON {
         field_mask.push("position".to_string());
-        changes.insert("position".to_string(), json!({"before": before.position, "after": checklist.position}));
+        changes.insert(
+            "position".to_string(),
+            json!({"before": before.position, "after": checklist.position}),
+        );
     }
     if !field_mask.is_empty() {
         record_checklist_activity(
@@ -301,7 +329,11 @@ pub async fn update_checklist(
     Ok(checklist)
 }
 
-pub async fn delete_checklist(pool: &PgPool, actor_user_id: Uuid, checklist_id: Uuid) -> AppResult<ChecklistResponse> {
+pub async fn delete_checklist(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    checklist_id: Uuid,
+) -> AppResult<ChecklistResponse> {
     let (card_id, board_id, workspace_id) = checklist_context(pool, checklist_id).await?;
     require_workspace_admin(pool, workspace_id, actor_user_id).await?;
     let checklist = fetch_checklist(pool, checklist_id).await?;
@@ -410,19 +442,32 @@ pub async fn update_item(
     let mut changes = serde_json::Map::new();
     if before.title != item.title {
         field_mask.push("title".to_string());
-        changes.insert("title".to_string(), json!({"before": before.title, "after": item.title.clone()}));
+        changes.insert(
+            "title".to_string(),
+            json!({"before": before.title, "after": item.title.clone()}),
+        );
     }
     if (before.position - item.position).abs() > f64::EPSILON {
         field_mask.push("position".to_string());
-        changes.insert("position".to_string(), json!({"before": before.position, "after": item.position}));
+        changes.insert(
+            "position".to_string(),
+            json!({"before": before.position, "after": item.position}),
+        );
     }
     if before.is_done != item.is_done {
         field_mask.push("isDone".to_string());
-        changes.insert("isDone".to_string(), json!({"before": before.is_done, "after": item.is_done}));
+        changes.insert(
+            "isDone".to_string(),
+            json!({"before": before.is_done, "after": item.is_done}),
+        );
     }
     if !field_mask.is_empty() {
         let kind = if before.is_done != item.is_done {
-            if item.is_done { "checklist_item.completed" } else { "checklist_item.reopened" }
+            if item.is_done {
+                "checklist_item.completed"
+            } else {
+                "checklist_item.reopened"
+            }
         } else {
             "checklist_item.updated"
         };
@@ -442,15 +487,21 @@ pub async fn update_item(
     Ok(item)
 }
 
-pub async fn delete_item(pool: &PgPool, actor_user_id: Uuid, item_id: Uuid) -> AppResult<ChecklistItemResponse> {
+pub async fn delete_item(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    item_id: Uuid,
+) -> AppResult<ChecklistItemResponse> {
     let (checklist_id, card_id, board_id, workspace_id) = item_context(pool, item_id).await?;
     require_workspace_admin(pool, workspace_id, actor_user_id).await?;
     let item = fetch_item(pool, item_id).await?;
 
-    sqlx::query("update checklist_items set deleted_at = now() where id = $1 and deleted_at is null")
-        .bind(item_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "update checklist_items set deleted_at = now() where id = $1 and deleted_at is null",
+    )
+    .bind(item_id)
+    .execute(pool)
+    .await?;
 
     record_checklist_item_activity(
         pool,

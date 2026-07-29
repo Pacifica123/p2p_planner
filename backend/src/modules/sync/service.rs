@@ -1,5 +1,5 @@
-use uuid::Uuid;
 use p2p_kanban_sync_core::validate_client_event;
+use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
@@ -9,8 +9,8 @@ use crate::{
 
 use super::dto::{
     ClientChangeEvent, CreateRoamingCapabilityRequest, PullChangesQuery, PullChangesResponse,
-    PushChangesRequest, PushChangesResponse, RoamingCapabilityResponse,
-    RegisterReplicaRequest, RegisterReplicaResponse, ReplicaListResponse, SyncStatusQuery, SyncStatusResponse,
+    PushChangesRequest, PushChangesResponse, RegisterReplicaRequest, RegisterReplicaResponse,
+    ReplicaListResponse, RoamingCapabilityResponse, SyncStatusQuery, SyncStatusResponse,
     TransportAdapterStatus, TransportStatusResponse,
 };
 
@@ -72,7 +72,8 @@ pub async fn create_roaming_capability(
 }
 
 fn parse_uuid(value: &str, field: &str) -> AppResult<Uuid> {
-    Uuid::parse_str(value).map_err(|_| AppError::bad_request(format!("{field} must be a valid UUID")))
+    Uuid::parse_str(value)
+        .map_err(|_| AppError::bad_request(format!("{field} must be a valid UUID")))
 }
 
 fn normalize_scope(scope: Option<String>) -> AppResult<String> {
@@ -97,7 +98,10 @@ fn requires_workspace_scope(entity_type: &str) -> bool {
     !matches!(entity_type, "workspace")
 }
 
-fn validate_workspace_scoping(workspace_id: Option<Uuid>, event: &ClientChangeEvent) -> AppResult<()> {
+fn validate_workspace_scoping(
+    workspace_id: Option<Uuid>,
+    event: &ClientChangeEvent,
+) -> AppResult<()> {
     if workspace_id.is_none() && requires_workspace_scope(&event.entity_type) {
         return Err(AppError::bad_request(
             "workspaceId is required for workspace-scoped sync events",
@@ -127,7 +131,11 @@ pub async fn get_status(
     auth: AuthContext,
     query: SyncStatusQuery,
 ) -> AppResult<SyncStatusResponse> {
-    let replica_id = query.replica_id.as_deref().map(|id| parse_uuid(id, "replicaId")).transpose()?;
+    let replica_id = query
+        .replica_id
+        .as_deref()
+        .map(|id| parse_uuid(id, "replicaId"))
+        .transpose()?;
     super::repo::get_status(&state.db, auth, replica_id).await
 }
 
@@ -157,7 +165,11 @@ pub async fn push_changes(
     payload: PushChangesRequest,
 ) -> AppResult<PushChangesResponse> {
     let replica_id = parse_uuid(&payload.replica_id, "replicaId")?;
-    let workspace_id = payload.workspace_id.as_deref().map(|id| parse_uuid(id, "workspaceId")).transpose()?;
+    let workspace_id = payload
+        .workspace_id
+        .as_deref()
+        .map(|id| parse_uuid(id, "workspaceId"))
+        .transpose()?;
     if payload.events.is_empty() {
         return Err(AppError::bad_request("At least one sync event is required"));
     }
@@ -171,11 +183,15 @@ pub async fn push_changes(
         validate_workspace_scoping(workspace_id, event)?;
         let event_replica_id = parse_uuid(&event.replica_id, "event.replicaId")?;
         if event_replica_id != replica_id {
-            return Err(AppError::bad_request("All events must belong to request replicaId"));
+            return Err(AppError::bad_request(
+                "All events must belong to request replicaId",
+            ));
         }
         if let Some(previous_seq) = previous_seq {
             if event.replica_seq <= previous_seq {
-                return Err(AppError::bad_request("events must be sorted by monotonically increasing replicaSeq"));
+                return Err(AppError::bad_request(
+                    "events must be sorted by monotonically increasing replicaSeq",
+                ));
             }
         }
         previous_seq = Some(event.replica_seq);
@@ -199,17 +215,37 @@ pub async fn pull_changes(
 ) -> AppResult<PullChangesResponse> {
     let replica_id = parse_uuid(&query.replica_id, "replicaId")?;
     let scope = normalize_scope(query.scope)?;
-    let workspace_id = query.workspace_id.as_deref().map(|id| parse_uuid(id, "workspaceId")).transpose()?;
+    let workspace_id = query
+        .workspace_id
+        .as_deref()
+        .map(|id| parse_uuid(id, "workspaceId"))
+        .transpose()?;
     if scope == "workspace" && workspace_id.is_none() {
-        return Err(AppError::bad_request("workspaceId is required for workspace sync scope"));
+        return Err(AppError::bad_request(
+            "workspaceId is required for workspace sync scope",
+        ));
     }
     if scope == "global" && workspace_id.is_some() {
-        return Err(AppError::bad_request("workspaceId is only valid for workspace sync scope"));
+        return Err(AppError::bad_request(
+            "workspaceId is only valid for workspace sync scope",
+        ));
     }
     let last_server_order = query.last_server_order.unwrap_or(0).max(0);
-    let limit = query.limit.unwrap_or(DEFAULT_PULL_LIMIT).clamp(1, MAX_PULL_LIMIT);
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_PULL_LIMIT)
+        .clamp(1, MAX_PULL_LIMIT);
 
-    super::repo::pull_changes(&state.db, auth, replica_id, scope, workspace_id, last_server_order, limit).await
+    super::repo::pull_changes(
+        &state.db,
+        auth,
+        replica_id,
+        scope,
+        workspace_id,
+        last_server_order,
+        limit,
+    )
+    .await
 }
 
 pub async fn get_transport_status(

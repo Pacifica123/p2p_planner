@@ -12,7 +12,10 @@ pub type AppResult<T> = Result<T, AppError>;
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("bad request: {message}")]
-    BadRequest { message: String, details: Option<Value> },
+    BadRequest {
+        message: String,
+        details: Option<Value>,
+    },
 
     #[error("unauthorized: {message}")]
     Unauthorized { message: String },

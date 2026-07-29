@@ -16,13 +16,18 @@
 - [`../README.md`](../README.md) — запуск и основные команды;
 - [`deployment/zero-config-bootstrap-v1.md`](deployment/zero-config-bootstrap-v1.md) — как работает запуск без `.env`;
 - [`deployment/application-update-strategy-v1.md`](deployment/application-update-strategy-v1.md) — рабочее обновление и rollback;
+- [`deployment/postgresql-backup-restore-v1.md`](deployment/postgresql-backup-restore-v1.md) — ручной backup и проверяемый restore;
 - [`product/v1-known-limitations.md`](product/v1-known-limitations.md) — честные ограничения;
-- [`product/v1.0.0-beta.3-release-notes.md`](product/v1.0.0-beta.3-release-notes.md) — текст текущего релиза.
+- [`product/v1.0.0-beta.6-release-notes.md`](product/v1.0.0-beta.6-release-notes.md) — текст текущего релиза.
 
 Разработчику:
 
 - [`product/v1-execution-roadmap.md`](product/v1-execution-roadmap.md) — что
   готово, частично готово и отложено;
+- [`product/stable-v1-readiness-2026-07-29.md`](product/stable-v1-readiness-2026-07-29.md)
+  — проверка актуальных блокеров stable;
+- [`product/github-devctl-project-integration-concept-v1.md`](product/github-devctl-project-integration-concept-v1.md)
+  — provider-neutral концепция GitHub/devctl;
 - [`architecture/project-structure.md`](architecture/project-structure.md) —
   структура репозитория;
 - [`api/openapi.yaml`](api/openapi.yaml) — HTTP API;
@@ -45,15 +50,15 @@
 
 | Область | Фактическое решение |
 |---|---|
-| Версия | `v1.0.0-beta.3`, GitHub Pre-release |
+| Версия | `v1.0.0-beta.6` |
 | Основной запуск | `python bootstrap.py`, весь runtime в Docker |
 | Обновление | `python bootstrap.py update`, backup + versioned images + rollback |
 | Канонический путь | React/Vite → Nginx → Rust/Axum → PostgreSQL |
 | Local-first | Локальный snapshot и очередь исходящих операций для основного web-сценария |
-| Синхронизация | Backend-координируемая; клиентский pull ещё не строит все проекции автоматически |
-| P2P | `sync-core`, Nostr shadow и Iroh adapter реализованы как экспериментальный фундамент |
+| Синхронизация | Backend-координируемая; активный web polling и roaming карточек/чек-листов |
+| P2P | Nostr roaming используется Android; `sync-core`, Iroh и edge coordinator остаются экспериментальными |
 | Edge coordinator | Отдельный совместимый прототип; не заменяет основной backend |
-| Mobile | Отложен до стабилизации web/sync |
+| Mobile | Отдельный Android-клиент с базовым CRUD, local-first карточками/чек-листами и переносом по колонкам |
 | Релиз | Основной артефакт — self-host bootstrap ZIP, а не AppImage и не одинокий `.exe` |
 
 ## Важная граница
@@ -62,9 +67,9 @@ p2pKanban пока не является полностью бессерверн
 клиента есть локальные данные, но права и каноническое принятие общих изменений
 в обычном режиме всё ещё определяет Rust/PostgreSQL-координатор.
 
-Nostr, Iroh и Durable Object не должны описываться как готовый пользовательский
-режим, пока не завершены подписи устройств, эпохи состава участников,
-автоматическое восстановление проекций и полноценная интеграция с клиентами.
+Android уже использует Nostr как зашифрованный transport доски, но Nostr не
+заменяет backend как источник auth и прав. Iroh и Durable Object не должны
+описываться как готовый пользовательский режим.
 
 ## Команды
 

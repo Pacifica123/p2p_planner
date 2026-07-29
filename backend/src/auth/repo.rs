@@ -92,7 +92,10 @@ pub async fn bootstrap_dev_user(
     })
 }
 
-pub async fn find_active_user_by_email(pool: &PgPool, email: &str) -> AppResult<Option<AuthUserRecord>> {
+pub async fn find_active_user_by_email(
+    pool: &PgPool,
+    email: &str,
+) -> AppResult<Option<AuthUserRecord>> {
     let row = sqlx::query(
         r#"
         select id, email, display_name, password_hash
@@ -109,7 +112,10 @@ pub async fn find_active_user_by_email(pool: &PgPool, email: &str) -> AppResult<
     row.map(map_auth_user).transpose()
 }
 
-pub async fn find_active_user_by_id(pool: &PgPool, user_id: Uuid) -> AppResult<Option<AuthUserRecord>> {
+pub async fn find_active_user_by_id(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> AppResult<Option<AuthUserRecord>> {
     let row = sqlx::query(
         r#"
         select id, email, display_name, password_hash
@@ -366,7 +372,11 @@ pub async fn revoke_all_sessions_for_user(pool: &PgPool, user_id: Uuid) -> AppRe
     Ok(result.rows_affected())
 }
 
-pub async fn revoke_all_sessions_for_device(pool: &PgPool, user_id: Uuid, device_id: Uuid) -> AppResult<u64> {
+pub async fn revoke_all_sessions_for_device(
+    pool: &PgPool,
+    user_id: Uuid,
+    device_id: Uuid,
+) -> AppResult<u64> {
     let result = sqlx::query(
         r#"
         update user_sessions

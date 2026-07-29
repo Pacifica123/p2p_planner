@@ -1,11 +1,15 @@
 use uuid::Uuid;
 
-use crate::{error::{AppError, AppResult}, state::AppState};
+use crate::{
+    error::{AppError, AppResult},
+    state::AppState,
+};
 
 use super::dto::{
-    AddWorkspaceMemberRequest, CreateWorkspaceRequest, ListWorkspacesQuery, UpdateWorkspaceMemberRequest,
-    UpdateWorkspaceRequest, WorkspaceListResponse, WorkspaceMemberResponse, WorkspaceMembersListResponse,
-    WorkspaceResponse, WorkspaceWithMembersResponse,
+    AddWorkspaceMemberRequest, CreateWorkspaceRequest, ListWorkspacesQuery,
+    UpdateWorkspaceMemberRequest, UpdateWorkspaceRequest, WorkspaceListResponse,
+    WorkspaceMemberResponse, WorkspaceMembersListResponse, WorkspaceResponse,
+    WorkspaceWithMembersResponse,
 };
 
 pub async fn list_workspaces(
@@ -28,7 +32,9 @@ pub async fn create_workspace(
 
     let visibility = payload.visibility.as_deref().unwrap_or("private");
     if !matches!(visibility, "private" | "shared") {
-        return Err(AppError::bad_request("Workspace visibility must be private or shared"));
+        return Err(AppError::bad_request(
+            "Workspace visibility must be private or shared",
+        ));
     }
 
     super::repo::create_workspace(&state.db, actor_user_id, payload).await
@@ -56,7 +62,9 @@ pub async fn update_workspace(
 
     if let Some(visibility) = &payload.visibility {
         if !matches!(visibility.as_str(), "private" | "shared") {
-            return Err(AppError::bad_request("Workspace visibility must be private or shared"));
+            return Err(AppError::bad_request(
+                "Workspace visibility must be private or shared",
+            ));
         }
     }
 
@@ -95,7 +103,9 @@ pub async fn add_member(
 ) -> AppResult<WorkspaceMemberResponse> {
     let role = payload.role.as_str();
     if !matches!(role, "admin" | "member") {
-        return Err(AppError::bad_request("Workspace member role must be admin or member"));
+        return Err(AppError::bad_request(
+            "Workspace member role must be admin or member",
+        ));
     }
 
     super::repo::add_member(&state.db, actor_user_id, workspace_id, payload).await
@@ -110,7 +120,9 @@ pub async fn update_member(
 ) -> AppResult<WorkspaceMemberResponse> {
     if let Some(role) = &payload.role {
         if !matches!(role.as_str(), "admin" | "member") {
-            return Err(AppError::bad_request("Workspace member role must be admin or member"));
+            return Err(AppError::bad_request(
+                "Workspace member role must be admin or member",
+            ));
         }
     }
 

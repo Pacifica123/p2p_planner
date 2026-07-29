@@ -5,12 +5,7 @@ use axum::{
     Json,
 };
 
-use crate::{
-    error::AppResult,
-    http::response::ok,
-    modules::common::auth_context,
-    state::AppState,
-};
+use crate::{error::AppResult, http::response::ok, modules::common::auth_context, state::AppState};
 
 use super::{
     dto::{

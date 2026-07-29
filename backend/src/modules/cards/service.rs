@@ -2,14 +2,17 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
-use crate::{error::{AppError, AppResult}, state::AppState};
+use crate::{
+    error::{AppError, AppResult},
+    state::AppState,
+};
 
 use super::dto::{
     CardListResponse, CardResponse, CreateCardRequest, ListCardsQuery, MoveCardRequest,
     ReorderColumnCardsRequest, UpdateCardRequest,
 };
 
-fn normalize_status(value: &str) -> Option<&'static str> {
+pub(crate) fn normalize_status(value: &str) -> Option<&'static str> {
     match value {
         "active" | "todo" | "in_progress" | "blocked" => Some("active"),
         "completed" | "done" => Some("completed"),
@@ -120,7 +123,9 @@ pub async fn reorder_column_cards(
             return Err(AppError::bad_request("Duplicate cardId in reorder payload"));
         }
         if !item.position.is_finite() {
-            return Err(AppError::bad_request("Card position must be a finite number"));
+            return Err(AppError::bad_request(
+                "Card position must be a finite number",
+            ));
         }
     }
 

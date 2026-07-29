@@ -8,9 +8,9 @@ use crate::{
 };
 
 use super::dto::{
-    ClientChangeEvent, PullChangesResponse, PushChangesResponse, PushEventResult, RegisterReplicaRequest,
-    RegisterReplicaResponse, ReplicaListResponse, ReplicaResponse, ServerChangeEvent, SyncCursorResponse,
-    SyncScopeResponse, SyncStatusResponse,
+    ClientChangeEvent, PullChangesResponse, PushChangesResponse, PushEventResult,
+    RegisterReplicaRequest, RegisterReplicaResponse, ReplicaListResponse, ReplicaResponse,
+    ServerChangeEvent, SyncCursorResponse, SyncScopeResponse, SyncStatusResponse,
 };
 
 fn timestamp_sql(alias: &str, column: &str) -> String {
@@ -25,9 +25,18 @@ fn map_replica(row: &sqlx::postgres::PgRow) -> AppResult<ReplicaResponse> {
         id: row.try_get::<Uuid, _>("id")?.to_string(),
         replica_key: row.try_get("client_instance_key")?,
         kind: row.try_get("replica_kind")?,
-        status: if revoked_at.is_some() { "disabled" } else { "active" }.to_string(),
-        user_id: row.try_get::<Option<Uuid>, _>("user_id")?.map(|id| id.to_string()),
-        device_id: row.try_get::<Option<Uuid>, _>("device_id")?.map(|id| id.to_string()),
+        status: if revoked_at.is_some() {
+            "disabled"
+        } else {
+            "active"
+        }
+        .to_string(),
+        user_id: row
+            .try_get::<Option<Uuid>, _>("user_id")?
+            .map(|id| id.to_string()),
+        device_id: row
+            .try_get::<Option<Uuid>, _>("device_id")?
+            .map(|id| id.to_string()),
         display_name: row.try_get("display_name")?,
         platform: row.try_get("platform")?,
         protocol_version: row.try_get("protocol_version")?,
@@ -53,8 +62,12 @@ fn map_server_event(row: &sqlx::postgres::PgRow) -> AppResult<ServerChangeEvent>
         metadata: row.try_get::<Value, _>("metadata_jsonb")?,
         server_order: row.try_get("server_order")?,
         accepted_at: row.try_get("accepted_at")?,
-        actor_user_id: row.try_get::<Option<Uuid>, _>("actor_user_id")?.map(|id| id.to_string()),
-        actor_device_id: row.try_get::<Option<Uuid>, _>("device_id")?.map(|id| id.to_string()),
+        actor_user_id: row
+            .try_get::<Option<Uuid>, _>("actor_user_id")?
+            .map(|id| id.to_string()),
+        actor_device_id: row
+            .try_get::<Option<Uuid>, _>("device_id")?
+            .map(|id| id.to_string()),
     })
 }
 
@@ -138,7 +151,11 @@ fn replica_select_sql(extra_where: &str, order_by: &str) -> String {
     )
 }
 
-async fn fetch_replica_for_user(pool: &PgPool, replica_id: Uuid, auth: &AuthContext) -> AppResult<ReplicaResponse> {
+async fn fetch_replica_for_user(
+    pool: &PgPool,
+    replica_id: Uuid,
+    auth: &AuthContext,
+) -> AppResult<ReplicaResponse> {
     let sql = replica_select_sql("where id = $1", "");
     let row = sqlx::query(&sql)
         .bind(replica_id)
@@ -148,13 +165,19 @@ async fn fetch_replica_for_user(pool: &PgPool, replica_id: Uuid, auth: &AuthCont
 
     let replica = map_replica(&row)?;
     if replica.user_id.as_deref() != Some(&auth.user_id.to_string()) {
-        return Err(AppError::forbidden("Replica does not belong to current user"));
+        return Err(AppError::forbidden(
+            "Replica does not belong to current user",
+        ));
     }
     if replica.status != "active" {
         return Err(AppError::forbidden("Replica is disabled"));
     }
-    if auth.device_id != Uuid::nil() && replica.device_id.as_deref() != Some(&auth.device_id.to_string()) {
-        return Err(AppError::forbidden("Replica is not bound to current device"));
+    if auth.device_id != Uuid::nil()
+        && replica.device_id.as_deref() != Some(&auth.device_id.to_string())
+    {
+        return Err(AppError::forbidden(
+            "Replica is not bound to current device",
+        ));
     }
     Ok(replica)
 }
@@ -190,9 +213,15 @@ pub async fn get_status(
 }
 
 pub async fn list_replicas(pool: &PgPool, auth: AuthContext) -> AppResult<ReplicaListResponse> {
-    let sql = replica_select_sql("where user_id = $1", "order by coalesce(last_seen_at, created_at) desc");
+    let sql = replica_select_sql(
+        "where user_id = $1",
+        "order by coalesce(last_seen_at, created_at) desc",
+    );
     let rows = sqlx::query(&sql).bind(auth.user_id).fetch_all(pool).await?;
-    let items = rows.iter().map(map_replica).collect::<AppResult<Vec<_>>>()?;
+    let items = rows
+        .iter()
+        .map(map_replica)
+        .collect::<AppResult<Vec<_>>>()?;
     Ok(ReplicaListResponse { items })
 }
 
@@ -216,7 +245,11 @@ pub async fn register_replica(
     )
     .bind(auth.user_id)
     .bind(&payload.replica_key)
-    .bind(if auth.device_id == Uuid::nil() { None } else { Some(auth.device_id) })
+    .bind(if auth.device_id == Uuid::nil() {
+        None
+    } else {
+        Some(auth.device_id)
+    })
     .fetch_optional(pool)
     .await?;
 
@@ -280,7 +313,12 @@ pub async fn register_replica(
     })
 }
 
-async fn duplicate_result(pool: &PgPool, event_id: Uuid, replica_id: Uuid, replica_seq: i64) -> AppResult<Option<PushEventResult>> {
+async fn duplicate_result(
+    pool: &PgPool,
+    event_id: Uuid,
+    replica_id: Uuid,
+    replica_seq: i64,
+) -> AppResult<Option<PushEventResult>> {
     let row = sqlx::query(
         r#"
         select id, replica_seq, server_order
@@ -297,7 +335,10 @@ async fn duplicate_result(pool: &PgPool, event_id: Uuid, replica_id: Uuid, repli
     .await?;
 
     Ok(row.map(|row| PushEventResult {
-        event_id: row.try_get::<Uuid, _>("id").map(|id| id.to_string()).unwrap_or_else(|_| event_id.to_string()),
+        event_id: row
+            .try_get::<Uuid, _>("id")
+            .map(|id| id.to_string())
+            .unwrap_or_else(|_| event_id.to_string()),
         replica_seq: row.try_get("replica_seq").unwrap_or(replica_seq),
         status: "duplicate".to_string(),
         server_order: row.try_get("server_order").ok(),
@@ -357,7 +398,8 @@ async fn record_tombstone_if_needed(
         return Ok(());
     }
 
-    let entity_id = Uuid::parse_str(&event.entity_id).map_err(|_| AppError::bad_request("entityId must be a valid UUID"))?;
+    let entity_id = Uuid::parse_str(&event.entity_id)
+        .map_err(|_| AppError::bad_request("entityId must be a valid UUID"))?;
     sqlx::query(
         r#"
         insert into tombstones (
@@ -415,13 +457,17 @@ pub async fn push_changes(
     let mut results = Vec::with_capacity(events.len());
 
     for event in events {
-        let event_id = Uuid::parse_str(&event.event_id).map_err(|_| AppError::bad_request("eventId must be a valid UUID"))?;
-        let entity_id = Uuid::parse_str(&event.entity_id).map_err(|_| AppError::bad_request("entityId must be a valid UUID"))?;
+        let event_id = Uuid::parse_str(&event.event_id)
+            .map_err(|_| AppError::bad_request("eventId must be a valid UUID"))?;
+        let entity_id = Uuid::parse_str(&event.entity_id)
+            .map_err(|_| AppError::bad_request("entityId must be a valid UUID"))?;
 
-        if let Some(result) = duplicate_result(pool, event_id, replica_id, event.replica_seq).await? {
+        if let Some(result) =
+            duplicate_result(pool, event_id, replica_id, event.replica_seq).await?
+        {
             if mirror_to_nostr {
-                let stored_event_id = Uuid::parse_str(&result.event_id)
-                    .map_err(|_| AppError::internal())?;
+                let stored_event_id =
+                    Uuid::parse_str(&result.event_id).map_err(|_| AppError::internal())?;
                 crate::transports::repo::ensure_nostr_outbox(pool, stored_event_id).await?;
             }
             results.push(result);
@@ -442,7 +488,9 @@ pub async fn push_changes(
                 replica_seq: event.replica_seq,
                 status: "rejected".to_string(),
                 server_order: None,
-                error: Some(format!("replicaSeq must be greater than current max {max_seq}")),
+                error: Some(format!(
+                    "replicaSeq must be greater than current max {max_seq}"
+                )),
             });
             continue;
         }
@@ -484,7 +532,11 @@ pub async fn push_changes(
         .bind(event_id)
         .bind(workspace_id)
         .bind(replica_id)
-        .bind(if auth.device_id == Uuid::nil() { None } else { Some(auth.device_id) })
+        .bind(if auth.device_id == Uuid::nil() {
+            None
+        } else {
+            Some(auth.device_id)
+        })
         .bind(auth.user_id)
         .bind(&event.entity_type)
         .bind(entity_id)
@@ -501,7 +553,8 @@ pub async fn push_changes(
 
         match inserted {
             Ok(row) => {
-                record_tombstone_if_needed(pool, workspace_id, event_id, replica_id, &auth, &event).await?;
+                record_tombstone_if_needed(pool, workspace_id, event_id, replica_id, &auth, &event)
+                    .await?;
                 if mirror_to_nostr {
                     crate::transports::repo::ensure_nostr_outbox(pool, event_id).await?;
                 }
@@ -513,11 +566,15 @@ pub async fn push_changes(
                     error: None,
                 });
             }
-            Err(sqlx::Error::Database(db_error)) if matches!(db_error.kind(), sqlx::error::ErrorKind::UniqueViolation) => {
-                if let Some(result) = duplicate_result(pool, event_id, replica_id, event.replica_seq).await? {
+            Err(sqlx::Error::Database(db_error))
+                if matches!(db_error.kind(), sqlx::error::ErrorKind::UniqueViolation) =>
+            {
+                if let Some(result) =
+                    duplicate_result(pool, event_id, replica_id, event.replica_seq).await?
+                {
                     if mirror_to_nostr {
-                        let stored_event_id = Uuid::parse_str(&result.event_id)
-                            .map_err(|_| AppError::internal())?;
+                        let stored_event_id =
+                            Uuid::parse_str(&result.event_id).map_err(|_| AppError::internal())?;
                         crate::transports::repo::ensure_nostr_outbox(pool, stored_event_id).await?;
                     }
                     results.push(result);
@@ -606,9 +663,16 @@ pub async fn pull_changes(
         .take(limit as usize)
         .map(map_server_event)
         .collect::<AppResult<Vec<_>>>()?;
-    let next_order = events.last().map(|event| event.server_order).unwrap_or(last_server_order);
+    let next_order = events
+        .last()
+        .map(|event| event.server_order)
+        .unwrap_or(last_server_order);
 
-    let scope_id = if scope == "workspace" { workspace_id } else { None };
+    let scope_id = if scope == "workspace" {
+        workspace_id
+    } else {
+        None
+    };
 
     if scope == "global" {
         sqlx::query(

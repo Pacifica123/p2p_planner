@@ -1,10 +1,20 @@
-# Integrations architecture v1
+# Архитектура интеграций v1
 
-- Статус: Draft v1
+- Статус: архитектурная основа; пользовательские адаптеры ещё не готовы
 - Дата: 2026-04-12
-- Назначение: зафиксировать **архитектуру внешних интеграций** так, чтобы Obsidian, GitHub, import/export и webhook-сценарии добавлялись как изолированные adapters, а не расползались по core domain modules.
+- Актуализация: 2026-07-29
+- Назначение: зафиксировать архитектуру внешних интеграций так, чтобы Obsidian,
+  GitHub, import/export и webhook-сценарии добавлялись как изолированные
+  адаптеры, а не расползались по модулям предметной области.
 
-> Этот документ опирается на `ADR-004`, `docs/architecture/backend-modules.md`, `docs/architecture/local-first-data-layer-v1.md`, `docs/architecture/sync-model-implementation-plan-v1.md` и `docs/architecture/p2p-relay-bootstrap-abstraction-v1.md`. Здесь мы определяем именно **границы integrations layer**: provider interface, module structure, webhook/API boundaries, import/export touchpoints и отношение между domain events и external integrations.
+Этот документ описывает техническую границу provider registry и adapters.
+Продуктовая модель «что считать проектом», локальный каталог `.p2pkanban` и
+receipt-контракт devctl описаны отдельно:
+[`github-devctl-project-integration-concept-v1.md`](../product/github-devctl-project-integration-concept-v1.md).
+
+Документ опирается на `ADR-004`, `backend-modules.md`,
+`local-first-data-layer-v1.md`, `sync-model-implementation-plan-v1.md` и
+`p2p-relay-bootstrap-abstraction-v1.md`.
 
 ---
 

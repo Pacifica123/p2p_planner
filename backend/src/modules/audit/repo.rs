@@ -35,7 +35,9 @@ fn decode_cursor(cursor: Option<&str>) -> AppResult<(Option<String>, Option<Uuid
     let id = parts
         .next()
         .ok_or_else(|| AppError::bad_request("Invalid cursor"))
-        .and_then(|value| Uuid::parse_str(value).map_err(|_| AppError::bad_request("Invalid cursor")))?;
+        .and_then(|value| {
+            Uuid::parse_str(value).map_err(|_| AppError::bad_request("Invalid cursor"))
+        })?;
 
     Ok((Some(created_at), Some(id)))
 }
@@ -51,7 +53,6 @@ fn parse_uuid_filter(value: Option<String>, field_name: &str) -> AppResult<Optio
         .transpose()
         .map_err(|_| AppError::bad_request(format!("{field_name} must be a valid UUID")))
 }
-
 
 fn redact_string(value: &str) -> Value {
     if value.len() > 256 {
@@ -103,11 +104,19 @@ fn map_audit_entry(row: &sqlx::postgres::PgRow) -> AppResult<AuditLogEntryRespon
         id: row.try_get::<Uuid, _>("id")?.to_string(),
         created_at: row.try_get("created_at")?,
         action_type: row.try_get("action_type")?,
-        workspace_id: row.try_get::<Option<Uuid>, _>("workspace_id")?.map(|id| id.to_string()),
-        actor_user_id: row.try_get::<Option<Uuid>, _>("actor_user_id")?.map(|id| id.to_string()),
+        workspace_id: row
+            .try_get::<Option<Uuid>, _>("workspace_id")?
+            .map(|id| id.to_string()),
+        actor_user_id: row
+            .try_get::<Option<Uuid>, _>("actor_user_id")?
+            .map(|id| id.to_string()),
         target_entity_type: row.try_get("target_entity_type")?,
-        target_entity_id: row.try_get::<Option<Uuid>, _>("target_entity_id")?.map(|id| id.to_string()),
-        request_id: row.try_get::<Option<Uuid>, _>("request_id")?.map(|id| id.to_string()),
+        target_entity_id: row
+            .try_get::<Option<Uuid>, _>("target_entity_id")?
+            .map(|id| id.to_string()),
+        request_id: row
+            .try_get::<Option<Uuid>, _>("request_id")?
+            .map(|id| id.to_string()),
         metadata: row.try_get::<Value, _>("metadata_jsonb")?,
     })
 }
@@ -197,15 +206,20 @@ pub async fn list_workspace_audit_log(
     .fetch_all(pool)
     .await?;
 
-    let mut items = rows.iter().map(map_audit_entry).collect::<AppResult<Vec<_>>>()?;
+    let mut items = rows
+        .iter()
+        .map(map_audit_entry)
+        .collect::<AppResult<Vec<_>>>()?;
     let has_more = items.len() as i64 > limit;
     if has_more {
         items.truncate(limit as usize);
     }
-    let next_cursor = items
-        .last()
-        .filter(|_| has_more)
-        .map(|item| encode_cursor(&item.created_at, Uuid::parse_str(&item.id).expect("valid uuid")));
+    let next_cursor = items.last().filter(|_| has_more).map(|item| {
+        encode_cursor(
+            &item.created_at,
+            Uuid::parse_str(&item.id).expect("valid uuid"),
+        )
+    });
 
     Ok(AuditLogListResponse { items, next_cursor })
 }

@@ -86,9 +86,11 @@ backup и только затем переключает backend/web на пре
 - экспорт доски/workspace и импорт board-level JSON как новой копии;
 - независимый `sync-core`;
 - Nostr shadow outbox/recovery и native Iroh adapter как экспериментальный
-  transport foundation.
+  transport foundation;
 - отдельный Android-клиент с native auth, локальными snapshot и независимой
-  Nostr-синхронизацией карточек и чек-листов.
+  Nostr-синхронизацией карточек и чек-листов;
+- изменения Android принимаются coordinator и появляются на открытой web-доске
+  в пределах короткого интервала обновления.
 
 ## Что пока не готово
 
@@ -183,10 +185,13 @@ npm run dev
 - [`docs/api/openapi.yaml`](docs/api/openapi.yaml) — HTTP API;
 - [`docs/deployment/zero-config-bootstrap-v1.md`](docs/deployment/zero-config-bootstrap-v1.md) — новый bootstrap;
 - [`docs/deployment/application-update-strategy-v1.md`](docs/deployment/application-update-strategy-v1.md) — обновление и rollback;
+- [`docs/deployment/postgresql-backup-restore-v1.md`](docs/deployment/postgresql-backup-restore-v1.md) — PostgreSQL backup/restore;
 - [`docs/architecture/client-uiux-flat-pass-v1.md`](docs/architecture/client-uiux-flat-pass-v1.md) — разбор UI/UX-карты и flat-проход;
 - [`docs/deployment/free-hosting-transports-v1.md`](docs/deployment/free-hosting-transports-v1.md) — бесплатные transport-варианты;
 - [`docs/adr/ADR-006-homeless-board-transport-stack.md`](docs/adr/ADR-006-homeless-board-transport-stack.md) — выбранная transport-архитектура;
-- [`docs/dev-bootstrap/devbootstrap-v1-operations.md`](docs/dev-bootstrap/devbootstrap-v1-operations.md) — расширенная локальная диагностика.
+- [`docs/dev-bootstrap/devbootstrap-v1-operations.md`](docs/dev-bootstrap/devbootstrap-v1-operations.md) — расширенная локальная диагностика;
+- [`docs/product/stable-v1-readiness-2026-07-29.md`](docs/product/stable-v1-readiness-2026-07-29.md) — актуальная оценка stable v1;
+- [`docs/product/github-devctl-project-integration-concept-v1.md`](docs/product/github-devctl-project-integration-concept-v1.md) — концепция GitHub/devctl.
 
 ## Проверки
 
@@ -196,11 +201,12 @@ npm run dev
 python -B tools/check_zero_config_bootstrap.py
 ```
 
-Проверка web-контракта beta.5:
+Проверка web-контракта beta.6:
 
 ```bash
 python -B tools/check_mobile_web_feature_contract.py
 python -B tools/check_web_customization_part2_contract.py
+python -B tools/check_cross_client_crud_contract.py
 ```
 
 Полный набор локальных release gates:

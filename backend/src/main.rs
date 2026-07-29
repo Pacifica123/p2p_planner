@@ -2,12 +2,8 @@ use anyhow::Context;
 use sqlx::migrate::Migrator;
 
 use p2p_planner_backend::{
-    app::build_app,
-    config::Settings,
-    db::pool::create_pool,
-    state::AppState,
-    telemetry::init_tracing,
-    transports::spawn_workers,
+    app::build_app, config::Settings, db::pool::create_pool, state::AppState,
+    telemetry::init_tracing, transports::spawn_workers,
 };
 
 static MIGRATOR: Migrator = sqlx::migrate!();

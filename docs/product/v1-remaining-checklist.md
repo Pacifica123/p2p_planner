@@ -1,56 +1,59 @@
 # Что осталось до стабильного v1.0.0
 
-## Уже закрыто
+- Актуально на: 2026-07-29
+- Базовая линия: `v1.0.0-beta.6`
 
-- [x] Основной CRUD workspace/board/column/card.
-- [x] Метки, чек-листы и комментарии.
-- [x] Настройки внешнего вида.
-- [x] Activity и audit.
-- [x] Local-first snapshot и pending queue для основного сценария.
-- [x] Backend push/pull sync baseline.
-- [x] Export, import preview и board-level import-as-copy.
-- [x] Базовый auth/security hardening.
-- [x] Zero-config Docker bootstrap.
-- [x] Экспериментальный transport foundation.
-- [x] Версия и релизные документы выровнены на `v1.0.0-beta.3`.
+## Закрыто функционально
 
-## До публикации beta.3
+- [x] Web CRUD workspace/board/column/card.
+- [x] Метки, чек-листы, комментарии, activity и audit.
+- [x] Web local snapshot и очередь карточек.
+- [x] Backend push/pull baseline и roaming transport.
+- [x] Export, preview и board import-as-copy.
+- [x] Zero-config Docker bootstrap, update и rollback кода.
+- [x] Native auth и Android-клиент.
+- [x] Базовый Android CRUD и перенос карточек между колонками.
+- [x] Исправление направления Android → backend → web.
+- [x] Актуальная карта документации и универсальная концепция GitHub/devctl.
 
-- [ ] Выполнить `python -B tools/check_release_prep.py`.
-- [ ] Выполнить `python -B tools/check_zero_config_bootstrap.py --frontend-build`.
-- [ ] Выполнить `python -B tools/devbootstrap.py release-gates --profile full-local-release`.
-- [ ] Исправить все ошибки обязательных gates.
-- [ ] Пометить чистый commit тегом `v1.0.0-beta.3`.
-- [ ] Собрать архив через `python tools/build_release_bundle.py --require-tag`.
-- [ ] Проверить распакованный архив на Windows.
-- [ ] Проверить распакованный архив на Linux.
-- [ ] Приложить `SHA256SUMS.txt` и последний `release-gates_*.zip`.
-- [ ] Отметить GitHub Release как Pre-release.
+## Блокирует stable
 
-## До stable v1.0.0
+- [ ] Выполнить два последовательных
+  `python -B tools/devbootstrap.py release-gates --profile full-local-release`
+  на одном чистом commit.
+- [ ] Собрать release ZIP из точного тега через
+  `python tools/build_release_bundle.py --require-tag`.
+- [ ] Проверить распакованный ZIP на чистой Windows-машине.
+- [ ] Проверить тот же ZIP на Linux.
+- [ ] Подтвердить сохранение данных после stop/start, update и rollback.
+- [ ] Выполнить PostgreSQL backup/restore drill по runbook и сверить counts.
+- [ ] Пройти cross-client матрицу web → Android и Android → web для create,
+  edit, move, archive и checklist CRUD.
+- [ ] Решить границу релиза: Android входит в stable v1 либо остаётся явно
+  помеченным beta-клиентом.
+- [ ] Подтвердить import-as-copy smoke на итоговом bundle.
+- [ ] Проверить ZIP на секреты, `.env`, локальные БД и generated-каталоги.
+- [ ] Выбрать публичную лицензию либо явно зафиксировать отсутствие лицензии.
+- [ ] После исправлений повторить gates и сохранить evidence bundle с
+  контрольными суммами.
 
-- [ ] Повторить полный релизный прогон после исправлений, а не полагаться на
-      один успешный запуск.
-- [ ] Подтвердить сохранение данных после stop/start и обновления контейнеров.
-- [ ] Зафиксировать backup/restore runbook для PostgreSQL volume.
-- [ ] Выбрать и добавить лицензию либо явно оставить проект без публичной
-      лицензии.
-- [ ] Подтвердить import-as-copy smoke на итоговом release bundle.
-- [ ] Решить, считается ли неполное применение входящего sync-log блокером
-      stable v1.
-- [ ] Удалить или явно оставить optional старые Playwright-пути.
-- [ ] Убедиться, что release/snapshot не содержит секретов и тяжёлых generated
-      каталогов.
+## Полезное полевое доказательство, но не замена release gates
 
-## Не блокирует v1.0.0 автоматически
+- Продукт используется владельцем с `beta.3`; серьёзных потерь данных не
+  замечено.
+- Stop/start и обычная работа выглядят устойчиво в реальном сценарии.
+- Это снижает риск, но не заменяет воспроизводимый update/rollback/restore
+  прогон точного beta.6 commit.
 
-- mobile;
-- coordinator-free P2P;
+## Не блокирует stable автоматически
+
+- GitHub/devctl и другие внешние интеграции;
+- coordinator-free режим;
 - Iroh в браузере;
-- E2EE;
 - MFA/passkeys;
-- production integrations/webhooks;
+- E2EE локальных snapshot;
+- merge/destructive import;
 - AppImage и отдельный Windows `.exe`.
 
-Эти функции могут стать причиной следующего minor/major релиза, но не должны
-бесконечно удерживать уже работающий self-host web-продукт в beta.
+Стабильность здесь означает проверенную узкую границу продукта, а не завершение
+всех будущих направлений.

@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use sqlx::PgPool;
 

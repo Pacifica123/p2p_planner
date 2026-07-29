@@ -14,6 +14,8 @@ export function useBoardActivityQuery(boardId?: string) {
     queryKey: boardActivityQueryKey(boardId),
     queryFn: () => getBoardActivity(boardId!),
     enabled: Boolean(boardId),
+    refetchInterval: 8_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -23,6 +25,8 @@ export function useBoardProductivityQuery(boardId?: string) {
     queryFn: () => getBoardProductivity(boardId!),
     enabled: Boolean(boardId),
     staleTime: 30_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -31,5 +35,7 @@ export function useCardActivityQuery(cardId?: string) {
     queryKey: cardActivityQueryKey(cardId),
     queryFn: () => getCardActivity(cardId!),
     enabled: Boolean(cardId),
+    refetchInterval: 8_000,
+    refetchIntervalInBackground: false,
   });
 }

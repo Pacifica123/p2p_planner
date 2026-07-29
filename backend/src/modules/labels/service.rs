@@ -2,9 +2,15 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
-use crate::{error::{AppError, AppResult}, state::AppState};
+use crate::{
+    error::{AppError, AppResult},
+    state::AppState,
+};
 
-use super::dto::{CreateLabelRequest, LabelListResponse, LabelResponse, ReplaceCardLabelsRequest, UpdateLabelRequest};
+use super::dto::{
+    CreateLabelRequest, LabelListResponse, LabelResponse, ReplaceCardLabelsRequest,
+    UpdateLabelRequest,
+};
 use crate::modules::cards::dto::CardResponse;
 
 fn validate_label_name(name: &str) -> AppResult<()> {

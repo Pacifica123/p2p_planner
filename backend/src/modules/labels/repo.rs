@@ -11,13 +11,16 @@ use crate::{
         audit::repo::{record_audit, NewAuditLogEntry},
         cards::{dto::CardResponse, repo::fetch_card},
         common::{
-            board_workspace_id, card_board_and_workspace_id, require_workspace_access, require_workspace_admin,
-            trim_to_option,
+            board_workspace_id, card_board_and_workspace_id, require_workspace_access,
+            require_workspace_admin, trim_to_option,
         },
     },
 };
 
-use super::dto::{CreateLabelRequest, LabelListResponse, LabelResponse, ReplaceCardLabelsRequest, UpdateLabelRequest};
+use super::dto::{
+    CreateLabelRequest, LabelListResponse, LabelResponse, ReplaceCardLabelsRequest,
+    UpdateLabelRequest,
+};
 
 fn map_label(row: &sqlx::postgres::PgRow) -> AppResult<LabelResponse> {
     Ok(LabelResponse {
@@ -73,7 +76,11 @@ async fn label_board_and_workspace_id(pool: &PgPool, label_id: Uuid) -> AppResul
     Ok((row.try_get("board_id")?, row.try_get("workspace_id")?))
 }
 
-pub async fn list_labels(pool: &PgPool, actor_user_id: Uuid, board_id: Uuid) -> AppResult<LabelListResponse> {
+pub async fn list_labels(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    board_id: Uuid,
+) -> AppResult<LabelListResponse> {
     let workspace_id = board_workspace_id(pool, board_id).await?;
     require_workspace_access(pool, workspace_id, actor_user_id).await?;
 
@@ -252,16 +259,22 @@ pub async fn update_label(
     Ok(label)
 }
 
-pub async fn delete_label(pool: &PgPool, actor_user_id: Uuid, label_id: Uuid) -> AppResult<LabelResponse> {
+pub async fn delete_label(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    label_id: Uuid,
+) -> AppResult<LabelResponse> {
     let (board_id, workspace_id) = label_board_and_workspace_id(pool, label_id).await?;
     require_workspace_admin(pool, workspace_id, actor_user_id).await?;
     let label = fetch_label(pool, label_id).await?;
 
     let mut tx = pool.begin().await?;
-    sqlx::query("update card_labels set deleted_at = now() where label_id = $1 and deleted_at is null")
-        .bind(label_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "update card_labels set deleted_at = now() where label_id = $1 and deleted_at is null",
+    )
+    .bind(label_id)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("update board_labels set deleted_at = now() where id = $1 and deleted_at is null")
         .bind(label_id)
         .execute(&mut *tx)
@@ -337,14 +350,22 @@ pub async fn replace_card_labels(
         .fetch_one(pool)
         .await?;
         if valid_count != payload.label_ids.len() as i64 {
-            return Err(AppError::bad_request("All labelIds must belong to the card board"));
+            return Err(AppError::bad_request(
+                "All labelIds must belong to the card board",
+            ));
         }
     }
 
     let before_set = before_label_ids.iter().copied().collect::<HashSet<_>>();
     let after_set = payload.label_ids.iter().copied().collect::<HashSet<_>>();
-    let added_label_ids = after_set.difference(&before_set).copied().collect::<Vec<_>>();
-    let removed_label_ids = before_set.difference(&after_set).copied().collect::<Vec<_>>();
+    let added_label_ids = after_set
+        .difference(&before_set)
+        .copied()
+        .collect::<Vec<_>>();
+    let removed_label_ids = before_set
+        .difference(&after_set)
+        .copied()
+        .collect::<Vec<_>>();
 
     let mut tx = pool.begin().await?;
     sqlx::query(

@@ -3,7 +3,10 @@ pub mod handler;
 pub mod repo;
 pub mod service;
 
-use axum::{routing::{delete, get, patch, post}, Router};
+use axum::{
+    routing::{delete, get, patch, post},
+    Router,
+};
 
 use crate::state::AppState;
 

@@ -269,7 +269,8 @@ impl Settings {
 
         if self.auth.enable_dev_header_auth && !local_dev_env {
             return Err(ConfigError::Message(
-                "AUTH__ENABLE_DEV_HEADER_AUTH may only be enabled for local/dev/test profiles".to_string(),
+                "AUTH__ENABLE_DEV_HEADER_AUTH may only be enabled for local/dev/test profiles"
+                    .to_string(),
             ));
         }
 
@@ -299,11 +300,14 @@ impl Settings {
 
             if !self.auth.cookie_secure {
                 return Err(ConfigError::Message(
-                    "AUTH__COOKIE_SECURE=true is required for beta/self-host/production profiles".to_string(),
+                    "AUTH__COOKIE_SECURE=true is required for beta/self-host/production profiles"
+                        .to_string(),
                 ));
             }
 
-            if looks_like_placeholder_secret(&self.auth.jwt_secret) || self.auth.jwt_secret.len() < 32 {
+            if looks_like_placeholder_secret(&self.auth.jwt_secret)
+                || self.auth.jwt_secret.len() < 32
+            {
                 return Err(ConfigError::Message(
                     "AUTH__JWT_SECRET must be a non-default secret with at least 32 characters for beta/self-host/production profiles".to_string(),
                 ));
@@ -367,7 +371,8 @@ impl Settings {
                 .trim();
             if secret_key.is_empty() || looks_like_placeholder_secret(secret_key) {
                 return Err(ConfigError::Message(
-                    "TRANSPORTS__NOSTR__SECRET_KEY must contain a real Nostr secret key".to_string(),
+                    "TRANSPORTS__NOSTR__SECRET_KEY must contain a real Nostr secret key"
+                        .to_string(),
                 ));
             }
             self.transports.nostr.master_key()?;
@@ -387,15 +392,10 @@ impl Settings {
 
 impl NostrTransportSettings {
     pub fn master_key(&self) -> Result<Vec<u8>, ConfigError> {
-        let encoded = self
-            .master_key_base64
-            .as_deref()
-            .unwrap_or_default()
-            .trim();
+        let encoded = self.master_key_base64.as_deref().unwrap_or_default().trim();
         if encoded.is_empty() || looks_like_placeholder_secret(encoded) {
             return Err(ConfigError::Message(
-                "TRANSPORTS__NOSTR__MASTER_KEY_BASE64 must contain a real 32-byte key"
-                    .to_string(),
+                "TRANSPORTS__NOSTR__MASTER_KEY_BASE64 must contain a real 32-byte key".to_string(),
             ));
         }
         let decoded = STANDARD.decode(encoded).map_err(|_| {
@@ -405,8 +405,7 @@ impl NostrTransportSettings {
         })?;
         if decoded.len() != 32 {
             return Err(ConfigError::Message(
-                "TRANSPORTS__NOSTR__MASTER_KEY_BASE64 must decode to exactly 32 bytes"
-                    .to_string(),
+                "TRANSPORTS__NOSTR__MASTER_KEY_BASE64 must decode to exactly 32 bytes".to_string(),
             ));
         }
         Ok(decoded)

@@ -7,13 +7,18 @@ use crate::{
     modules::{
         activity::repo::{record_activity, NewActivityEntry},
         audit::repo::{record_audit, NewAuditLogEntry},
-        common::{board_workspace_id, ensure_user_exists, require_workspace_access, require_workspace_admin},
+        common::{
+            board_workspace_id, ensure_user_exists, require_workspace_access,
+            require_workspace_admin,
+        },
     },
 };
 
 use super::dto::{BoardAppearanceResponse, UserAppearancePreferencesResponse, WallpaperResponse};
 
-fn map_user_preferences(row: &sqlx::postgres::PgRow) -> AppResult<UserAppearancePreferencesResponse> {
+fn map_user_preferences(
+    row: &sqlx::postgres::PgRow,
+) -> AppResult<UserAppearancePreferencesResponse> {
     Ok(UserAppearancePreferencesResponse {
         user_id: row.try_get::<Uuid, _>("user_id")?.to_string(),
         is_customized: row.try_get("is_customized")?,
@@ -269,9 +274,14 @@ pub async fn upsert_board_appearance(
     let mut changes = serde_json::Map::new();
     if before.theme_preset != appearance.theme_preset {
         field_mask.push("themePreset".to_string());
-        changes.insert("themePreset".to_string(), json!({"before": before.theme_preset, "after": appearance.theme_preset.clone()}));
+        changes.insert(
+            "themePreset".to_string(),
+            json!({"before": before.theme_preset, "after": appearance.theme_preset.clone()}),
+        );
     }
-    if before.wallpaper.kind != appearance.wallpaper.kind || before.wallpaper.value != appearance.wallpaper.value {
+    if before.wallpaper.kind != appearance.wallpaper.kind
+        || before.wallpaper.value != appearance.wallpaper.value
+    {
         field_mask.push("wallpaper".to_string());
         changes.insert(
             "wallpaper".to_string(),
@@ -283,7 +293,10 @@ pub async fn upsert_board_appearance(
     }
     if before.column_density != appearance.column_density {
         field_mask.push("columnDensity".to_string());
-        changes.insert("columnDensity".to_string(), json!({"before": before.column_density, "after": appearance.column_density.clone()}));
+        changes.insert(
+            "columnDensity".to_string(),
+            json!({"before": before.column_density, "after": appearance.column_density.clone()}),
+        );
     }
     if before.card_preview_mode != appearance.card_preview_mode {
         field_mask.push("cardPreviewMode".to_string());
@@ -295,7 +308,10 @@ pub async fn upsert_board_appearance(
     }
     if before.show_card_dates != appearance.show_card_dates {
         field_mask.push("showCardDates".to_string());
-        changes.insert("showCardDates".to_string(), json!({"before": before.show_card_dates, "after": appearance.show_card_dates}));
+        changes.insert(
+            "showCardDates".to_string(),
+            json!({"before": before.show_card_dates, "after": appearance.show_card_dates}),
+        );
     }
     if before.show_checklist_progress != appearance.show_checklist_progress {
         field_mask.push("showChecklistProgress".to_string());

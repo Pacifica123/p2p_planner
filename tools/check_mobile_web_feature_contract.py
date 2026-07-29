@@ -20,11 +20,11 @@ def require(relative: str, *needles: str) -> None:
 
 
 def main() -> None:
-    if read("VERSION").strip() != "1.0.0-beta.5":
-        raise SystemExit("FAIL: VERSION must be 1.0.0-beta.5")
+    if read("VERSION").strip() != "1.0.0-beta.6":
+        raise SystemExit("FAIL: VERSION must be 1.0.0-beta.6")
 
     frontend = json.loads(read("frontend/package.json"))
-    if frontend.get("version") != "1.0.0-beta.5":
+    if frontend.get("version") != "1.0.0-beta.6":
         raise SystemExit("FAIL: frontend package version is not aligned")
 
     require(

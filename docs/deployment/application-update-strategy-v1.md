@@ -129,7 +129,8 @@ Release с точным commit, SHA-256 и immutable image digest. Текуща�
 
 ## Обязательный smoke на машине с Docker
 
-1. Запустить beta.3 и создать аккаунт, пространство, доску и карточку.
+1. Запустить предыдущую рабочую beta и создать аккаунт, пространство, доску и
+   карточку.
 2. Выполнить `python bootstrap.py update`.
 3. Проверить вход тем же аккаунтом и содержимое доски.
 4. Проверить `status` и JSON-отчёт.
@@ -138,3 +139,5 @@ Release с точным commit, SHA-256 и immutable image digest. Текуща�
 7. Убедиться, что `.dev-bootstrap/backups` содержит два читаемых `pg_dump`.
 
 Этот сценарий нужен на Windows с Docker Desktop и Linux с Docker Engine.
+Отдельный destructive restore drill описан в
+[`postgresql-backup-restore-v1.md`](postgresql-backup-restore-v1.md).

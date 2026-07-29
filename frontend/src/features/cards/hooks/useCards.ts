@@ -37,6 +37,8 @@ export function useCardsQuery(boardId?: string) {
     queryKey: cardsQueryKey(boardId),
     queryFn: () => getCards(boardId!),
     enabled: Boolean(boardId),
+    refetchInterval: 3_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -45,6 +47,8 @@ export function useCardQuery(cardId?: string) {
     queryKey: cardDetailQueryKey(cardId),
     queryFn: () => getCard(cardId!),
     enabled: Boolean(cardId),
+    refetchInterval: 4_000,
+    refetchIntervalInBackground: false,
   });
 }
 

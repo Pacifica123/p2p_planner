@@ -142,7 +142,12 @@ async fn request_empty(
 #[ignore = "requires TEST_DATABASE_URL or DATABASE_URL pointing to PostgreSQL"]
 async fn core_crud_smoke_flow() -> anyhow::Result<()> {
     let (pool, mut app) = setup().await?;
-    let actor = seed_user(&pool, &format!("owner-{}@example.com", Uuid::now_v7()), "Owner").await?;
+    let actor = seed_user(
+        &pool,
+        &format!("owner-{}@example.com", Uuid::now_v7()),
+        "Owner",
+    )
+    .await?;
 
     let workspace = request_json(
         &mut app,
@@ -194,10 +199,22 @@ async fn core_crud_smoke_flow() -> anyhow::Result<()> {
     .await;
     assert_eq!(moved["data"]["position"], json!(2048.0));
 
-    let archived = request_empty(&mut app, "POST", &format!("/api/v1/cards/{card_id}/archive"), actor).await;
+    let archived = request_empty(
+        &mut app,
+        "POST",
+        &format!("/api/v1/cards/{card_id}/archive"),
+        actor,
+    )
+    .await;
     assert_eq!(archived["data"]["isArchived"], Value::Bool(true));
 
-    let unarchived = request_empty(&mut app, "POST", &format!("/api/v1/cards/{card_id}/unarchive"), actor).await;
+    let unarchived = request_empty(
+        &mut app,
+        "POST",
+        &format!("/api/v1/cards/{card_id}/unarchive"),
+        actor,
+    )
+    .await;
     assert_eq!(unarchived["data"]["isArchived"], Value::Bool(false));
 
     let updated = request_json(
@@ -208,13 +225,46 @@ async fn core_crud_smoke_flow() -> anyhow::Result<()> {
         json!({"title": "Renamed card", "priority": "high"}),
     )
     .await;
-    assert_eq!(updated["data"]["title"], Value::String("Renamed card".to_string()));
+    assert_eq!(
+        updated["data"]["title"],
+        Value::String("Renamed card".to_string())
+    );
 
-    let _listed_cards = request_empty(&mut app, "GET", &format!("/api/v1/boards/{board_id}/cards"), actor).await;
-    let _deleted_card = request_empty(&mut app, "DELETE", &format!("/api/v1/cards/{card_id}"), actor).await;
-    let _deleted_column = request_empty(&mut app, "DELETE", &format!("/api/v1/columns/{column_id}"), actor).await;
-    let _deleted_board = request_empty(&mut app, "DELETE", &format!("/api/v1/boards/{board_id}"), actor).await;
-    let _deleted_workspace = request_empty(&mut app, "DELETE", &format!("/api/v1/workspaces/{workspace_id}"), actor).await;
+    let _listed_cards = request_empty(
+        &mut app,
+        "GET",
+        &format!("/api/v1/boards/{board_id}/cards"),
+        actor,
+    )
+    .await;
+    let _deleted_card = request_empty(
+        &mut app,
+        "DELETE",
+        &format!("/api/v1/cards/{card_id}"),
+        actor,
+    )
+    .await;
+    let _deleted_column = request_empty(
+        &mut app,
+        "DELETE",
+        &format!("/api/v1/columns/{column_id}"),
+        actor,
+    )
+    .await;
+    let _deleted_board = request_empty(
+        &mut app,
+        "DELETE",
+        &format!("/api/v1/boards/{board_id}"),
+        actor,
+    )
+    .await;
+    let _deleted_workspace = request_empty(
+        &mut app,
+        "DELETE",
+        &format!("/api/v1/workspaces/{workspace_id}"),
+        actor,
+    )
+    .await;
 
     Ok(())
 }
@@ -223,8 +273,18 @@ async fn core_crud_smoke_flow() -> anyhow::Result<()> {
 #[ignore = "requires TEST_DATABASE_URL or DATABASE_URL pointing to PostgreSQL"]
 async fn workspace_members_smoke_flow() -> anyhow::Result<()> {
     let (pool, mut app) = setup().await?;
-    let owner = seed_user(&pool, &format!("owner-{}@example.com", Uuid::now_v7()), "Owner").await?;
-    let member = seed_user(&pool, &format!("member-{}@example.com", Uuid::now_v7()), "Member").await?;
+    let owner = seed_user(
+        &pool,
+        &format!("owner-{}@example.com", Uuid::now_v7()),
+        "Owner",
+    )
+    .await?;
+    let member = seed_user(
+        &pool,
+        &format!("member-{}@example.com", Uuid::now_v7()),
+        "Member",
+    )
+    .await?;
 
     let workspace = request_json(
         &mut app,
@@ -254,7 +314,10 @@ async fn workspace_members_smoke_flow() -> anyhow::Result<()> {
         json!({"role": "admin"}),
     )
     .await;
-    assert_eq!(updated_member["data"]["role"], Value::String("admin".to_string()));
+    assert_eq!(
+        updated_member["data"]["role"],
+        Value::String("admin".to_string())
+    );
 
     let listed = request_empty(
         &mut app,
@@ -272,7 +335,10 @@ async fn workspace_members_smoke_flow() -> anyhow::Result<()> {
         owner,
     )
     .await;
-    assert_eq!(removed["data"]["status"], Value::String("removed".to_string()));
+    assert_eq!(
+        removed["data"]["status"],
+        Value::String("removed".to_string())
+    );
 
     Ok(())
 }

@@ -9,6 +9,8 @@ export function useColumnsQuery(boardId?: string) {
     queryKey: columnsQueryKey(boardId),
     queryFn: () => getColumns(boardId!),
     enabled: Boolean(boardId),
+    refetchInterval: 6_000,
+    refetchIntervalInBackground: false,
   });
 }
 

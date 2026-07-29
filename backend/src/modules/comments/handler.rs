@@ -7,13 +7,13 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    error::AppResult,
-    http::response::ok,
-    modules::common::actor_user_id,
-    state::AppState,
+    error::AppResult, http::response::ok, modules::common::actor_user_id, state::AppState,
 };
 
-use super::{dto::{CreateCommentRequest, ListCommentsQuery, UpdateCommentRequest}, service};
+use super::{
+    dto::{CreateCommentRequest, ListCommentsQuery, UpdateCommentRequest},
+    service,
+};
 
 pub async fn list_comments(
     State(state): State<AppState>,

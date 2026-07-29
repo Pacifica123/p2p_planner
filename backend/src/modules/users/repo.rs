@@ -10,7 +10,9 @@ use super::dto::{DeviceResponse, MeResponse};
 
 pub async fn get_current_user(pool: &PgPool, actor_user_id: Uuid) -> AppResult<MeResponse> {
     let Some(user) = auth_repo::find_active_user_by_id(pool, actor_user_id).await? else {
-        return Err(AppError::unauthorized("Authenticated user is not active anymore"));
+        return Err(AppError::unauthorized(
+            "Authenticated user is not active anymore",
+        ));
     };
 
     Ok(MeResponse {

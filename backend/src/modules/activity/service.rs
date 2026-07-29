@@ -3,8 +3,7 @@ use uuid::Uuid;
 use crate::{error::AppResult, state::AppState};
 
 use super::dto::{
-    ActivityListResponse, BoardProductivityQuery, BoardProductivityResponse,
-    ListActivityQuery,
+    ActivityListResponse, BoardProductivityQuery, BoardProductivityResponse, ListActivityQuery,
 };
 
 pub async fn get_board_productivity(

@@ -6,10 +6,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    error::AppResult,
-    http::response::ok,
-    modules::common::actor_user_id,
-    state::AppState,
+    error::AppResult, http::response::ok, modules::common::actor_user_id, state::AppState,
 };
 
 use super::{

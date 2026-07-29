@@ -6,10 +6,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    error::AppResult,
-    http::response::ok,
-    modules::common::actor_user_id,
-    state::AppState,
+    error::AppResult, http::response::ok, modules::common::actor_user_id, state::AppState,
 };
 
 use super::service;
@@ -39,5 +36,7 @@ pub async fn revoke_device(
 ) -> AppResult<impl IntoResponse> {
     let actor = actor_user_id(&state, &headers).await?;
     service::revoke_device(&state, actor, device_id).await?;
-    Ok(ok(serde_json::json!({"revoked": true, "deviceId": device_id})))
+    Ok(ok(
+        serde_json::json!({"revoked": true, "deviceId": device_id}),
+    ))
 }

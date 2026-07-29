@@ -287,6 +287,28 @@ fn string_field<'a>(card: &'a Value, field: &str) -> Option<&'a str> {
     card.get(field).and_then(Value::as_str)
 }
 
+fn finite_number(value: &Value, field: &str, fallback: f64) -> anyhow::Result<f64> {
+    let number = value.get(field).and_then(Value::as_f64).unwrap_or(fallback);
+    if !number.is_finite() {
+        anyhow::bail!("{field} must be finite");
+    }
+    Ok(number)
+}
+
+fn normalized_card_status(card: &Value) -> anyhow::Result<&'static str> {
+    let status = string_field(card, "status").unwrap_or("active");
+    crate::modules::cards::service::normalize_status(status)
+        .ok_or_else(|| anyhow::anyhow!("unsupported card status"))
+}
+
+fn normalized_card_priority(card: &Value) -> anyhow::Result<Option<&str>> {
+    let priority = string_field(card, "priority");
+    if priority.is_some_and(|value| !matches!(value, "low" | "medium" | "high" | "urgent")) {
+        anyhow::bail!("unsupported card priority");
+    }
+    Ok(priority)
+}
+
 async fn apply_checklist_bundle(
     tx: &mut Transaction<'_, Postgres>,
     card_id: Uuid,
@@ -295,11 +317,13 @@ async fn apply_checklist_bundle(
     let values = checklists
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("checklists payload must be an array"))?;
+    let mut checklist_ids = Vec::with_capacity(values.len());
     for checklist in values {
         let checklist_id = Uuid::parse_str(
             string_field(checklist, "id")
                 .ok_or_else(|| anyhow::anyhow!("checklist id is missing"))?,
         )?;
+        checklist_ids.push(checklist_id);
         let checklist_card_id = Uuid::parse_str(
             string_field(checklist, "cardId")
                 .ok_or_else(|| anyhow::anyhow!("checklist card id is missing"))?,
@@ -307,25 +331,50 @@ async fn apply_checklist_bundle(
         if checklist_card_id != card_id {
             anyhow::bail!("checklist payload scope mismatch");
         }
-        let checklist_exists = sqlx::query_scalar::<_, bool>(
-            "select exists(select 1 from checklists where id = $1 and card_id = $2 and deleted_at is null)",
+        let title = string_field(checklist, "title")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("checklist title is missing"))?;
+        let position = finite_number(checklist, "position", 1_000.0)?;
+        let belongs_elsewhere = sqlx::query_scalar::<_, bool>(
+            "select exists(select 1 from checklists where id = $1 and card_id <> $2)",
         )
         .bind(checklist_id)
         .bind(card_id)
         .fetch_one(&mut **tx)
         .await?;
-        if !checklist_exists {
-            anyhow::bail!("checklist does not belong to card");
+        if belongs_elsewhere {
+            anyhow::bail!("checklist id belongs to another card");
         }
+        sqlx::query(
+            r#"
+            insert into checklists (id, card_id, title, position)
+            values ($1, $2, $3, $4)
+            on conflict (id) do update set
+              title = excluded.title,
+              position = excluded.position,
+              deleted_at = null
+            where checklists.card_id = excluded.card_id
+            "#,
+        )
+        .bind(checklist_id)
+        .bind(card_id)
+        .bind(title)
+        .bind(position)
+        .execute(&mut **tx)
+        .await?;
+
         let items = checklist
             .get("items")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow::anyhow!("checklist items must be an array"))?;
+        let mut item_ids = Vec::with_capacity(items.len());
         for item in items {
             let item_id = Uuid::parse_str(
                 string_field(item, "id")
                     .ok_or_else(|| anyhow::anyhow!("checklist item id is missing"))?,
             )?;
+            item_ids.push(item_id);
             let item_checklist_id = Uuid::parse_str(
                 string_field(item, "checklistId")
                     .ok_or_else(|| anyhow::anyhow!("checklist item checklist id is missing"))?,
@@ -333,33 +382,98 @@ async fn apply_checklist_bundle(
             if item_checklist_id != checklist_id {
                 anyhow::bail!("checklist item payload scope mismatch");
             }
+            let item_title = string_field(item, "title")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("checklist item title is missing"))?;
+            let item_position = finite_number(item, "position", 1_000.0)?;
             let is_done = item
                 .get("isDone")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| anyhow::anyhow!("checklist item state is missing"))?;
-            let updated = sqlx::query(
+            let belongs_elsewhere = sqlx::query_scalar::<_, bool>(
+                "select exists(select 1 from checklist_items where id = $1 and checklist_id <> $2)",
+            )
+            .bind(item_id)
+            .bind(checklist_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            if belongs_elsewhere {
+                anyhow::bail!("checklist item id belongs to another checklist");
+            }
+            sqlx::query(
                 r#"
-                update checklist_items
-                set
-                  is_done = $3,
+                insert into checklist_items (
+                  id, checklist_id, title, is_done, position, completed_at
+                ) values (
+                  $1, $2, $3, $4, $5, case when $4 then now() else null end
+                )
+                on conflict (id) do update set
+                  title = excluded.title,
+                  is_done = excluded.is_done,
+                  position = excluded.position,
                   completed_at = case
-                    when $3 then coalesce(completed_at, now())
+                    when excluded.is_done then coalesce(checklist_items.completed_at, now())
                     else null
                   end,
-                  updated_at = now()
-                where id = $1 and checklist_id = $2 and deleted_at is null
+                  deleted_at = null
+                where checklist_items.checklist_id = excluded.checklist_id
                 "#,
             )
             .bind(item_id)
             .bind(checklist_id)
+            .bind(item_title)
             .bind(is_done)
+            .bind(item_position)
             .execute(&mut **tx)
             .await?;
-            if updated.rows_affected() != 1 {
-                anyhow::bail!("checklist item does not belong to checklist");
-            }
         }
+        sqlx::query(
+            r#"
+            update checklist_items
+            set deleted_at = now()
+            where checklist_id = $1
+              and deleted_at is null
+              and not (id = any($2::uuid[]))
+            "#,
+        )
+        .bind(checklist_id)
+        .bind(&item_ids)
+        .execute(&mut **tx)
+        .await?;
     }
+
+    sqlx::query(
+        r#"
+        update checklist_items
+        set deleted_at = now()
+        where deleted_at is null
+          and checklist_id in (
+            select id
+            from checklists
+            where card_id = $1
+              and deleted_at is null
+              and not (id = any($2::uuid[]))
+          )
+        "#,
+    )
+    .bind(card_id)
+    .bind(&checklist_ids)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        r#"
+        update checklists
+        set deleted_at = now()
+        where card_id = $1
+          and deleted_at is null
+          and not (id = any($2::uuid[]))
+        "#,
+    )
+    .bind(card_id)
+    .bind(&checklist_ids)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -424,6 +538,18 @@ async fn apply_remote_event(
     if !column_matches {
         anyhow::bail!("target column does not belong to board");
     }
+    let card_title = string_field(card, "title")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("card title is missing"))?;
+    let card_status = normalized_card_status(card)?;
+    let card_priority = normalized_card_priority(card)?;
+    let card_position = finite_number(card, "position", 1_000.0)?;
+    let completed_at = if card_status == "completed" {
+        string_field(card, "completedAt")
+    } else {
+        None
+    };
 
     let mut tx = pool.begin().await?;
     sqlx::query(
@@ -477,18 +603,20 @@ async fn apply_remote_event(
         }
     }
 
-    let owner_user_id = sqlx::query_scalar::<_, Uuid>(
-        "select owner_user_id from workspaces where id = $1",
-    )
-    .bind(workspace_id)
-    .fetch_one(&mut *tx)
-    .await?;
-    let card_exists = sqlx::query_scalar::<_, bool>(
-        "select exists(select 1 from cards where id = $1)",
-    )
-    .bind(entity_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    let owner_user_id =
+        sqlx::query_scalar::<_, Uuid>("select owner_user_id from workspaces where id = $1")
+            .bind(workspace_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let existing_card_board_id =
+        sqlx::query_scalar::<_, Uuid>("select board_id from cards where id = $1")
+            .bind(entity_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if existing_card_board_id.is_some_and(|existing_board_id| existing_board_id != board_id) {
+        anyhow::bail!("card id belongs to another board");
+    }
+    let card_exists = existing_card_board_id.is_some();
     if !card_exists {
         sqlx::query(
             r#"
@@ -505,17 +633,25 @@ async fn apply_remote_event(
         .bind(entity_id)
         .bind(board_id)
         .bind(column_id)
-        .bind(string_field(card, "parentCardId").map(Uuid::parse_str).transpose()?)
-        .bind(string_field(card, "title").unwrap_or("Без названия"))
+        .bind(
+            string_field(card, "parentCardId")
+                .map(Uuid::parse_str)
+                .transpose()?,
+        )
+        .bind(card_title)
         .bind(string_field(card, "description"))
-        .bind(string_field(card, "status").unwrap_or("active"))
-        .bind(string_field(card, "priority"))
-        .bind(card.get("position").and_then(Value::as_f64).unwrap_or(1_000.0))
+        .bind(card_status)
+        .bind(card_priority)
+        .bind(card_position)
         .bind(string_field(card, "startAt"))
         .bind(string_field(card, "dueAt"))
-        .bind(string_field(card, "completedAt"))
+        .bind(completed_at)
         .bind(owner_user_id)
-        .bind(card.get("isArchived").and_then(Value::as_bool).unwrap_or(false))
+        .bind(
+            card.get("isArchived")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )
         .execute(&mut *tx)
         .await?;
         winning = CARD_FIELDS.iter().copied().collect();
@@ -532,7 +668,11 @@ async fn apply_remote_event(
               position = case when $14 then $15 else position end,
               start_at = case when $16 then $17::timestamptz else start_at end,
               due_at = case when $18 then $19::timestamptz else due_at end,
-              completed_at = case when $20 then $21::timestamptz else completed_at end,
+              completed_at = case
+                when $10 and $11 <> 'completed' then null
+                when $20 then $21::timestamptz
+                else completed_at
+              end,
               archived_at = case
                 when $22 and $23 then coalesce(archived_at, now())
                 when $22 then null
@@ -546,25 +686,33 @@ async fn apply_remote_event(
         .bind(winning.contains("columnId"))
         .bind(column_id)
         .bind(winning.contains("parentCardId"))
-        .bind(string_field(card, "parentCardId").map(Uuid::parse_str).transpose()?)
+        .bind(
+            string_field(card, "parentCardId")
+                .map(Uuid::parse_str)
+                .transpose()?,
+        )
         .bind(winning.contains("title"))
-        .bind(string_field(card, "title"))
+        .bind(card_title)
         .bind(winning.contains("description"))
         .bind(string_field(card, "description"))
         .bind(winning.contains("status"))
-        .bind(string_field(card, "status"))
+        .bind(card_status)
         .bind(winning.contains("priority"))
-        .bind(string_field(card, "priority"))
+        .bind(card_priority)
         .bind(winning.contains("position"))
-        .bind(card.get("position").and_then(Value::as_f64))
+        .bind(card_position)
         .bind(winning.contains("startAt"))
         .bind(string_field(card, "startAt"))
         .bind(winning.contains("dueAt"))
         .bind(string_field(card, "dueAt"))
         .bind(winning.contains("completedAt"))
-        .bind(string_field(card, "completedAt"))
+        .bind(completed_at)
         .bind(winning.contains("isArchived"))
-        .bind(card.get("isArchived").and_then(Value::as_bool).unwrap_or(false))
+        .bind(
+            card.get("isArchived")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )
         .bind(board_id)
         .execute(&mut *tx)
         .await?;
@@ -576,7 +724,54 @@ async fn apply_remote_event(
         }
     }
 
-    for field in winning {
+    let mut winning_fields = winning
+        .iter()
+        .map(|field| (*field).to_string())
+        .collect::<Vec<_>>();
+    winning_fields.sort();
+
+    if !winning_fields.is_empty() {
+        let activity_kind = if !card_exists {
+            "card.created"
+        } else if winning.contains("columnId") {
+            "card.moved"
+        } else if winning.contains("isArchived")
+            && card
+                .get("isArchived")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            "card.archived"
+        } else {
+            "card.updated"
+        };
+        sqlx::query(
+            r#"
+            insert into activity_entries (
+              id, workspace_id, board_id, card_id, actor_user_id, kind,
+              entity_type, entity_id, field_mask, payload_jsonb
+            ) values (
+              gen_random_uuid(), $1, $2, $3, $4, $5,
+              'card', $3, $6, $7
+            )
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(board_id)
+        .bind(entity_id)
+        .bind(owner_user_id)
+        .bind(activity_kind)
+        .bind(&winning_fields)
+        .bind(json!({
+            "source": "roaming",
+            "eventId": event.event_id,
+            "replicaId": event.replica_id,
+        }))
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    for field in winning_fields {
         sqlx::query(
             r#"
             insert into roaming_field_versions (
@@ -591,7 +786,7 @@ async fn apply_remote_event(
         )
         .bind(workspace_id)
         .bind(entity_id)
-        .bind(field)
+        .bind(&field)
         .bind(event.logical_clock)
         .bind(replica_id)
         .bind(event_id)
@@ -605,4 +800,33 @@ async fn apply_remote_event(
         .await?;
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{normalized_card_priority, normalized_card_status};
+
+    #[test]
+    fn mobile_legacy_statuses_are_normalized_before_database_apply() {
+        assert_eq!(
+            normalized_card_status(&json!({"status": "todo"})).unwrap(),
+            "active"
+        );
+        assert_eq!(
+            normalized_card_status(&json!({"status": "in_progress"})).unwrap(),
+            "active"
+        );
+        assert_eq!(
+            normalized_card_status(&json!({"status": "done"})).unwrap(),
+            "completed"
+        );
+    }
+
+    #[test]
+    fn roaming_card_rejects_invalid_database_values() {
+        assert!(normalized_card_status(&json!({"status": "unknown"})).is_err());
+        assert!(normalized_card_priority(&json!({"priority": "maximum"})).is_err());
+    }
 }

@@ -17,8 +17,14 @@ pub fn router() -> Router<AppState> {
             "/integrations/providers/{providerKey}",
             get(handler::get_provider_detail),
         )
-        .route("/integrations/import-jobs", post(handler::create_import_job))
-        .route("/integrations/export-jobs", post(handler::create_export_job))
+        .route(
+            "/integrations/import-jobs",
+            post(handler::create_import_job),
+        )
+        .route(
+            "/integrations/export-jobs",
+            post(handler::create_export_job),
+        )
         .route(
             "/integrations/import-export/capabilities",
             get(handler::get_import_export_capabilities),

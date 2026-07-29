@@ -20,6 +20,8 @@ export function useBoardLabelsQuery(boardId?: string) {
     queryKey: boardLabelsQueryKey(boardId),
     queryFn: () => getBoardLabels(boardId!),
     enabled: Boolean(boardId),
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
   });
 }
 

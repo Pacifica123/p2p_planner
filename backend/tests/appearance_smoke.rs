@@ -130,7 +130,12 @@ async fn request(
 #[ignore = "requires TEST_DATABASE_URL or DATABASE_URL pointing to PostgreSQL"]
 async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
     let (pool, app) = setup().await?;
-    let owner = seed_user(&pool, &format!("owner-{}@example.com", Uuid::now_v7()), "Owner").await?;
+    let owner = seed_user(
+        &pool,
+        &format!("owner-{}@example.com", Uuid::now_v7()),
+        "Owner",
+    )
+    .await?;
 
     let workspace = request(
         &app,
@@ -167,7 +172,10 @@ async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
     assert_eq!(me_default["data"]["appTheme"], json!("system"));
     assert_eq!(me_default["data"]["density"], json!("comfortable"));
     assert_eq!(me_default["data"]["reduceMotion"], json!(false));
-    assert_eq!(me_default["data"]["checklistItemSubmitMode"], json!("ctrl_enter"));
+    assert_eq!(
+        me_default["data"]["checklistItemSubmitMode"],
+        json!("ctrl_enter")
+    );
     assert_eq!(me_default["data"]["cardDetailsMode"], json!("drawer"));
 
     let me_updated = request(
@@ -189,7 +197,10 @@ async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
     assert_eq!(me_updated["data"]["appTheme"], json!("dark"));
     assert_eq!(me_updated["data"]["density"], json!("compact"));
     assert_eq!(me_updated["data"]["reduceMotion"], json!(true));
-    assert_eq!(me_updated["data"]["checklistItemSubmitMode"], json!("enter"));
+    assert_eq!(
+        me_updated["data"]["checklistItemSubmitMode"],
+        json!("enter")
+    );
     assert_eq!(me_updated["data"]["cardDetailsMode"], json!("modal"));
 
     let board_default = request(
@@ -273,9 +284,24 @@ async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
 #[ignore = "requires TEST_DATABASE_URL or DATABASE_URL pointing to PostgreSQL"]
 async fn appearance_validation_and_permissions_are_enforced() -> anyhow::Result<()> {
     let (pool, app) = setup().await?;
-    let owner = seed_user(&pool, &format!("owner-{}@example.com", Uuid::now_v7()), "Owner").await?;
-    let member = seed_user(&pool, &format!("member-{}@example.com", Uuid::now_v7()), "Member").await?;
-    let outsider = seed_user(&pool, &format!("outsider-{}@example.com", Uuid::now_v7()), "Outsider").await?;
+    let owner = seed_user(
+        &pool,
+        &format!("owner-{}@example.com", Uuid::now_v7()),
+        "Owner",
+    )
+    .await?;
+    let member = seed_user(
+        &pool,
+        &format!("member-{}@example.com", Uuid::now_v7()),
+        "Member",
+    )
+    .await?;
+    let outsider = seed_user(
+        &pool,
+        &format!("outsider-{}@example.com", Uuid::now_v7()),
+        "Outsider",
+    )
+    .await?;
 
     let workspace = request(
         &app,
@@ -352,7 +378,10 @@ async fn appearance_validation_and_permissions_are_enforced() -> anyhow::Result<
     )
     .await;
     assert_eq!(invalid_theme["error"]["code"], json!("bad_request"));
-    assert_eq!(invalid_theme["error"]["message"], json!("appTheme has unsupported value"));
+    assert_eq!(
+        invalid_theme["error"]["message"],
+        json!("appTheme has unsupported value")
+    );
 
     let invalid_checklist_mode = request(
         &app,
@@ -391,7 +420,10 @@ async fn appearance_validation_and_permissions_are_enforced() -> anyhow::Result<
         StatusCode::BAD_REQUEST,
     )
     .await;
-    assert_eq!(invalid_density["error"]["message"], json!("columnDensity has unsupported value"));
+    assert_eq!(
+        invalid_density["error"]["message"],
+        json!("columnDensity has unsupported value")
+    );
 
     let missing_wallpaper_value = request(
         &app,

@@ -8,9 +8,9 @@ use crate::{
         activity::repo::{record_activity, NewActivityEntry},
         audit::repo::{record_audit, NewAuditLogEntry},
         common::{
-            board_workspace_id, card_board_and_workspace_id, column_board_and_workspace_id, ensure_user_exists,
-            next_position_for_card, normalize_limit, require_workspace_access, require_workspace_admin,
-            trim_to_option,
+            board_workspace_id, card_board_and_workspace_id, column_board_and_workspace_id,
+            ensure_user_exists, next_position_for_card, normalize_limit, require_workspace_access,
+            require_workspace_admin, trim_to_option,
         },
     },
 };
@@ -309,7 +309,11 @@ pub async fn create_card(
             kind: "card.created",
             entity_type: "card",
             entity_id: card_id,
-            field_mask: vec!["title".to_string(), "description".to_string(), "columnId".to_string()],
+            field_mask: vec![
+                "title".to_string(),
+                "description".to_string(),
+                "columnId".to_string(),
+            ],
             payload_jsonb: json!({
                 "cardTitle": card.title.clone(),
                 "columnId": card.column_id.clone(),
@@ -325,7 +329,11 @@ pub async fn create_card(
     Ok(card)
 }
 
-pub async fn get_card(pool: &PgPool, actor_user_id: Uuid, card_id: Uuid) -> AppResult<CardResponse> {
+pub async fn get_card(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    card_id: Uuid,
+) -> AppResult<CardResponse> {
     let (_board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
     require_workspace_access(pool, workspace_id, actor_user_id).await?;
     fetch_card(pool, card_id).await
@@ -399,43 +407,74 @@ pub async fn update_card(
     let mut changes = serde_json::Map::new();
     if before.title != card.title {
         field_mask.push("title".to_string());
-        changes.insert("title".to_string(), json!({"before": before.title, "after": card.title.clone()}));
+        changes.insert(
+            "title".to_string(),
+            json!({"before": before.title, "after": card.title.clone()}),
+        );
     }
     if before.description != card.description {
         field_mask.push("description".to_string());
-        changes.insert("description".to_string(), json!({"before": before.description, "after": card.description.clone()}));
+        changes.insert(
+            "description".to_string(),
+            json!({"before": before.description, "after": card.description.clone()}),
+        );
     }
     if before.column_id != card.column_id {
         field_mask.push("columnId".to_string());
-        changes.insert("columnId".to_string(), json!({"before": before.column_id, "after": card.column_id.clone()}));
+        changes.insert(
+            "columnId".to_string(),
+            json!({"before": before.column_id, "after": card.column_id.clone()}),
+        );
     }
     if before.status != card.status {
         field_mask.push("status".to_string());
-        changes.insert("status".to_string(), json!({"before": before.status, "after": card.status.clone()}));
+        changes.insert(
+            "status".to_string(),
+            json!({"before": before.status, "after": card.status.clone()}),
+        );
     }
     if before.priority != card.priority {
         field_mask.push("priority".to_string());
-        changes.insert("priority".to_string(), json!({"before": before.priority, "after": card.priority.clone()}));
+        changes.insert(
+            "priority".to_string(),
+            json!({"before": before.priority, "after": card.priority.clone()}),
+        );
     }
     if before.start_at != card.start_at {
         field_mask.push("startAt".to_string());
-        changes.insert("startAt".to_string(), json!({"before": before.start_at, "after": card.start_at.clone()}));
+        changes.insert(
+            "startAt".to_string(),
+            json!({"before": before.start_at, "after": card.start_at.clone()}),
+        );
     }
     if before.due_at != card.due_at {
         field_mask.push("dueAt".to_string());
-        changes.insert("dueAt".to_string(), json!({"before": before.due_at, "after": card.due_at.clone()}));
+        changes.insert(
+            "dueAt".to_string(),
+            json!({"before": before.due_at, "after": card.due_at.clone()}),
+        );
     }
     if before.completed_at != card.completed_at {
         field_mask.push("completedAt".to_string());
-        changes.insert("completedAt".to_string(), json!({"before": before.completed_at, "after": card.completed_at.clone()}));
+        changes.insert(
+            "completedAt".to_string(),
+            json!({"before": before.completed_at, "after": card.completed_at.clone()}),
+        );
     }
     if before.is_archived != card.is_archived {
         field_mask.push("isArchived".to_string());
-        changes.insert("isArchived".to_string(), json!({"before": before.is_archived, "after": card.is_archived}));
+        changes.insert(
+            "isArchived".to_string(),
+            json!({"before": before.is_archived, "after": card.is_archived}),
+        );
     }
     if !field_mask.is_empty() {
         let kind = if before.is_archived != card.is_archived {
-            if card.is_archived { "card.archived" } else { "card.restored" }
+            if card.is_archived {
+                "card.archived"
+            } else {
+                "card.restored"
+            }
         } else if before.column_id != card.column_id {
             "card.moved"
         } else if before.completed_at.is_none() && card.completed_at.is_some() {
@@ -582,43 +621,74 @@ pub async fn move_card(
     let mut changes = serde_json::Map::new();
     if before.title != card.title {
         field_mask.push("title".to_string());
-        changes.insert("title".to_string(), json!({"before": before.title, "after": card.title.clone()}));
+        changes.insert(
+            "title".to_string(),
+            json!({"before": before.title, "after": card.title.clone()}),
+        );
     }
     if before.description != card.description {
         field_mask.push("description".to_string());
-        changes.insert("description".to_string(), json!({"before": before.description, "after": card.description.clone()}));
+        changes.insert(
+            "description".to_string(),
+            json!({"before": before.description, "after": card.description.clone()}),
+        );
     }
     if before.column_id != card.column_id {
         field_mask.push("columnId".to_string());
-        changes.insert("columnId".to_string(), json!({"before": before.column_id, "after": card.column_id.clone()}));
+        changes.insert(
+            "columnId".to_string(),
+            json!({"before": before.column_id, "after": card.column_id.clone()}),
+        );
     }
     if before.status != card.status {
         field_mask.push("status".to_string());
-        changes.insert("status".to_string(), json!({"before": before.status, "after": card.status.clone()}));
+        changes.insert(
+            "status".to_string(),
+            json!({"before": before.status, "after": card.status.clone()}),
+        );
     }
     if before.priority != card.priority {
         field_mask.push("priority".to_string());
-        changes.insert("priority".to_string(), json!({"before": before.priority, "after": card.priority.clone()}));
+        changes.insert(
+            "priority".to_string(),
+            json!({"before": before.priority, "after": card.priority.clone()}),
+        );
     }
     if before.start_at != card.start_at {
         field_mask.push("startAt".to_string());
-        changes.insert("startAt".to_string(), json!({"before": before.start_at, "after": card.start_at.clone()}));
+        changes.insert(
+            "startAt".to_string(),
+            json!({"before": before.start_at, "after": card.start_at.clone()}),
+        );
     }
     if before.due_at != card.due_at {
         field_mask.push("dueAt".to_string());
-        changes.insert("dueAt".to_string(), json!({"before": before.due_at, "after": card.due_at.clone()}));
+        changes.insert(
+            "dueAt".to_string(),
+            json!({"before": before.due_at, "after": card.due_at.clone()}),
+        );
     }
     if before.completed_at != card.completed_at {
         field_mask.push("completedAt".to_string());
-        changes.insert("completedAt".to_string(), json!({"before": before.completed_at, "after": card.completed_at.clone()}));
+        changes.insert(
+            "completedAt".to_string(),
+            json!({"before": before.completed_at, "after": card.completed_at.clone()}),
+        );
     }
     if before.is_archived != card.is_archived {
         field_mask.push("isArchived".to_string());
-        changes.insert("isArchived".to_string(), json!({"before": before.is_archived, "after": card.is_archived}));
+        changes.insert(
+            "isArchived".to_string(),
+            json!({"before": before.is_archived, "after": card.is_archived}),
+        );
     }
     if !field_mask.is_empty() {
         let kind = if before.is_archived != card.is_archived {
-            if card.is_archived { "card.archived" } else { "card.restored" }
+            if card.is_archived {
+                "card.archived"
+            } else {
+                "card.restored"
+            }
         } else if before.column_id != card.column_id {
             "card.moved"
         } else if before.completed_at.is_none() && card.completed_at.is_some() {
@@ -687,7 +757,11 @@ pub async fn reorder_column_cards(
     let (board_id, workspace_id) = column_board_and_workspace_id(pool, column_id).await?;
     require_workspace_admin(pool, workspace_id, actor_user_id).await?;
 
-    let card_ids = payload.items.iter().map(|item| item.card_id).collect::<Vec<_>>();
+    let card_ids = payload
+        .items
+        .iter()
+        .map(|item| item.card_id)
+        .collect::<Vec<_>>();
     let existing_count = sqlx::query_scalar::<_, i64>(
         r#"
         select count(*)::bigint

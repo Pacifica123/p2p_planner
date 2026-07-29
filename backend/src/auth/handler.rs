@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::{HeaderMap, HeaderValue, StatusCode, header::SET_COOKIE},
+    http::{header::SET_COOKIE, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -21,10 +21,15 @@ use super::{
     service,
 };
 
-fn response_with_cookies<T: serde::Serialize>(status: StatusCode, data: T, cookies: &[String]) -> AppResult<Response> {
+fn response_with_cookies<T: serde::Serialize>(
+    status: StatusCode,
+    data: T,
+    cookies: &[String],
+) -> AppResult<Response> {
     let mut response = (status, ok(data)).into_response();
     for cookie in cookies {
-        let header_value = HeaderValue::from_str(cookie).map_err(|_| crate::error::AppError::internal())?;
+        let header_value =
+            HeaderValue::from_str(cookie).map_err(|_| crate::error::AppError::internal())?;
         response.headers_mut().append(SET_COOKIE, header_value);
     }
     Ok(response)
@@ -36,7 +41,11 @@ pub async fn sign_up(
     Json(payload): Json<SignUpRequest>,
 ) -> AppResult<Response> {
     let result = service::sign_up(&state, &headers, payload).await?;
-    response_with_cookies(StatusCode::CREATED, result.payload, &[result.refresh_cookie, result.device_cookie])
+    response_with_cookies(
+        StatusCode::CREATED,
+        result.payload,
+        &[result.refresh_cookie, result.device_cookie],
+    )
 }
 
 pub async fn sign_in(
@@ -45,21 +54,23 @@ pub async fn sign_in(
     Json(payload): Json<SignInRequest>,
 ) -> AppResult<Response> {
     let result = service::sign_in(&state, &headers, payload).await?;
-    response_with_cookies(StatusCode::OK, result.payload, &[result.refresh_cookie, result.device_cookie])
+    response_with_cookies(
+        StatusCode::OK,
+        result.payload,
+        &[result.refresh_cookie, result.device_cookie],
+    )
 }
 
-pub async fn refresh(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> AppResult<Response> {
+pub async fn refresh(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Response> {
     let result = service::refresh(&state, &headers).await?;
-    response_with_cookies(StatusCode::OK, result.payload, &[result.refresh_cookie, result.device_cookie])
+    response_with_cookies(
+        StatusCode::OK,
+        result.payload,
+        &[result.refresh_cookie, result.device_cookie],
+    )
 }
 
-pub async fn sign_out(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> AppResult<Response> {
+pub async fn sign_out(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Response> {
     let result = service::sign_out(&state, &headers).await?;
     response_with_cookies(StatusCode::OK, result.payload, &[result.refresh_cookie])
 }

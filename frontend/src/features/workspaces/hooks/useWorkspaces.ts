@@ -7,6 +7,8 @@ export function useWorkspacesQuery() {
   return useQuery({
     queryKey: workspacesQueryKey,
     queryFn: getWorkspaces,
+    refetchInterval: 8_000,
+    refetchIntervalInBackground: false,
   });
 }
 

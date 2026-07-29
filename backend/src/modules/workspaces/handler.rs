@@ -7,14 +7,14 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    error::AppResult,
-    http::response::ok,
-    modules::common::actor_user_id,
-    state::AppState,
+    error::AppResult, http::response::ok, modules::common::actor_user_id, state::AppState,
 };
 
 use super::{
-    dto::{AddWorkspaceMemberRequest, CreateWorkspaceRequest, ListWorkspacesQuery, UpdateWorkspaceMemberRequest, UpdateWorkspaceRequest},
+    dto::{
+        AddWorkspaceMemberRequest, CreateWorkspaceRequest, ListWorkspacesQuery,
+        UpdateWorkspaceMemberRequest, UpdateWorkspaceRequest,
+    },
     service,
 };
 

@@ -7,17 +7,25 @@ use crate::{
     modules::{
         activity::repo::{record_activity, NewActivityEntry},
         audit::repo::{record_audit, NewAuditLogEntry},
-        common::{card_board_and_workspace_id, normalize_limit, require_workspace_access, require_workspace_admin},
+        common::{
+            card_board_and_workspace_id, normalize_limit, require_workspace_access,
+            require_workspace_admin,
+        },
     },
 };
 
-use super::dto::{CommentListResponse, CommentResponse, CreateCommentRequest, ListCommentsQuery, PageInfo, UpdateCommentRequest};
+use super::dto::{
+    CommentListResponse, CommentResponse, CreateCommentRequest, ListCommentsQuery, PageInfo,
+    UpdateCommentRequest,
+};
 
 fn map_comment(row: &sqlx::postgres::PgRow) -> AppResult<CommentResponse> {
     Ok(CommentResponse {
         id: row.try_get::<Uuid, _>("id")?.to_string(),
         card_id: row.try_get::<Uuid, _>("card_id")?.to_string(),
-        author_user_id: row.try_get::<Option<Uuid>, _>("author_user_id")?.map(|id| id.to_string()),
+        author_user_id: row
+            .try_get::<Option<Uuid>, _>("author_user_id")?
+            .map(|id| id.to_string()),
         body: row.try_get("body")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
@@ -65,7 +73,11 @@ async fn comment_context(pool: &PgPool, comment_id: Uuid) -> AppResult<(Uuid, Uu
     .await?
     .ok_or_else(|| AppError::not_found("Comment not found"))?;
 
-    Ok((row.try_get("card_id")?, row.try_get("board_id")?, row.try_get("workspace_id")?))
+    Ok((
+        row.try_get("card_id")?,
+        row.try_get("board_id")?,
+        row.try_get("workspace_id")?,
+    ))
 }
 
 fn encode_cursor(created_at: &str, id: &str) -> String {
@@ -104,12 +116,18 @@ pub async fn list_comments(
     .fetch_all(pool)
     .await?;
 
-    let mut items = rows.iter().map(map_comment).collect::<AppResult<Vec<_>>>()?;
+    let mut items = rows
+        .iter()
+        .map(map_comment)
+        .collect::<AppResult<Vec<_>>>()?;
     let has_more = items.len() as i64 > limit;
     if has_more {
         items.truncate(limit as usize);
     }
-    let next_cursor = items.last().filter(|_| has_more).map(|comment| encode_cursor(&comment.created_at, &comment.id));
+    let next_cursor = items
+        .last()
+        .filter(|_| has_more)
+        .map(|comment| encode_cursor(&comment.created_at, &comment.id));
 
     Ok(CommentListResponse {
         items,
@@ -195,7 +213,11 @@ pub async fn update_comment(
     Ok(comment)
 }
 
-pub async fn delete_comment(pool: &PgPool, actor_user_id: Uuid, comment_id: Uuid) -> AppResult<CommentResponse> {
+pub async fn delete_comment(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    comment_id: Uuid,
+) -> AppResult<CommentResponse> {
     let (card_id, board_id, workspace_id) = comment_context(pool, comment_id).await?;
     require_workspace_admin(pool, workspace_id, actor_user_id).await?;
     let comment = fetch_comment(pool, comment_id).await?;

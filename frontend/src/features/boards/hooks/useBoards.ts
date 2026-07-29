@@ -9,6 +9,8 @@ export function useBoardsQuery(workspaceId?: string) {
     queryKey: boardsQueryKey(workspaceId),
     queryFn: () => getBoards(workspaceId!),
     enabled: Boolean(workspaceId),
+    refetchInterval: 6_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -17,6 +19,8 @@ export function useBoardQuery(boardId?: string) {
     queryKey: boardDetailQueryKey(boardId),
     queryFn: () => getBoard(boardId!),
     enabled: Boolean(boardId),
+    refetchInterval: 6_000,
+    refetchIntervalInBackground: false,
   });
 }
 

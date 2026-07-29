@@ -28,11 +28,13 @@ pub struct TokenPair {
 
 impl AccessTokenClaims {
     pub fn user_id(&self) -> AppResult<Uuid> {
-        Uuid::parse_str(&self.sub).map_err(|_| AppError::unauthorized("Invalid access token subject"))
+        Uuid::parse_str(&self.sub)
+            .map_err(|_| AppError::unauthorized("Invalid access token subject"))
     }
 
     pub fn session_id(&self) -> AppResult<Uuid> {
-        Uuid::parse_str(&self.sid).map_err(|_| AppError::unauthorized("Invalid access token session"))
+        Uuid::parse_str(&self.sid)
+            .map_err(|_| AppError::unauthorized("Invalid access token session"))
     }
 
     pub fn device_id(&self) -> AppResult<Option<Uuid>> {
@@ -61,7 +63,8 @@ pub fn sign_access_token(secret: &str, claims: &AccessTokenClaims) -> AppResult<
     let payload = serde_json::to_vec(claims).map_err(|_| AppError::internal())?;
     let payload_b64 = URL_SAFE_NO_PAD.encode(payload);
 
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).map_err(|_| AppError::internal())?;
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).map_err(|_| AppError::internal())?;
     mac.update(payload_b64.as_bytes());
     let signature = mac.finalize().into_bytes();
     let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
@@ -75,9 +78,15 @@ pub fn verify_access_token(
     previous_secrets: &[String],
 ) -> AppResult<AccessTokenClaims> {
     let mut parts = token.split('.');
-    let version = parts.next().ok_or_else(|| AppError::unauthorized("Access token is missing version"))?;
-    let payload_b64 = parts.next().ok_or_else(|| AppError::unauthorized("Access token payload missing"))?;
-    let signature_b64 = parts.next().ok_or_else(|| AppError::unauthorized("Access token signature missing"))?;
+    let version = parts
+        .next()
+        .ok_or_else(|| AppError::unauthorized("Access token is missing version"))?;
+    let payload_b64 = parts
+        .next()
+        .ok_or_else(|| AppError::unauthorized("Access token payload missing"))?;
+    let signature_b64 = parts
+        .next()
+        .ok_or_else(|| AppError::unauthorized("Access token signature missing"))?;
 
     if version != "v1" || parts.next().is_some() {
         return Err(AppError::unauthorized("Access token format is invalid"));
@@ -87,7 +96,8 @@ pub fn verify_access_token(
         .decode(signature_b64)
         .map_err(|_| AppError::unauthorized("Access token signature is invalid"))?;
 
-    let mut secrets = std::iter::once(current_secret).chain(previous_secrets.iter().map(String::as_str));
+    let mut secrets =
+        std::iter::once(current_secret).chain(previous_secrets.iter().map(String::as_str));
     let valid_signature = secrets.any(|secret| {
         let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
             return false;

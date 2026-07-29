@@ -61,15 +61,10 @@ async fn setup() -> anyhow::Result<(PgPool, axum::Router)> {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .or_else(|_| Settings::load().map(|settings| settings.database.url))
-        .expect(
-            "TEST_DATABASE_URL, DATABASE_URL, or DATABASE__URL via Settings::load must be set",
-        );
+        .expect("TEST_DATABASE_URL, DATABASE_URL, or DATABASE__URL via Settings::load must be set");
     let pool = PgPool::connect(&database_url).await?;
     MIGRATOR.run(&pool).await?;
-    let app = build_app(AppState::new(
-        test_settings(database_url),
-        pool.clone(),
-    ));
+    let app = build_app(AppState::new(test_settings(database_url), pool.clone()));
     Ok((pool, app))
 }
 
@@ -127,8 +122,12 @@ async fn android_native_auth_flow() -> anyhow::Result<()> {
     let first = &signed_up["data"];
     assert_eq!(first["authenticated"], json!(true));
     assert_eq!(first["mode"], json!("native_refresh_token_plus_bearer"));
-    assert!(first["accessToken"].as_str().is_some_and(|value| !value.is_empty()));
-    assert!(first["refreshToken"].as_str().is_some_and(|value| !value.is_empty()));
+    assert!(first["accessToken"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert!(first["refreshToken"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
 
     let refreshed = request_json(
         &app,

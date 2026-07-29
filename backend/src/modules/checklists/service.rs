@@ -1,10 +1,13 @@
 use uuid::Uuid;
 
-use crate::{error::{AppError, AppResult}, state::AppState};
+use crate::{
+    error::{AppError, AppResult},
+    state::AppState,
+};
 
 use super::dto::{
-    ChecklistItemResponse, ChecklistListResponse, ChecklistResponse, CreateChecklistItemRequest, CreateChecklistRequest,
-    UpdateChecklistItemRequest, UpdateChecklistRequest,
+    ChecklistItemResponse, ChecklistListResponse, ChecklistResponse, CreateChecklistItemRequest,
+    CreateChecklistRequest, UpdateChecklistItemRequest, UpdateChecklistRequest,
 };
 
 fn validate_title(value: &str, label: &str) -> AppResult<()> {
@@ -16,7 +19,9 @@ fn validate_title(value: &str, label: &str) -> AppResult<()> {
 
 fn validate_position(value: Option<f64>, label: &str) -> AppResult<()> {
     if matches!(value, Some(position) if !position.is_finite()) {
-        return Err(AppError::bad_request(format!("{label} must be a finite number")));
+        return Err(AppError::bad_request(format!(
+            "{label} must be a finite number"
+        )));
     }
     Ok(())
 }

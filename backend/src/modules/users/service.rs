@@ -12,6 +12,10 @@ pub async fn list_devices(state: &AppState, actor_user_id: Uuid) -> AppResult<Ve
     super::repo::list_devices(&state.db, actor_user_id).await
 }
 
-pub async fn revoke_device(state: &AppState, actor_user_id: Uuid, device_id: Uuid) -> AppResult<()> {
+pub async fn revoke_device(
+    state: &AppState,
+    actor_user_id: Uuid,
+    device_id: Uuid,
+) -> AppResult<()> {
     super::repo::revoke_device(&state.db, actor_user_id, device_id).await
 }

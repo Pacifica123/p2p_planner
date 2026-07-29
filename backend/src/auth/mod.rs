@@ -4,7 +4,10 @@ pub mod repo;
 pub mod service;
 pub mod token;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 
 use crate::state::AppState;
 

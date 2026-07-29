@@ -1,8 +1,14 @@
 use uuid::Uuid;
 
-use crate::{error::{AppError, AppResult}, state::AppState};
+use crate::{
+    error::{AppError, AppResult},
+    state::AppState,
+};
 
-use super::dto::{CommentListResponse, CommentResponse, CreateCommentRequest, ListCommentsQuery, UpdateCommentRequest};
+use super::dto::{
+    CommentListResponse, CommentResponse, CreateCommentRequest, ListCommentsQuery,
+    UpdateCommentRequest,
+};
 
 fn validate_body(body: &str) -> AppResult<()> {
     if body.trim().is_empty() {

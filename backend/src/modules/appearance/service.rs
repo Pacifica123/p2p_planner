@@ -19,17 +19,25 @@ const CARD_PREVIEW_MODES: &[&str] = &["compact", "expanded"];
 const CHECKLIST_ITEM_SUBMIT_MODES: &[&str] = &["ctrl_enter", "enter", "button"];
 const CARD_DETAILS_MODES: &[&str] = &["drawer", "modal"];
 
-fn normalize_choice(value: Option<String>, allowed: &[&str], field_name: &str) -> AppResult<Option<String>> {
+fn normalize_choice(
+    value: Option<String>,
+    allowed: &[&str],
+    field_name: &str,
+) -> AppResult<Option<String>> {
     let Some(value) = value else {
         return Ok(None);
     };
 
     let normalized = value.trim().to_ascii_lowercase();
     if normalized.is_empty() {
-        return Err(AppError::bad_request(format!("{field_name} cannot be empty")));
+        return Err(AppError::bad_request(format!(
+            "{field_name} cannot be empty"
+        )));
     }
     if !allowed.contains(&normalized.as_str()) {
-        return Err(AppError::bad_request(format!("{field_name} has unsupported value")));
+        return Err(AppError::bad_request(format!(
+            "{field_name} has unsupported value"
+        )));
     }
     Ok(Some(normalized))
 }
@@ -55,7 +63,9 @@ fn normalize_custom_properties(value: Option<Value>) -> AppResult<Option<Value>>
     };
 
     if !value.is_object() {
-        return Err(AppError::bad_request("customProperties must be a JSON object"));
+        return Err(AppError::bad_request(
+            "customProperties must be a JSON object",
+        ));
     }
     if let Some(accent_color) = value.get("accentColor") {
         let is_hex_color = accent_color
@@ -63,7 +73,9 @@ fn normalize_custom_properties(value: Option<Value>) -> AppResult<Option<Value>>
             .map(|color| {
                 color.len() == 7
                     && color.starts_with('#')
-                    && color[1..].chars().all(|character| character.is_ascii_hexdigit())
+                    && color[1..]
+                        .chars()
+                        .all(|character| character.is_ascii_hexdigit())
             })
             .unwrap_or(false);
         if !is_hex_color {
@@ -94,8 +106,11 @@ pub async fn upsert_my_preferences(
         CHECKLIST_ITEM_SUBMIT_MODES,
         "checklistItemSubmitMode",
     )?;
-    let card_details_mode =
-        normalize_choice(payload.card_details_mode, CARD_DETAILS_MODES, "cardDetailsMode")?;
+    let card_details_mode = normalize_choice(
+        payload.card_details_mode,
+        CARD_DETAILS_MODES,
+        "cardDetailsMode",
+    )?;
 
     super::repo::upsert_my_preferences(
         &state.db,
@@ -125,8 +140,11 @@ pub async fn upsert_board_appearance(
 ) -> AppResult<BoardAppearanceResponse> {
     let theme_preset = normalize_theme_preset(payload.theme_preset)?;
     let column_density = normalize_choice(payload.column_density, DENSITIES, "columnDensity")?;
-    let card_preview_mode =
-        normalize_choice(payload.card_preview_mode, CARD_PREVIEW_MODES, "cardPreviewMode")?;
+    let card_preview_mode = normalize_choice(
+        payload.card_preview_mode,
+        CARD_PREVIEW_MODES,
+        "cardPreviewMode",
+    )?;
     let custom_properties = normalize_custom_properties(payload.custom_properties)?;
 
     let (wallpaper_changed, wallpaper_kind, wallpaper_value) = match payload.wallpaper {

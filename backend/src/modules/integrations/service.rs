@@ -139,7 +139,8 @@ pub async fn create_portable_export(
     )
     .await?;
 
-    let workspace_id = workspace_id.ok_or_else(|| AppError::bad_request("Resolved workspaceId is required"))?;
+    let workspace_id =
+        workspace_id.ok_or_else(|| AppError::bad_request("Resolved workspaceId is required"))?;
     let bundle = build_portable_bundle(
         &state.db,
         actor_user_id,
@@ -216,15 +217,24 @@ pub async fn preview_import_bundle(
     let manifest = manifest_from_preview_payload(&payload)?;
     let requires_manual_review = payload.restore_strategy == "merge_review";
     let mut warnings = Vec::new();
-    let (status, detected_format, detected_format_version, summary) = if let Some(manifest) = manifest {
+    let (status, detected_format, detected_format_version, summary) = if let Some(manifest) =
+        manifest
+    {
         if manifest.format != PORTABLE_BUNDLE_FORMAT {
-            return Err(AppError::bad_request("bundle manifest format is not supported"));
+            return Err(AppError::bad_request(
+                "bundle manifest format is not supported",
+            ));
         }
         if manifest.format_version != PORTABLE_BUNDLE_FORMAT_VERSION {
-            return Err(AppError::bad_request("bundle manifest formatVersion is not supported"));
+            return Err(AppError::bad_request(
+                "bundle manifest formatVersion is not supported",
+            ));
         }
         if manifest.includes_local_metadata {
-            warnings.push("Bundle contains local metadata; v1 backend preview ignores local-only sections.".to_string());
+            warnings.push(
+                "Bundle contains local metadata; v1 backend preview ignores local-only sections."
+                    .to_string(),
+            );
         }
         if manifest.summary.includes_attachments {
             warnings.push("Attachment payloads are not restored in v1.".to_string());
@@ -369,7 +379,8 @@ async fn build_portable_bundle(
         labels: export_labels(pool, workspace_id, board_id, include_archived).await?,
         card_labels: export_card_labels(pool, workspace_id, board_id, include_archived).await?,
         checklists: export_checklists(pool, workspace_id, board_id, include_archived).await?,
-        checklist_items: export_checklist_items(pool, workspace_id, board_id, include_archived).await?,
+        checklist_items: export_checklist_items(pool, workspace_id, board_id, include_archived)
+            .await?,
         comments: export_comments(pool, workspace_id, board_id, include_archived).await?,
         board_appearance_settings: if include_appearance {
             export_board_appearance(pool, workspace_id, board_id, include_archived).await?
@@ -975,7 +986,9 @@ fn validate_json_object(value: &Value, field_name: &str) -> AppResult<()> {
     if value.is_null() || value.is_object() {
         Ok(())
     } else {
-        Err(AppError::bad_request(format!("{field_name} must be a JSON object")))
+        Err(AppError::bad_request(format!(
+            "{field_name} must be a JSON object"
+        )))
     }
 }
 
@@ -1024,8 +1037,9 @@ async fn resolve_export_scope_access(
 ) -> AppResult<(Option<Uuid>, Option<Uuid>)> {
     match scope_kind {
         "workspace" => {
-            let workspace_id = workspace_id
-                .ok_or_else(|| AppError::bad_request("workspaceId is required when scopeKind=workspace"))?;
+            let workspace_id = workspace_id.ok_or_else(|| {
+                AppError::bad_request("workspaceId is required when scopeKind=workspace")
+            })?;
             require_workspace_access(&state.db, workspace_id, actor_user_id).await?;
             Ok((Some(workspace_id), None))
         }

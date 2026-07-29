@@ -4,12 +4,14 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    modules::common::{board_workspace_id, card_board_and_workspace_id, normalize_limit, require_workspace_access},
+    modules::common::{
+        board_workspace_id, card_board_and_workspace_id, normalize_limit, require_workspace_access,
+    },
 };
 
 use super::dto::{
-    ActivityActorResponse, ActivityEntryResponse, ActivityListResponse,
-    BoardProductivityResponse, ListActivityQuery, ProductivityDayResponse,
+    ActivityActorResponse, ActivityEntryResponse, ActivityListResponse, BoardProductivityResponse,
+    ListActivityQuery, ProductivityDayResponse,
 };
 
 const BOARD_FEED_KINDS: &[&str] = &[
@@ -76,7 +78,9 @@ fn decode_cursor(cursor: Option<&str>) -> AppResult<(Option<String>, Option<Uuid
     let id = parts
         .next()
         .ok_or_else(|| AppError::bad_request("Invalid cursor"))
-        .and_then(|value| Uuid::parse_str(value).map_err(|_| AppError::bad_request("Invalid cursor")))?;
+        .and_then(|value| {
+            Uuid::parse_str(value).map_err(|_| AppError::bad_request("Invalid cursor"))
+        })?;
 
     Ok((Some(created_at), Some(id)))
 }
@@ -105,7 +109,6 @@ fn normalize_kinds(mut kinds: Option<Vec<String>>) -> Option<Vec<String>> {
         Some(values.clone())
     }
 }
-
 
 fn redact_string(value: &str) -> Value {
     if value.len() > 256 {
@@ -159,16 +162,22 @@ fn map_activity_entry(row: &sqlx::postgres::PgRow) -> AppResult<ActivityEntryRes
         kind: row.try_get("kind")?,
         workspace_id: row.try_get::<Uuid, _>("workspace_id")?.to_string(),
         board_id: row.try_get::<Uuid, _>("board_id")?.to_string(),
-        card_id: row.try_get::<Option<Uuid>, _>("card_id")?.map(|id| id.to_string()),
+        card_id: row
+            .try_get::<Option<Uuid>, _>("card_id")?
+            .map(|id| id.to_string()),
         entity_type: row.try_get("entity_type")?,
         entity_id: row.try_get::<Uuid, _>("entity_id")?.to_string(),
         actor: ActivityActorResponse {
-            user_id: row.try_get::<Option<Uuid>, _>("actor_user_id")?.map(|id| id.to_string()),
+            user_id: row
+                .try_get::<Option<Uuid>, _>("actor_user_id")?
+                .map(|id| id.to_string()),
             display_name: row.try_get("actor_display_name")?,
         },
         field_mask: row.try_get::<Vec<String>, _>("field_mask")?,
         payload: row.try_get::<Value, _>("payload_jsonb")?,
-        request_id: row.try_get::<Option<Uuid>, _>("request_id")?.map(|id| id.to_string()),
+        request_id: row
+            .try_get::<Option<Uuid>, _>("request_id")?
+            .map(|id| id.to_string()),
     })
 }
 
@@ -278,7 +287,12 @@ pub async fn list_board_activity(
     let actor_filter = parse_actor_user_id(query.actor_user_id)?;
     let mut kinds = normalize_kinds(query.kinds);
     if kinds.is_none() {
-        kinds = Some(BOARD_FEED_KINDS.iter().map(|value| value.to_string()).collect());
+        kinds = Some(
+            BOARD_FEED_KINDS
+                .iter()
+                .map(|value| value.to_string())
+                .collect(),
+        );
     }
 
     let rows = sqlx::query(
@@ -316,15 +330,20 @@ pub async fn list_board_activity(
     .fetch_all(pool)
     .await?;
 
-    let mut items = rows.iter().map(map_activity_entry).collect::<AppResult<Vec<_>>>()?;
+    let mut items = rows
+        .iter()
+        .map(map_activity_entry)
+        .collect::<AppResult<Vec<_>>>()?;
     let has_more = items.len() as i64 > limit;
     if has_more {
         items.truncate(limit as usize);
     }
-    let next_cursor = items
-        .last()
-        .filter(|_| has_more)
-        .map(|item| encode_cursor(&item.created_at, Uuid::parse_str(&item.id).expect("valid uuid")));
+    let next_cursor = items.last().filter(|_| has_more).map(|item| {
+        encode_cursor(
+            &item.created_at,
+            Uuid::parse_str(&item.id).expect("valid uuid"),
+        )
+    });
 
     Ok(ActivityListResponse { items, next_cursor })
 }
@@ -378,15 +397,20 @@ pub async fn list_card_activity(
     .fetch_all(pool)
     .await?;
 
-    let mut items = rows.iter().map(map_activity_entry).collect::<AppResult<Vec<_>>>()?;
+    let mut items = rows
+        .iter()
+        .map(map_activity_entry)
+        .collect::<AppResult<Vec<_>>>()?;
     let has_more = items.len() as i64 > limit;
     if has_more {
         items.truncate(limit as usize);
     }
-    let next_cursor = items
-        .last()
-        .filter(|_| has_more)
-        .map(|item| encode_cursor(&item.created_at, Uuid::parse_str(&item.id).expect("valid uuid")));
+    let next_cursor = items.last().filter(|_| has_more).map(|item| {
+        encode_cursor(
+            &item.created_at,
+            Uuid::parse_str(&item.id).expect("valid uuid"),
+        )
+    });
 
     Ok(ActivityListResponse { items, next_cursor })
 }
