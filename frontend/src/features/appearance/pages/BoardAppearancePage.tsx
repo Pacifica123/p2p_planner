@@ -12,6 +12,7 @@ import { useBoardAppearanceQuery, useUpdateBoardAppearanceMutation } from '@/fea
 import { paths } from '@/app/router/paths';
 import type { BoardAppearanceSettings, Density } from '@/shared/types/api';
 import { Icon } from '@/shared/ui/Icon';
+import { getBoardAccentColor } from '@/shared/appearance/theme';
 
 const presetWallpaperOptions = ['aurora', 'blueprint', 'canopy', 'sunrise', 'nebula'];
 
@@ -41,6 +42,37 @@ export function BoardAppearancePage() {
   }
 
   const currentDraft = draft;
+  const customAccentColor = getBoardAccentColor(currentDraft);
+
+  function setCustomAccentColor(value: string | null) {
+    const customProperties = { ...currentDraft.customProperties };
+    if (value) customProperties.accentColor = value;
+    else delete customProperties.accentColor;
+    setDraft({ ...currentDraft, customProperties });
+  }
+
+  function changeWallpaperKind(kind: BoardAppearanceSettings['wallpaper']['kind']) {
+    if (kind === 'none' || kind === 'accent') {
+      setDraft({ ...currentDraft, wallpaper: { kind, value: null } });
+      return;
+    }
+    if (kind === 'preset') {
+      setDraft({ ...currentDraft, wallpaper: { kind, value: 'aurora' } });
+      return;
+    }
+    if (kind === 'solid') {
+      setDraft({ ...currentDraft, wallpaper: { kind, value: '#0f172a' } });
+      return;
+    }
+    if (kind === 'gradient') {
+      setDraft({
+        ...currentDraft,
+        wallpaper: { kind, value: 'linear-gradient(135deg, #1e293b, #0f172a)' },
+      });
+      return;
+    }
+    setDraft({ ...currentDraft, wallpaper: { kind, value: '' } });
+  }
 
   async function handleSave() {
     await updateBoardAppearanceMutation.mutateAsync({
@@ -83,10 +115,39 @@ export function BoardAppearancePage() {
             <PresetPicker value={currentDraft.themePreset} onChange={(next) => setDraft({ ...currentDraft, themePreset: next })} />
           </Panel>
 
+          <Panel title="Акцентный цвет" description="Один цвет для колонок, карточек, прогресса и активных элементов.">
+            <div className="grid customization-form-grid">
+              <SelectField
+                label="Источник акцента"
+                value={customAccentColor ? 'custom' : 'preset'}
+                onChange={(event) => setCustomAccentColor(event.target.value === 'custom' ? '#60a5fa' : null)}
+              >
+                <option value="preset">Из цветовой схемы</option>
+                <option value="custom">Свой цвет</option>
+              </SelectField>
+              {customAccentColor ? (
+                <TextField
+                  label="Цвет"
+                  type="color"
+                  value={customAccentColor}
+                  onChange={(event) => setCustomAccentColor(event.target.value)}
+                />
+              ) : null}
+            </div>
+            <p className="muted accent-color-note">
+              В тёмной теме карточка становится темнее колонки, в светлой — светлее. Wallpaper при смене акцента сохраняется.
+            </p>
+          </Panel>
+
           <Panel title="Фон" description="Готовый фон, цвет, градиент или изображение по ссылке.">
             <div className="grid customization-form-grid">
-              <SelectField label="Тип фона" value={currentDraft.wallpaper.kind} onChange={(event) => setDraft({ ...currentDraft, wallpaper: { ...currentDraft.wallpaper, kind: event.target.value as BoardAppearanceSettings['wallpaper']['kind'], value: event.target.value === 'none' ? null : currentDraft.wallpaper.value } })}>
+              <SelectField
+                label="Тип фона"
+                value={currentDraft.wallpaper.kind}
+                onChange={(event) => changeWallpaperKind(event.target.value as BoardAppearanceSettings['wallpaper']['kind'])}
+              >
                 <option value="none">По схеме</option>
+                <option value="accent">От акцента</option>
                 <option value="solid">Цвет</option>
                 <option value="gradient">Градиент</option>
                 <option value="preset">Готовый фон</option>
@@ -99,7 +160,7 @@ export function BoardAppearancePage() {
                     <option key={option} value={option}>{option}</option>
                   ))}
                 </SelectField>
-              ) : currentDraft.wallpaper.kind !== 'none' ? (
+              ) : currentDraft.wallpaper.kind !== 'none' && currentDraft.wallpaper.kind !== 'accent' ? (
                 <TextField
                   label={currentDraft.wallpaper.kind === 'solid'
                     ? 'CSS-цвет'

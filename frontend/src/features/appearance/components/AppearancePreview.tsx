@@ -1,6 +1,6 @@
 import { useAppearance } from '@/app/providers/AppearanceProvider';
 import { Badge } from '@/shared/ui/Badge';
-import { getBoardPresetDefinition, getBoardSurfaceStyle } from '@/shared/appearance/theme';
+import { getBoardAccentColor, getBoardPresetDefinition, getBoardSurfaceStyle } from '@/shared/appearance/theme';
 import type { BoardAppearanceSettings, UserAppearancePreferences } from '@/shared/types/api';
 
 const themeLabels: Record<string, string> = {
@@ -17,6 +17,17 @@ const densityLabels: Record<string, string> = {
 const cardModeLabels: Record<string, string> = {
   compact: 'компактные',
   expanded: 'подробные',
+};
+
+const checklistSubmitModeLabels: Record<string, string> = {
+  ctrl_enter: 'Ctrl+Enter',
+  enter: 'Enter',
+  button: 'только «+»',
+};
+
+const cardDetailsModeLabels: Record<string, string> = {
+  drawer: 'сбоку',
+  modal: 'по центру',
 };
 
 export function AppAppearancePreview({ appearance }: { appearance: UserAppearancePreferences }) {
@@ -51,10 +62,14 @@ export function AppAppearancePreview({ appearance }: { appearance: UserAppearanc
               <p className="muted">Тема и плотность применяются сразу.</p>
             </div>
             <div className="app-preview-shell__panel">
-              <strong>Форма</strong>
+              <strong>Карточка</strong>
               <div className="app-preview-shell__chips">
-                <span className="badge badge--default">обычная</span>
-                <span className="badge badge--default">компактная</span>
+                <span className="badge badge--default">
+                  {cardDetailsModeLabels[appearance.cardDetailsMode] || appearance.cardDetailsMode}
+                </span>
+                <span className="badge badge--default">
+                  пункт: {checklistSubmitModeLabels[appearance.checklistItemSubmitMode] || appearance.checklistItemSubmitMode}
+                </span>
               </div>
             </div>
           </div>
@@ -67,6 +82,7 @@ export function AppAppearancePreview({ appearance }: { appearance: UserAppearanc
 export function BoardAppearancePreview({ appearance }: { appearance: BoardAppearanceSettings }) {
   const { resolvedTheme } = useAppearance();
   const preset = getBoardPresetDefinition(appearance.themePreset);
+  const accentColor = getBoardAccentColor(appearance);
   const cards = appearance.cardPreviewMode === 'compact' ? 2 : 3;
   return (
     <div className="appearance-preview-card">
@@ -77,10 +93,14 @@ export function BoardAppearancePreview({ appearance }: { appearance: BoardAppear
         </div>
         <div className="row-actions">
           <Badge tone="default">{preset.label}</Badge>
+          {accentColor ? <Badge tone="default">акцент {accentColor}</Badge> : null}
           <Badge tone={resolvedTheme}>{resolvedTheme === 'dark' ? 'тёмная' : 'светлая'}</Badge>
         </div>
       </div>
-      <div className="board-preview-surface" style={getBoardSurfaceStyle(appearance, resolvedTheme)}>
+      <div
+        className={`board-preview-surface ${appearance.wallpaper.kind === 'image' ? 'board-preview-surface--wallpaper-image' : ''}`}
+        style={getBoardSurfaceStyle(appearance, resolvedTheme)}
+      >
         <div className="board-preview-surface__topbar">
           <strong>План</strong>
           <div className="row-actions">

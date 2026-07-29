@@ -7,6 +7,8 @@ pub struct UpdateUserAppearancePreferencesRequest {
     pub app_theme: Option<String>,
     pub density: Option<String>,
     pub reduce_motion: Option<bool>,
+    pub checklist_item_submit_mode: Option<String>,
+    pub card_details_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +47,8 @@ pub struct UserAppearancePreferencesResponse {
     pub app_theme: String,
     pub density: String,
     pub reduce_motion: bool,
+    pub checklist_item_submit_mode: String,
+    pub card_details_mode: String,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }

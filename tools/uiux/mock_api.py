@@ -132,6 +132,8 @@ class MockApiHandler(BaseHTTPRequestHandler):
                         "appTheme": "system",
                         "density": "comfortable",
                         "reduceMotion": False,
+                        "checklistItemSubmitMode": "ctrl_enter",
+                        "cardDetailsMode": "drawer",
                         "createdAt": _now(),
                         "updatedAt": _now(),
                     }
@@ -200,7 +202,7 @@ class MockApiHandler(BaseHTTPRequestHandler):
                         "themePreset": "default",
                         "wallpaper": {"kind": "none", "value": None},
                         "columnDensity": "comfortable",
-                        "cardPreviewMode": "comfortable",
+                        "cardPreviewMode": "expanded",
                         "showCardDescription": True,
                         "showCardDates": True,
                         "showChecklistProgress": True,

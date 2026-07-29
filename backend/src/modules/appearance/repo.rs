@@ -20,6 +20,8 @@ fn map_user_preferences(row: &sqlx::postgres::PgRow) -> AppResult<UserAppearance
         app_theme: row.try_get("app_theme")?,
         density: row.try_get("density")?,
         reduce_motion: row.try_get("reduce_motion")?,
+        checklist_item_submit_mode: row.try_get("checklist_item_submit_mode")?,
+        card_details_mode: row.try_get("card_details_mode")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
@@ -58,6 +60,8 @@ pub async fn get_my_preferences(
           coalesce(p.app_theme, 'system') as app_theme,
           coalesce(p.density, 'comfortable') as density,
           coalesce(p.reduce_motion, false) as reduce_motion,
+          coalesce(p.checklist_item_submit_mode, 'ctrl_enter') as checklist_item_submit_mode,
+          coalesce(p.card_details_mode, 'drawer') as card_details_mode,
           (p.user_id is not null) as is_customized,
           case when p.created_at is null then null else to_char(p.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as created_at,
           case when p.updated_at is null then null else to_char(p.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as updated_at
@@ -80,29 +84,44 @@ pub async fn upsert_my_preferences(
     app_theme: Option<String>,
     density: Option<String>,
     reduce_motion: Option<bool>,
+    checklist_item_submit_mode: Option<String>,
+    card_details_mode: Option<String>,
 ) -> AppResult<UserAppearancePreferencesResponse> {
     ensure_user_exists(pool, actor_user_id).await?;
 
     let row = sqlx::query(
         r#"
-        insert into user_appearance_preferences (user_id, app_theme, density, reduce_motion)
+        insert into user_appearance_preferences (
+          user_id,
+          app_theme,
+          density,
+          reduce_motion,
+          checklist_item_submit_mode,
+          card_details_mode
+        )
         values (
           $1,
           coalesce($2, 'system'),
           coalesce($3, 'comfortable'),
-          coalesce($4, false)
+          coalesce($4, false),
+          coalesce($5, 'ctrl_enter'),
+          coalesce($6, 'drawer')
         )
         on conflict (user_id) do update
         set
           app_theme = coalesce($2, user_appearance_preferences.app_theme),
           density = coalesce($3, user_appearance_preferences.density),
           reduce_motion = coalesce($4, user_appearance_preferences.reduce_motion),
+          checklist_item_submit_mode = coalesce($5, user_appearance_preferences.checklist_item_submit_mode),
+          card_details_mode = coalesce($6, user_appearance_preferences.card_details_mode),
           updated_at = now()
         returning
           user_id,
           app_theme,
           density,
           reduce_motion,
+          checklist_item_submit_mode,
+          card_details_mode,
           true as is_customized,
           to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at,
           to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as updated_at
@@ -112,6 +131,8 @@ pub async fn upsert_my_preferences(
     .bind(app_theme)
     .bind(density)
     .bind(reduce_motion)
+    .bind(checklist_item_submit_mode)
+    .bind(card_details_mode)
     .fetch_one(pool)
     .await?;
 

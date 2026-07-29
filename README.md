@@ -196,6 +196,13 @@ npm run dev
 python -B tools/check_zero_config_bootstrap.py
 ```
 
+Проверка web-контракта beta.5:
+
+```bash
+python -B tools/check_mobile_web_feature_contract.py
+python -B tools/check_web_customization_part2_contract.py
+```
+
 Полный набор локальных release gates:
 
 ```bash

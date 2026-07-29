@@ -1,13 +1,13 @@
 # Appearance / customization v1
 
 - Статус: базовая реализация готова
-- Дата актуализации: 2026-07-25
+- Дата актуализации: 2026-07-29
 
 ## Зачем нужен этот документ
 
 Документ фиксирует реализованный минимальный backend/frontend slice настройки
-внешнего вида. Произвольные темы, загружаемые обои и asset-management всё ещё
-отложены.
+внешнего вида. Файловое хранилище обоев и произвольный CSS всё ещё отложены,
+но wallpaper по HTTP(S)-ссылке уже входит в рабочий срез.
 
 ## Принятый v1-срез
 
@@ -16,6 +16,8 @@
 - `app_theme`
 - `density`
 - `reduce_motion`
+- `checklist_item_submit_mode`: `ctrl_enter | enter | button`
+- `card_details_mode`: `drawer | modal`
 
 Это настройки пользователя, а не workspace или board.
 
@@ -27,7 +29,7 @@
 - `column_density`
 - `card_preview_mode`
 - display toggles
-- `custom_properties_jsonb`
+- `custom_properties_jsonb`, где `accentColor` имеет форму `#RRGGBB`
 
 ## Почему отдельный модуль `appearance`
 
@@ -63,11 +65,13 @@ backend возвращает дефолты.
   - `GET` требует обычного доступа к workspace;
   - `PUT` требует `owner | admin`.
 
-## Почему нет загрузки изображений
+## Wallpaper и акцент
 
-Ранее в MVP не брались attachments и asset-management. Поэтому image-based
-wallpapers пока сознательно не реализуем. Backend хранит preset/solid/gradient
-конфигурацию, а не ссылку на загруженный файл.
+Backend хранит `none | accent | solid | gradient | preset | image`. Для
+`image` сохраняется только HTTP(S)-ссылка, а не файл. Для `accent` значение
+wallpaper остаётся `null`: клиент строит фон из текущего акцента. Сам акцент
+лежит в переносимом `custom_properties_jsonb`, поэтому он входит в board backup
+и не заменяет уже выбранный wallpaper.
 
 ## Почему `theme_preset` — строка, а не enum
 
@@ -89,4 +93,5 @@ transport-режима, но должны оставаться sync-friendly: о
 - merge policy для конфликтов appearance на нескольких клиентах;
 - пользовательские overrides поверх shared board appearance;
 - asset-backed wallpapers;
+- файловое хранилище wallpaper;
 - UI-конструктор тем.

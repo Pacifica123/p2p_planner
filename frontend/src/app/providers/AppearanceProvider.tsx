@@ -54,6 +54,8 @@ export function AppearanceProvider({ children }: PropsWithChildren) {
 
     root.dataset.density = appearance.density;
     root.dataset.reduceMotion = String(appearance.reduceMotion);
+    root.dataset.checklistItemSubmitMode = appearance.checklistItemSubmitMode;
+    root.dataset.cardDetailsMode = appearance.cardDetailsMode;
   }, [effectiveUserAppearance, resolvedTheme]);
 
   const value = useMemo<AppearanceContextValue>(

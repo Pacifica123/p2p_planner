@@ -276,15 +276,50 @@ export function getBoardPresetPreview(presetId: string | null | undefined, theme
   return resolvePresetPreview(preset, themeMode);
 }
 
+export function getBoardAccentColor(appearance: Pick<BoardAppearanceSettings, 'customProperties'>) {
+  const value = appearance.customProperties?.accentColor;
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
+}
+
+function getAccentPalette(accentColor: string, themeMode: ResolvedThemeMode): CssVariableMap {
+  if (themeMode === 'light') {
+    return {
+      '--bg-elevated': `color-mix(in srgb, ${accentColor} 10%, #ffffff)`,
+      '--bg-soft': `color-mix(in srgb, ${accentColor} 18%, #e8eef5)`,
+      '--bg-card': `color-mix(in srgb, ${accentColor} 7%, #ffffff)`,
+      '--surface-border': `color-mix(in srgb, ${accentColor} 28%, rgba(71, 85, 105, 0.22))`,
+      '--surface-strong': `color-mix(in srgb, ${accentColor} 42%, rgba(71, 85, 105, 0.24))`,
+      '--accent': accentColor,
+      '--accent-strong': `color-mix(in srgb, ${accentColor} 82%, #111827)`,
+    };
+  }
+
+  return {
+    '--bg-elevated': `color-mix(in srgb, ${accentColor} 19%, #0b1220)`,
+    '--bg-soft': `color-mix(in srgb, ${accentColor} 25%, #101827)`,
+    '--bg-card': `color-mix(in srgb, ${accentColor} 14%, #050914)`,
+    '--surface-border': `color-mix(in srgb, ${accentColor} 30%, rgba(148, 163, 184, 0.15))`,
+    '--surface-strong': `color-mix(in srgb, ${accentColor} 48%, rgba(148, 163, 184, 0.18))`,
+    '--accent': accentColor,
+    '--accent-strong': `color-mix(in srgb, ${accentColor} 78%, #ffffff)`,
+  };
+}
+
 export function getWallpaperBackground(
   wallpaper: WallpaperConfig,
   presetId?: string | null,
   themeMode: ResolvedThemeMode = 'dark',
+  accentColor?: string | null,
 ) {
   const preset = getBoardPresetDefinition(presetId);
   const presetWallpaperKey = resolvePresetWallpaperKey(preset, themeMode);
 
   if (wallpaper.kind === 'none') return resolvePresetPreview(preset, themeMode);
+  if (wallpaper.kind === 'accent') {
+    const accent = accentColor || resolvePresetVariables(preset, themeMode)['--accent'];
+    const base = themeMode === 'light' ? '#f8fafc' : '#070b14';
+    return `radial-gradient(circle at top left, color-mix(in srgb, ${accent} 34%, transparent), transparent 38%), linear-gradient(145deg, color-mix(in srgb, ${accent} 18%, ${base}), ${base})`;
+  }
   if ((wallpaper.kind === 'solid' || wallpaper.kind === 'gradient') && wallpaper.value) return wallpaper.value;
   if (wallpaper.kind === 'preset' && wallpaper.value) {
     return WALLPAPER_PRESETS[wallpaper.value]?.[themeMode]
@@ -299,15 +334,28 @@ export function getBoardSurfaceStyle(
   themeMode: ResolvedThemeMode = 'dark',
 ): CSSProperties {
   const preset = getBoardPresetDefinition(appearance.themePreset);
+  const accentColor = getBoardAccentColor(appearance);
   const style: CSSProperties & CssVariableMap = {
     ...resolvePresetVariables(preset, themeMode),
-    background: getWallpaperBackground(appearance.wallpaper, appearance.themePreset, themeMode),
+    ...(accentColor ? getAccentPalette(accentColor, themeMode) : {}),
+    background: getWallpaperBackground(
+      appearance.wallpaper,
+      appearance.themePreset,
+      themeMode,
+      accentColor,
+    ),
     '--board-column-width': appearance.columnDensity === 'compact' ? '280px' : '320px',
     '--board-card-gap': appearance.columnDensity === 'compact' ? '10px' : '12px',
+    '--board-info-scrim': themeMode === 'light'
+      ? 'rgba(255, 255, 255, 0.76)'
+      : 'rgba(2, 6, 23, 0.68)',
   };
   if (appearance.wallpaper.kind === 'image' && appearance.wallpaper.value) {
     style.backgroundColor = resolvePresetVariables(preset, themeMode)['--bg'];
-    style.backgroundImage = `linear-gradient(rgba(2, 6, 23, 0.28), rgba(2, 6, 23, 0.28)), url(${JSON.stringify(appearance.wallpaper.value)})`;
+    const imageWash = themeMode === 'light'
+      ? 'rgba(255, 255, 255, 0.08)'
+      : 'rgba(2, 6, 23, 0.12)';
+    style.backgroundImage = `linear-gradient(${imageWash}, ${imageWash}), url(${JSON.stringify(appearance.wallpaper.value)})`;
     style.backgroundPosition = 'center';
     style.backgroundRepeat = 'no-repeat';
     style.backgroundSize = 'cover';

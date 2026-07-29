@@ -231,17 +231,17 @@ function parseAppearance(rows: JsonObject[], boardId: string, warnings: string[]
 
   const wallpaperKind = optionalString(row, 'wallpaperKind');
   const wallpaperValue = optionalString(row, 'wallpaperValue');
-  const allowedWallpaperKinds = new Set(['none', 'solid', 'gradient', 'preset']);
+  const allowedWallpaperKinds = new Set(['none', 'accent', 'solid', 'gradient', 'preset', 'image']);
   const allowedDensities = new Set(['comfortable', 'compact']);
   const allowedCardModes = new Set(['compact', 'expanded']);
 
   let wallpaper: UpdateBoardAppearanceRequest['wallpaper'];
   if (wallpaperKind && allowedWallpaperKinds.has(wallpaperKind)) {
-    if (wallpaperKind === 'none') {
-      wallpaper = { kind: 'none' };
+    if (wallpaperKind === 'none' || wallpaperKind === 'accent') {
+      wallpaper = { kind: wallpaperKind };
     } else if (wallpaperValue) {
       wallpaper = {
-        kind: wallpaperKind as 'solid' | 'gradient' | 'preset',
+        kind: wallpaperKind as 'solid' | 'gradient' | 'preset' | 'image',
         value: wallpaperValue,
       };
     } else {

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useAppearance } from '@/app/providers/AppearanceProvider';
 import { useCardActivityQuery } from '@/features/activity/hooks/useActivity';
 import { ActivityFeed } from '@/features/activity/components/ActivityFeed';
 import {
@@ -44,6 +45,10 @@ import { Icon } from '@/shared/ui/Icon';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { formatDateTime } from '@/shared/lib/date';
 import type { BoardLabel, CardPriority, CardStatus, Checklist, ChecklistItem, Comment } from '@/shared/types/api';
+import {
+  checklistSubmitHint,
+  shouldSubmitChecklistItem,
+} from '@/features/checklists/lib/checklistComposer';
 
 const STATUS_OPTIONS = [
   { value: '', label: '—' },
@@ -68,6 +73,7 @@ export function CardDetailsDrawer() {
   const navigate = useNavigate();
   const { boardId, workspaceId } = useParams();
   const [searchParams] = useSearchParams();
+  const { effectiveUserAppearance } = useAppearance();
   const cardId = searchParams.get('card');
   const localFirst = useOptionalLocalFirstBoard();
   const effectiveCardId = cardId ? resolveLocalFirstCardId(cardId) : null;
@@ -116,6 +122,8 @@ export function CardDetailsDrawer() {
   const [newChecklistTitle, setNewChecklistTitle] = useState('');
   const [newItemByChecklist, setNewItemByChecklist] = useState<Record<string, string>>({});
   const [newCommentBody, setNewCommentBody] = useState('');
+  const checklistItemSubmitMode = effectiveUserAppearance?.checklistItemSubmitMode ?? 'ctrl_enter';
+  const cardDetailsMode = effectiveUserAppearance?.cardDetailsMode ?? 'drawer';
 
   useEffect(() => {
     if (!card) return;
@@ -144,6 +152,19 @@ export function CardDetailsDrawer() {
   function closeDrawer() {
     navigate(workspaceId && boardId ? `/workspaces/${workspaceId}/boards/${boardId}` : '/', { replace: true });
   }
+
+  useEffect(() => {
+    if (!cardId) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDrawer();
+    };
+    document.body.classList.add('has-card-dialog');
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.classList.remove('has-card-dialog');
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [boardId, cardId, workspaceId]);
 
   async function handleSave() {
     if (!card) return;
@@ -239,6 +260,23 @@ export function CardDetailsDrawer() {
     setNewItemByChecklist((current) => ({ ...current, [checklistId]: '' }));
   }
 
+  function handleChecklistItemKeyDown(
+    checklistId: string,
+    event: React.KeyboardEvent<HTMLInputElement>,
+  ) {
+    if (!shouldSubmitChecklistItem(checklistItemSubmitMode, {
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      isComposing: event.nativeEvent.isComposing,
+    })) return;
+    event.preventDefault();
+    if (createChecklistItemMutation.isPending) return;
+    void handleCreateChecklistItem(checklistId);
+  }
+
   async function handleToggleChecklistItem(item: ChecklistItem) {
     await updateChecklistItemMutation.mutateAsync({ itemId: item.id, input: { isDone: !item.isDone } });
   }
@@ -276,11 +314,23 @@ export function CardDetailsDrawer() {
   if (!cardId) return null;
 
   return (
-    <div className="drawer" onClick={closeDrawer}>
-      <aside className="drawer__surface" onClick={(event) => event.stopPropagation()}>
+    <div
+      className={`drawer drawer--${cardDetailsMode}`}
+      onClick={closeDrawer}
+      role="presentation"
+      data-testid="card-details-overlay"
+    >
+      <aside
+        className="drawer__surface"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="card-details-title"
+        data-testid="card-details-dialog"
+      >
         <div className="drawer__header">
           <div>
-            <h3>Карточка</h3>
+            <h3 id="card-details-title">Карточка</h3>
             <p className="muted">Описание, метки, чек-листы, комментарии и история.</p>
           </div>
           <Button variant="ghost" iconOnly onClick={closeDrawer} title="Закрыть" aria-label="Закрыть">
@@ -440,7 +490,9 @@ export function CardDetailsDrawer() {
                             label="Новый пункт"
                             value={newItemByChecklist[checklist.id] || ''}
                             onChange={(event) => setNewItemByChecklist((current) => ({ ...current, [checklist.id]: event.target.value }))}
+                            onKeyDown={(event) => handleChecklistItemKeyDown(checklist.id, event)}
                             placeholder="Сделать smoke"
+                            title={checklistSubmitHint(checklistItemSubmitMode)}
                           />
                           <Button type="button" variant="primary" iconOnly onClick={() => void handleCreateChecklistItem(checklist.id)} disabled={createChecklistItemMutation.isPending} title="Добавить пункт" aria-label="Добавить пункт"><Icon name="plus" size={16} /></Button>
                         </div>

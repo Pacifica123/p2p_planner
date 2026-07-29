@@ -191,7 +191,9 @@ export interface BoardProductivityResponse {
 
 export type AppTheme = 'system' | 'light' | 'dark';
 export type Density = 'comfortable' | 'compact';
-export type WallpaperKind = 'none' | 'solid' | 'gradient' | 'preset' | 'image';
+export type ChecklistItemSubmitMode = 'ctrl_enter' | 'enter' | 'button';
+export type CardDetailsMode = 'drawer' | 'modal';
+export type WallpaperKind = 'none' | 'accent' | 'solid' | 'gradient' | 'preset' | 'image';
 export type CardPreviewMode = 'compact' | 'expanded';
 
 export interface WallpaperConfig {
@@ -205,6 +207,8 @@ export interface UserAppearancePreferences {
   appTheme: AppTheme;
   density: Density;
   reduceMotion: boolean;
+  checklistItemSubmitMode: ChecklistItemSubmitMode;
+  cardDetailsMode: CardDetailsMode;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -213,6 +217,8 @@ export interface UpdateUserAppearancePreferencesRequest {
   appTheme?: AppTheme;
   density?: Density;
   reduceMotion?: boolean;
+  checklistItemSubmitMode?: ChecklistItemSubmitMode;
+  cardDetailsMode?: CardDetailsMode;
 }
 
 export interface BoardAppearanceSettings {

@@ -48,6 +48,8 @@ test('auth boot and workspace list smoke path stays alive', async ({ page }) => 
           appTheme: 'system',
           density: 'comfortable',
           reduceMotion: false,
+          checklistItemSubmitMode: 'ctrl_enter',
+          cardDetailsMode: 'drawer',
           createdAt: '2026-04-14T10:00:00Z',
           updatedAt: '2026-04-14T10:00:00Z',
         },

@@ -6,15 +6,28 @@ import type {
   UserAppearancePreferences,
 } from '@/shared/types/api';
 
-export function getMyAppearance() {
-  return apiRequest<UserAppearancePreferences>('/me/appearance');
+function normalizeUserAppearance(
+  value: UserAppearancePreferences,
+): UserAppearancePreferences {
+  return {
+    ...value,
+    checklistItemSubmitMode: value.checklistItemSubmitMode || 'ctrl_enter',
+    cardDetailsMode: value.cardDetailsMode || 'drawer',
+  };
 }
 
-export function updateMyAppearance(input: UpdateUserAppearancePreferencesRequest) {
-  return apiRequest<UserAppearancePreferences>('/me/appearance', {
+export async function getMyAppearance() {
+  return normalizeUserAppearance(
+    await apiRequest<UserAppearancePreferences>('/me/appearance'),
+  );
+}
+
+export async function updateMyAppearance(input: UpdateUserAppearancePreferencesRequest) {
+  const value = await apiRequest<UserAppearancePreferences>('/me/appearance', {
     method: 'PUT',
     body: JSON.stringify(input),
   });
+  return normalizeUserAppearance(value);
 }
 
 export function getBoardAppearance(boardId: string) {

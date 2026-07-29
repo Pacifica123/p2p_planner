@@ -2018,6 +2018,7 @@ components:
           type: string
           enum:
           - none
+          - accent
           - solid
           - gradient
           - preset
@@ -2034,6 +2035,8 @@ components:
       - appTheme
       - density
       - reduceMotion
+      - checklistItemSubmitMode
+      - cardDetailsMode
       properties:
         userId:
           type: string
@@ -2053,6 +2056,17 @@ components:
           - compact
         reduceMotion:
           type: boolean
+        checklistItemSubmitMode:
+          type: string
+          enum:
+          - ctrl_enter
+          - enter
+          - button
+        cardDetailsMode:
+          type: string
+          enum:
+          - drawer
+          - modal
         createdAt:
           type:
           - string
@@ -2080,6 +2094,17 @@ components:
           - compact
         reduceMotion:
           type: boolean
+        checklistItemSubmitMode:
+          type: string
+          enum:
+          - ctrl_enter
+          - enter
+          - button
+        cardDetailsMode:
+          type: string
+          enum:
+          - drawer
+          - modal
     BoardAppearanceSettings:
       type: object
       required:
@@ -2122,6 +2147,7 @@ components:
         customProperties:
           type: object
           additionalProperties: true
+          description: Optional board extensions. accentColor, when present, is a CSS #RRGGBB color.
         createdAt:
           type:
           - string

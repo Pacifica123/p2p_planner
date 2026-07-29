@@ -28,6 +28,8 @@ export function UserAppearancePage() {
         appTheme: draft.appTheme,
         density: draft.density,
         reduceMotion: draft.reduceMotion,
+        checklistItemSubmitMode: draft.checklistItemSubmitMode,
+        cardDetailsMode: draft.cardDetailsMode,
       });
     }
     return () => clearUserPreview();
@@ -37,7 +39,9 @@ export function UserAppearancePage() {
     if (!draft || !persistedUserAppearance) return false;
     return draft.appTheme !== persistedUserAppearance.appTheme
       || draft.density !== persistedUserAppearance.density
-      || draft.reduceMotion !== persistedUserAppearance.reduceMotion;
+      || draft.reduceMotion !== persistedUserAppearance.reduceMotion
+      || draft.checklistItemSubmitMode !== persistedUserAppearance.checklistItemSubmitMode
+      || draft.cardDetailsMode !== persistedUserAppearance.cardDetailsMode;
   }, [draft, persistedUserAppearance]);
 
   if (myAppearanceQuery.isLoading || !draft || !effectiveUserAppearance) {
@@ -55,6 +59,8 @@ export function UserAppearancePage() {
       appTheme: currentDraft.appTheme,
       density: currentDraft.density,
       reduceMotion: currentDraft.reduceMotion,
+      checklistItemSubmitMode: currentDraft.checklistItemSubmitMode,
+      cardDetailsMode: currentDraft.cardDetailsMode,
     });
     clearUserPreview();
   }
@@ -107,10 +113,39 @@ export function UserAppearancePage() {
             </div>
           </Panel>
 
+          <Panel title="Работа с карточками" description="Персональные привычки ввода и открытия карточки.">
+            <div className="grid customization-form-grid">
+              <SelectField
+                label="Добавление пункта чек-листа"
+                value={currentDraft.checklistItemSubmitMode}
+                onChange={(event) => setDraft({
+                  ...currentDraft,
+                  checklistItemSubmitMode: event.target.value as UserAppearancePreferences['checklistItemSubmitMode'],
+                })}
+              >
+                <option value="ctrl_enter">Ctrl+Enter</option>
+                <option value="enter">Enter</option>
+                <option value="button">Только кнопка «+»</option>
+              </SelectField>
+              <SelectField
+                label="Раскрытие карточки"
+                value={currentDraft.cardDetailsMode}
+                onChange={(event) => setDraft({
+                  ...currentDraft,
+                  cardDetailsMode: event.target.value as UserAppearancePreferences['cardDetailsMode'],
+                })}
+              >
+                <option value="drawer">Сбоку</option>
+                <option value="modal">По центру</option>
+              </SelectField>
+            </div>
+          </Panel>
+
           <Panel title="Как это работает">
             <ul className="rules-list">
               <li>Изменения сразу показываются в этой вкладке.</li>
               <li>Кнопка «Сохранить» переносит их на сервер.</li>
+              <li>Режимы карточки и чек-листа действуют на всех ваших досках.</li>
               <li>Сброс возвращает последнее сохранённое состояние.</li>
             </ul>
           </Panel>

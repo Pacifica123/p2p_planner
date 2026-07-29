@@ -7,7 +7,7 @@
 фиксируем **узкий, но рабочий customization slice**:
 - пользовательская тема приложения;
 - board appearance settings;
-- preset-based wallpapers без файловых загрузок;
+- wallpaper по preset, акценту или HTTP(S)-ссылке без файлового хранилища;
 - явная граница между пользовательскими предпочтениями и общими настройками доски.
 
 ## Что теперь реально входит в v1
@@ -16,10 +16,12 @@
 1. `UserAppearancePreferences` для текущего пользователя:
    - `app_theme`: `system | light | dark`;
    - `density`: `comfortable | compact`;
-   - `reduce_motion`.
+   - `reduce_motion`;
+   - `checklist_item_submit_mode`: `ctrl_enter | enter | button`;
+   - `card_details_mode`: `drawer | modal`.
 2. `BoardAppearanceSettings` для доски:
    - `theme_preset` как строковый preset id;
-   - `wallpaper` вида `none | solid | gradient | preset`;
+   - `wallpaper` вида `none | accent | solid | gradient | preset | image`;
    - `column_density`;
    - `card_preview_mode`;
    - флаги отображения описания, дат и прогресса чеклистов;
@@ -30,7 +32,7 @@
 ## Что сознательно не входит даже после этого этапа
 
 По-прежнему не входят в v1:
-- загрузка пользовательских изображений для обоев;
+- загрузка пользовательских изображений в хранилище приложения;
 - хранение файловых/asset wallpapers;
 - визуальный конструктор палитр и design tokens;
 - workspace-level inheritance UI;
@@ -78,10 +80,12 @@ Backend хранит **идентификатор пресета**, а не по
 1. `app_theme` ограничен `system | light | dark`.
 2. `density` и `column_density` ограничены `comfortable | compact`.
 3. `card_preview_mode` ограничен `compact | expanded`.
-4. `wallpaper.kind` ограничен `none | solid | gradient | preset`.
-5. Если `wallpaper.kind = none`, то `wallpaper.value = null`.
-6. Если `wallpaper.kind != none`, то `wallpaper.value` обязателен.
-7. `custom_properties` должен быть JSON object.
+4. `checklist_item_submit_mode` ограничен `ctrl_enter | enter | button`.
+5. `card_details_mode` ограничен `drawer | modal`.
+6. `wallpaper.kind` ограничен `none | accent | solid | gradient | preset | image`.
+7. Если `wallpaper.kind = none | accent`, то `wallpaper.value = null`.
+8. Для остальных wallpaper `value` обязателен; `image` принимает только HTTP(S).
+9. `custom_properties` должен быть JSON object, а `accentColor` — `#RRGGBB`.
 
 ## Направления расширения
 

@@ -474,7 +474,10 @@ export function BoardPage() {
         {isError ? <ErrorState title="Не удалось загрузить доску" description="Проверьте соединение с сервером и повторите попытку." /> : null}
 
         {!isLoading && !isError ? (
-          <div className="board-themed-surface" style={boardAppearance ? getBoardSurfaceStyle(boardAppearance, resolvedTheme) : undefined}>
+          <div
+            className={`board-themed-surface ${boardAppearance?.wallpaper.kind === 'image' ? 'board-themed-surface--wallpaper-image' : ''}`}
+            style={boardAppearance ? getBoardSurfaceStyle(boardAppearance, resolvedTheme) : undefined}
+          >
             <BoardOverviewPanel
               board={localFirst.board || undefined}
               boardAppearance={boardAppearance}

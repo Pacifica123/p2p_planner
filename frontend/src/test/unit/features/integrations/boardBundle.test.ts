@@ -46,6 +46,31 @@ describe('board bundle parser', () => {
     expect(preview.cards.map((card) => card.status)).toEqual(['active', 'completed']);
   });
 
+  it('keeps accent-driven and image wallpapers compatible with board backups', () => {
+    const accentBundle = cloneFixture();
+    accentBundle.payload.boardAppearanceSettings[0].wallpaperKind = 'accent';
+    accentBundle.payload.boardAppearanceSettings[0].wallpaperValue = null;
+    accentBundle.payload.boardAppearanceSettings[0].customProperties = {
+      accentColor: '#a855f7',
+    };
+
+    const accentPreview = parseBoardBundleText(JSON.stringify(accentBundle));
+    expect(accentPreview.appearance).toMatchObject({
+      wallpaper: { kind: 'accent' },
+      customProperties: { accentColor: '#a855f7' },
+    });
+
+    const imageBundle = cloneFixture();
+    imageBundle.payload.boardAppearanceSettings[0].wallpaperKind = 'image';
+    imageBundle.payload.boardAppearanceSettings[0].wallpaperValue = 'https://example.org/board.webp';
+
+    const imagePreview = parseBoardBundleText(JSON.stringify(imageBundle));
+    expect(imagePreview.appearance?.wallpaper).toEqual({
+      kind: 'image',
+      value: 'https://example.org/board.webp',
+    });
+  });
+
   it('rejects an unsupported format version before any server write', () => {
     const bundle = cloneFixture();
     bundle['manifest.json'].formatVersion = 2;

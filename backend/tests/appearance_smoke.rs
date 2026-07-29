@@ -167,13 +167,21 @@ async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
     assert_eq!(me_default["data"]["appTheme"], json!("system"));
     assert_eq!(me_default["data"]["density"], json!("comfortable"));
     assert_eq!(me_default["data"]["reduceMotion"], json!(false));
+    assert_eq!(me_default["data"]["checklistItemSubmitMode"], json!("ctrl_enter"));
+    assert_eq!(me_default["data"]["cardDetailsMode"], json!("drawer"));
 
     let me_updated = request(
         &app,
         "PUT",
         "/api/v1/me/appearance",
         owner,
-        Some(json!({"appTheme": "dark", "density": "compact", "reduceMotion": true})),
+        Some(json!({
+            "appTheme": "dark",
+            "density": "compact",
+            "reduceMotion": true,
+            "checklistItemSubmitMode": "enter",
+            "cardDetailsMode": "modal"
+        })),
         StatusCode::OK,
     )
     .await;
@@ -181,6 +189,8 @@ async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
     assert_eq!(me_updated["data"]["appTheme"], json!("dark"));
     assert_eq!(me_updated["data"]["density"], json!("compact"));
     assert_eq!(me_updated["data"]["reduceMotion"], json!(true));
+    assert_eq!(me_updated["data"]["checklistItemSubmitMode"], json!("enter"));
+    assert_eq!(me_updated["data"]["cardDetailsMode"], json!("modal"));
 
     let board_default = request(
         &app,
@@ -209,21 +219,21 @@ async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
         owner,
         Some(json!({
             "themePreset": "midnight-blue",
-            "wallpaper": {"kind": "gradient", "value": "sunset-mesh"},
+            "wallpaper": {"kind": "accent"},
             "columnDensity": "compact",
             "cardPreviewMode": "compact",
             "showCardDescription": false,
             "showCardDates": false,
             "showChecklistProgress": false,
-            "customProperties": {"accentColor": "violet", "columnHeaderStyle": "glass"}
+            "customProperties": {"accentColor": "#a855f7", "columnHeaderStyle": "flat"}
         })),
         StatusCode::OK,
     )
     .await;
     assert_eq!(board_updated["data"]["isCustomized"], json!(true));
     assert_eq!(board_updated["data"]["themePreset"], json!("midnight-blue"));
-    assert_eq!(board_updated["data"]["wallpaper"]["kind"], json!("gradient"));
-    assert_eq!(board_updated["data"]["wallpaper"]["value"], json!("sunset-mesh"));
+    assert_eq!(board_updated["data"]["wallpaper"]["kind"], json!("accent"));
+    assert_eq!(board_updated["data"]["wallpaper"]["value"], Value::Null);
     assert_eq!(board_updated["data"]["columnDensity"], json!("compact"));
     assert_eq!(board_updated["data"]["cardPreviewMode"], json!("compact"));
     assert_eq!(board_updated["data"]["showCardDescription"], json!(false));
@@ -231,7 +241,7 @@ async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
     assert_eq!(board_updated["data"]["showChecklistProgress"], json!(false));
     assert_eq!(
         board_updated["data"]["customProperties"],
-        json!({"accentColor": "violet", "columnHeaderStyle": "glass"})
+        json!({"accentColor": "#a855f7", "columnHeaderStyle": "flat"})
     );
 
     let board_partial = request(
@@ -244,8 +254,8 @@ async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
     )
     .await;
     assert_eq!(board_partial["data"]["themePreset"], json!("midnight-blue"));
-    assert_eq!(board_partial["data"]["wallpaper"]["kind"], json!("gradient"));
-    assert_eq!(board_partial["data"]["wallpaper"]["value"], json!("sunset-mesh"));
+    assert_eq!(board_partial["data"]["wallpaper"]["kind"], json!("accent"));
+    assert_eq!(board_partial["data"]["wallpaper"]["value"], Value::Null);
     assert_eq!(board_partial["data"]["columnDensity"], json!("compact"));
     assert_eq!(board_partial["data"]["cardPreviewMode"], json!("expanded"));
     assert_eq!(board_partial["data"]["showCardDescription"], json!(false));
@@ -253,7 +263,7 @@ async fn appearance_defaults_and_updates_work() -> anyhow::Result<()> {
     assert_eq!(board_partial["data"]["showChecklistProgress"], json!(false));
     assert_eq!(
         board_partial["data"]["customProperties"],
-        json!({"accentColor": "violet", "columnHeaderStyle": "glass"})
+        json!({"accentColor": "#a855f7", "columnHeaderStyle": "flat"})
     );
 
     Ok(())
@@ -344,6 +354,34 @@ async fn appearance_validation_and_permissions_are_enforced() -> anyhow::Result<
     assert_eq!(invalid_theme["error"]["code"], json!("bad_request"));
     assert_eq!(invalid_theme["error"]["message"], json!("appTheme has unsupported value"));
 
+    let invalid_checklist_mode = request(
+        &app,
+        "PUT",
+        "/api/v1/me/appearance",
+        owner,
+        Some(json!({"checklistItemSubmitMode": "space"})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert_eq!(
+        invalid_checklist_mode["error"]["message"],
+        json!("checklistItemSubmitMode has unsupported value")
+    );
+
+    let invalid_card_details_mode = request(
+        &app,
+        "PUT",
+        "/api/v1/me/appearance",
+        owner,
+        Some(json!({"cardDetailsMode": "page"})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert_eq!(
+        invalid_card_details_mode["error"]["message"],
+        json!("cardDetailsMode has unsupported value")
+    );
+
     let invalid_density = request(
         &app,
         "PUT",
@@ -381,6 +419,20 @@ async fn appearance_validation_and_permissions_are_enforced() -> anyhow::Result<
     assert_eq!(
         invalid_custom_properties["error"]["message"],
         json!("customProperties must be a JSON object")
+    );
+
+    let invalid_accent_color = request(
+        &app,
+        "PUT",
+        &format!("/api/v1/boards/{board_id}/appearance"),
+        owner,
+        Some(json!({"customProperties": {"accentColor": "violet"}})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert_eq!(
+        invalid_accent_color["error"]["message"],
+        json!("customProperties.accentColor must be a #RRGGBB color")
     );
 
     Ok(())

@@ -14,8 +14,10 @@ use super::dto::{
 
 const APP_THEMES: &[&str] = &["system", "light", "dark"];
 const DENSITIES: &[&str] = &["comfortable", "compact"];
-const WALLPAPER_KINDS: &[&str] = &["none", "solid", "gradient", "preset", "image"];
+const WALLPAPER_KINDS: &[&str] = &["none", "accent", "solid", "gradient", "preset", "image"];
 const CARD_PREVIEW_MODES: &[&str] = &["compact", "expanded"];
+const CHECKLIST_ITEM_SUBMIT_MODES: &[&str] = &["ctrl_enter", "enter", "button"];
+const CARD_DETAILS_MODES: &[&str] = &["drawer", "modal"];
 
 fn normalize_choice(value: Option<String>, allowed: &[&str], field_name: &str) -> AppResult<Option<String>> {
     let Some(value) = value else {
@@ -55,6 +57,21 @@ fn normalize_custom_properties(value: Option<Value>) -> AppResult<Option<Value>>
     if !value.is_object() {
         return Err(AppError::bad_request("customProperties must be a JSON object"));
     }
+    if let Some(accent_color) = value.get("accentColor") {
+        let is_hex_color = accent_color
+            .as_str()
+            .map(|color| {
+                color.len() == 7
+                    && color.starts_with('#')
+                    && color[1..].chars().all(|character| character.is_ascii_hexdigit())
+            })
+            .unwrap_or(false);
+        if !is_hex_color {
+            return Err(AppError::bad_request(
+                "customProperties.accentColor must be a #RRGGBB color",
+            ));
+        }
+    }
     Ok(Some(value))
 }
 
@@ -72,6 +89,13 @@ pub async fn upsert_my_preferences(
 ) -> AppResult<UserAppearancePreferencesResponse> {
     let app_theme = normalize_choice(payload.app_theme, APP_THEMES, "appTheme")?;
     let density = normalize_choice(payload.density, DENSITIES, "density")?;
+    let checklist_item_submit_mode = normalize_choice(
+        payload.checklist_item_submit_mode,
+        CHECKLIST_ITEM_SUBMIT_MODES,
+        "checklistItemSubmitMode",
+    )?;
+    let card_details_mode =
+        normalize_choice(payload.card_details_mode, CARD_DETAILS_MODES, "cardDetailsMode")?;
 
     super::repo::upsert_my_preferences(
         &state.db,
@@ -79,6 +103,8 @@ pub async fn upsert_my_preferences(
         app_theme,
         density,
         payload.reduce_motion,
+        checklist_item_submit_mode,
+        card_details_mode,
     )
     .await
 }
@@ -108,7 +134,7 @@ pub async fn upsert_board_appearance(
             let kind = normalize_choice(Some(wallpaper.kind), WALLPAPER_KINDS, "wallpaper.kind")?
                 .expect("validated wallpaper kind");
             let value = match kind.as_str() {
-                "none" => None,
+                "none" | "accent" => None,
                 _ => {
                     let value = trim_to_option(wallpaper.value);
                     if value.is_none() {
