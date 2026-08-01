@@ -1,7 +1,7 @@
 # Что осталось до стабильного v1.0.0
 
 - Актуально на: 2026-08-01
-- Базовая линия: `v1.0.0-beta.7`
+- Базовая линия: `v1.0.0-beta.8`
 
 ## Закрыто функционально
 
@@ -16,6 +16,8 @@
 - [x] Исправление направления Android → backend → web.
 - [x] Актуальная карта документации и универсальная концепция GitHub/devctl.
 - [x] Явный перенос identity и owned-досок на чистый второй web-узел.
+- [x] Разделение «Скрыть здесь» и tombstone-удаления «Удалить везде» для
+  web/Android, включая migration backfill старых `deleted_at`.
 
 ## Блокирует stable
 
@@ -29,9 +31,10 @@
 - [ ] Подтвердить сохранение данных после stop/start, update и rollback.
 - [ ] Выполнить PostgreSQL backup/restore drill по runbook и сверить counts.
 - [ ] Пройти cross-client матрицу web → Android и Android → web для create,
-  edit, move, archive и checklist CRUD.
+  edit, move, archive, global delete и checklist CRUD.
 - [ ] Пройти web → web матрицу на Linux/Windows: initial link, edit, move,
-  archive и checklist CRUD в обе стороны через общий relay.
+  archive, local hide/restore, global delete и checklist CRUD в обе стороны
+  через общий relay.
 - [ ] Решить границу релиза: Android входит в stable v1 либо остаётся явно
   помеченным beta-клиентом.
 - [ ] Подтвердить import-as-copy smoke на итоговом bundle.
@@ -46,7 +49,7 @@
   замечено.
 - Stop/start и обычная работа выглядят устойчиво в реальном сценарии.
 - Это снижает риск, но не заменяет воспроизводимый update/rollback/restore
-  прогон точного beta.7 commit.
+  прогон точного beta.8 commit.
 
 ## Не блокирует stable автоматически
 

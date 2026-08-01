@@ -12,8 +12,8 @@ use crate::{
 
 use super::{
     dto::{
-        CreateCardRequest, ListCardsQuery, MoveCardRequest, ReorderColumnCardsRequest,
-        UpdateCardRequest,
+        CreateCardRequest, DeleteCardQuery, ListCardsQuery, MoveCardRequest,
+        ReorderColumnCardsRequest, UpdateCardRequest,
     },
     service,
 };
@@ -65,9 +65,30 @@ pub async fn delete_card(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(card_id): Path<Uuid>,
+    Query(query): Query<DeleteCardQuery>,
 ) -> AppResult<impl IntoResponse> {
     let actor = actor_user_id(&state, &headers).await?;
-    let card = service::delete_card(&state, actor, card_id).await?;
+    let card = service::delete_card(&state, actor, card_id, query).await?;
+    Ok(ok(card))
+}
+
+pub async fn hide_card_locally(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(card_id): Path<Uuid>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let card = service::hide_card_locally(&state, actor, card_id).await?;
+    Ok(ok(card))
+}
+
+pub async fn unhide_card_locally(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(card_id): Path<Uuid>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let card = service::unhide_card_locally(&state, actor, card_id).await?;
     Ok(ok(card))
 }
 

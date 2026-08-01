@@ -8,8 +8,8 @@ use crate::{
 };
 
 use super::dto::{
-    CardListResponse, CardResponse, CreateCardRequest, ListCardsQuery, MoveCardRequest,
-    ReorderColumnCardsRequest, UpdateCardRequest,
+    CardListResponse, CardResponse, CreateCardRequest, DeleteCardQuery, ListCardsQuery,
+    MoveCardRequest, ReorderColumnCardsRequest, UpdateCardRequest,
 };
 
 pub(crate) fn normalize_status(value: &str) -> Option<&'static str> {
@@ -94,8 +94,30 @@ pub async fn delete_card(
     state: &AppState,
     actor_user_id: Uuid,
     card_id: Uuid,
+    query: DeleteCardQuery,
 ) -> AppResult<CardResponse> {
+    if !matches!(query.scope.as_deref(), None | Some("all_devices")) {
+        return Err(AppError::bad_request(
+            "Use POST /cards/{cardId}/hide-local for node-local hiding",
+        ));
+    }
     super::repo::delete_card(&state.db, actor_user_id, card_id).await
+}
+
+pub async fn hide_card_locally(
+    state: &AppState,
+    actor_user_id: Uuid,
+    card_id: Uuid,
+) -> AppResult<CardResponse> {
+    super::repo::hide_card_locally(&state.db, actor_user_id, card_id).await
+}
+
+pub async fn unhide_card_locally(
+    state: &AppState,
+    actor_user_id: Uuid,
+    card_id: Uuid,
+) -> AppResult<CardResponse> {
+    super::repo::unhide_card_locally(&state.db, actor_user_id, card_id).await
 }
 
 pub async fn move_card(

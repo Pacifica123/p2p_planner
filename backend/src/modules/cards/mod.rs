@@ -17,6 +17,14 @@ pub fn router() -> Router<AppState> {
         .route("/cards/{cardId}", get(handler::get_card))
         .route("/cards/{cardId}", patch(handler::update_card))
         .route("/cards/{cardId}", delete(handler::delete_card))
+        .route(
+            "/cards/{cardId}/hide-local",
+            post(handler::hide_card_locally),
+        )
+        .route(
+            "/cards/{cardId}/hide-local",
+            delete(handler::unhide_card_locally),
+        )
         .route("/cards/{cardId}/move", post(handler::move_card))
         .route(
             "/columns/{columnId}/cards/reorder",

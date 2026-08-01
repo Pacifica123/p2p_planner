@@ -118,10 +118,12 @@ backup и только затем переключает backend/web на пре
 
 ### Второй независимый web-узел
 
-Email уникален только внутри одного deployment. На чистом втором узле beta.7
+Email уникален только внутри одного deployment. На чистом втором узле beta.8
 выберите `Подключить с другого узла`; ненужную локальную копию после проверки
 можно удалить командой `python bootstrap.py reset --yes`. Полный порядок:
 [`docs/architecture/web-node-link-v1.md`](docs/architecture/web-node-link-v1.md).
+
+Удаление карточки: локальное скрытие или глобальный tombstone — [`docs/sync/card-deletion-scopes-v1.md`](docs/sync/card-deletion-scopes-v1.md).
 
 ## Как это устроено
 

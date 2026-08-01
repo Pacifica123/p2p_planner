@@ -68,6 +68,15 @@ pub struct NodeLinkBoardCapabilitySnapshot {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct NodeLinkCardTombstoneSnapshot {
+    pub workspace_id: Uuid,
+    pub board_id: Uuid,
+    pub card_id: Uuid,
+    pub deleted_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct NodeLinkTransportSnapshot {
     pub relays: Vec<String>,
     pub event_kind: u16,
@@ -83,6 +92,8 @@ pub struct NodeLinkExportResponse {
     pub user_appearance: Option<NodeLinkUserAppearanceSnapshot>,
     pub workspaces: Vec<NodeLinkWorkspaceSnapshot>,
     pub board_capabilities: Vec<NodeLinkBoardCapabilitySnapshot>,
+    #[serde(default)]
+    pub card_tombstones: Vec<NodeLinkCardTombstoneSnapshot>,
     pub transport: NodeLinkTransportSnapshot,
     pub exported_at: String,
     pub warnings: Vec<String>,

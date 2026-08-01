@@ -7,6 +7,7 @@ import {
   useArchiveCardMutation,
   useCardQuery,
   useDeleteCardMutation,
+  useHideCardLocallyMutation,
   useMoveCardMutation,
   useUnarchiveCardMutation,
   useUpdateCardMutation,
@@ -90,6 +91,7 @@ export function CardDetailsDrawer() {
   const archiveCardMutation = useArchiveCardMutation(boardId, cardQueryId || undefined);
   const unarchiveCardMutation = useUnarchiveCardMutation(boardId, cardQueryId || undefined);
   const deleteCardMutation = useDeleteCardMutation(boardId, cardQueryId || undefined);
+  const hideCardLocallyMutation = useHideCardLocallyMutation(boardId, cardQueryId || undefined);
   const createLabelMutation = useCreateBoardLabelMutation(boardId);
   const updateLabelMutation = useUpdateBoardLabelMutation(boardId);
   const deleteLabelMutation = useDeleteBoardLabelMutation(boardId);
@@ -200,10 +202,21 @@ export function CardDetailsDrawer() {
     await archiveCardMutation.mutateAsync();
   }
 
-  async function handleDelete() {
+  async function handleDeleteEverywhere() {
     if (!card) return;
-    if (!window.confirm(`Удалить карточку «${card.title}»?`)) return;
+    if (!window.confirm(
+      `Удалить карточку «${card.title}» на всех устройствах? Старые локальные копии не смогут восстановить её автоматически.`,
+    )) return;
     await deleteCardMutation.mutateAsync();
+    closeDrawer();
+  }
+
+  async function handleHideLocally() {
+    if (!card) return;
+    if (!window.confirm(
+      `Скрыть карточку «${card.title}» только на этом web-узле? На других устройствах она останется.`,
+    )) return;
+    await hideCardLocallyMutation.mutateAsync();
     closeDrawer();
   }
 
@@ -383,10 +396,18 @@ export function CardDetailsDrawer() {
               <Button iconOnly onClick={() => void handleArchiveToggle()} disabled={archiveCardMutation.isPending || unarchiveCardMutation.isPending || isLocalPendingCard} title={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'} aria-label={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'}>
                 {archiveCardMutation.isPending || unarchiveCardMutation.isPending ? '…' : <Icon name="archive" />}
               </Button>
-              <Button variant="danger" iconOnly onClick={() => void handleDelete()} disabled={deleteCardMutation.isPending || isLocalPendingCard} title="Удалить карточку" aria-label="Удалить карточку">
-                {deleteCardMutation.isPending ? '…' : <Icon name="trash" />}
+              <Button onClick={() => void handleHideLocally()} disabled={hideCardLocallyMutation.isPending || isLocalPendingCard || cardSyncStatus !== 'synced'} title="Скрыть карточку только на этом узле">
+                {hideCardLocallyMutation.isPending ? 'Скрываем…' : 'Скрыть здесь'}
+              </Button>
+              <Button variant="danger" onClick={() => void handleDeleteEverywhere()} disabled={deleteCardMutation.isPending || isLocalPendingCard || cardSyncStatus !== 'synced'} title="Распространить tombstone на все устройства">
+                {deleteCardMutation.isPending ? 'Удаляем…' : 'Удалить везде'}
               </Button>
             </div>
+
+            <p className="muted">
+              «Скрыть здесь» меняет только этот узел и допускает возврат. «Удалить везде»
+              создаёт tombstone; старые копии карточки больше не смогут её воскресить.
+            </p>
 
             {isLocalPendingCard ? (
               <div className="inline-banner">

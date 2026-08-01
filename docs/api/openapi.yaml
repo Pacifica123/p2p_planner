@@ -516,6 +516,7 @@ components:
       - user
       - workspaces
       - boardCapabilities
+      - cardTombstones
       - transport
       - exportedAt
       - warnings
@@ -566,6 +567,29 @@ components:
               boardKey:
                 type: string
                 description: Секретная capability; возвращается только после проверки пароля.
+        cardTombstones:
+          type: array
+          description: Глобальные удаления карточек, которые новый узел сохраняет до чтения relay-журнала.
+          items:
+            type: object
+            required:
+            - workspaceId
+            - boardId
+            - cardId
+            - deletedAt
+            properties:
+              workspaceId:
+                type: string
+                format: uuid
+              boardId:
+                type: string
+                format: uuid
+              cardId:
+                type: string
+                format: uuid
+              deletedAt:
+                type: string
+                format: date-time
         transport:
           type: object
           required:
@@ -4482,6 +4506,16 @@ paths:
           - asc
           - desc
           default: desc
+      - name: localVisibility
+        in: query
+        description: Фильтр видимости только для текущего web-узла; через Nostr не синхронизируется.
+        schema:
+          type: string
+          enum:
+          - visible
+          - hidden
+          - all
+          default: visible
       responses:
         '200':
           description: Card list
@@ -4592,18 +4626,26 @@ paths:
     delete:
       tags:
       - cards
-      summary: Delete card
-      description: 'На уровне реализации удаление tombstone-aware и sync-visible,
-        хотя наружу оформлено как обычный DELETE.
-
-        '
+      summary: Delete card on all devices
+      description: Создаёт durable tombstone. Старые card.put и snapshot не могут неявно воскресить карточку.
       security:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/CardId'
+      - name: scope
+        in: query
+        description: Отсутствующее значение и all_devices означают глобальное удаление для обратной совместимости.
+        schema:
+          type: string
+          enum:
+          - all_devices
       responses:
-        '204':
-          description: Card deleted
+        '200':
+          description: Card deleted globally; response contains its last visible representation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4612,6 +4654,54 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /cards/{cardId}/hide-local:
+    post:
+      tags:
+      - cards
+      summary: Hide card on this web node
+      description: Обратимое локальное состояние без activity, audit, outbox и Nostr-события.
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CardId'
+      responses:
+        '200':
+          description: Card hidden locally
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+    delete:
+      tags:
+      - cards
+      summary: Restore card visibility on this web node
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/CardId'
+      responses:
+        '200':
+          description: Card visible locally again
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Card'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
       x-v1Status: real_v1
       x-frontendUsed: true
   /cards/{cardId}/move:

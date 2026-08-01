@@ -5,10 +5,13 @@ import {
   deleteCard,
   getCard,
   getCards,
+  hideCardLocally,
   moveCard,
   reorderColumnCards,
   unarchiveCard,
+  unhideCardLocally,
   updateCard,
+  type CardLocalVisibility,
 } from '@/features/cards/api/cards';
 import { columnsQueryKey } from '@/features/columns/hooks/useColumns';
 import {
@@ -18,11 +21,12 @@ import {
 } from '@/features/activity/hooks/useActivity';
 import type { CardPriority, CardStatus } from '@/shared/types/api';
 
-export const cardsQueryKey = (boardId?: string) => ['cards', boardId];
+export const cardsQueryKey = (boardId?: string, localVisibility: CardLocalVisibility = 'visible') =>
+  ['cards', boardId, localVisibility];
 export const cardDetailQueryKey = (cardId?: string) => ['card', cardId];
 
 function invalidateBoardSurface(queryClient: ReturnType<typeof useQueryClient>, boardId?: string, cardId?: string) {
-  void queryClient.invalidateQueries({ queryKey: cardsQueryKey(boardId) });
+  void queryClient.invalidateQueries({ queryKey: ['cards', boardId] });
   void queryClient.invalidateQueries({ queryKey: columnsQueryKey(boardId) });
   void queryClient.invalidateQueries({ queryKey: boardActivityQueryKey(boardId) });
   void queryClient.invalidateQueries({ queryKey: boardProductivityQueryKey(boardId) });
@@ -32,10 +36,13 @@ function invalidateBoardSurface(queryClient: ReturnType<typeof useQueryClient>, 
   }
 }
 
-export function useCardsQuery(boardId?: string) {
+export function useCardsQuery(
+  boardId?: string,
+  localVisibility: CardLocalVisibility = 'visible',
+) {
   return useQuery({
-    queryKey: cardsQueryKey(boardId),
-    queryFn: () => getCards(boardId!),
+    queryKey: cardsQueryKey(boardId, localVisibility),
+    queryFn: () => getCards(boardId!, localVisibility),
     enabled: Boolean(boardId),
     refetchInterval: 3_000,
     refetchIntervalInBackground: false,
@@ -126,6 +133,26 @@ export function useDeleteCardMutation(boardId?: string, cardId?: string) {
     mutationFn: () => deleteCard(cardId!),
     onSuccess: () => {
       invalidateBoardSurface(queryClient, boardId, cardId);
+    },
+  });
+}
+
+export function useHideCardLocallyMutation(boardId?: string, cardId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => hideCardLocally(cardId!),
+    onSuccess: () => {
+      invalidateBoardSurface(queryClient, boardId, cardId);
+    },
+  });
+}
+
+export function useUnhideCardLocallyMutation(boardId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (cardId: string) => unhideCardLocally(cardId),
+    onSuccess: (card) => {
+      invalidateBoardSurface(queryClient, boardId, card.id);
     },
   });
 }

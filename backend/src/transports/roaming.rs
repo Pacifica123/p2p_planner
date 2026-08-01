@@ -86,6 +86,13 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
           o.card_id,
           n.replica_id as node_replica_id,
           rbc.board_key_base64,
+          case
+            when c.deleted_at is not null or t.entity_id is not null then 'card.delete'
+            else 'card.put'
+          end as roaming_operation,
+          case when coalesce(c.deleted_at, t.deleted_at) is null then null else
+            to_char(coalesce(c.deleted_at, t.deleted_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          end as deleted_at,
           to_char(o.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as occurred_at,
           (
             floor(extract(epoch from o.created_at) * 1000)::bigint * 1000
@@ -168,6 +175,9 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
         join cards c on c.id = o.card_id
         cross join local_node_identity n
         left join roaming_board_capabilities rbc on rbc.board_id = o.board_id
+        left join tombstones t
+          on t.entity_type = 'card'
+         and t.entity_id = o.card_id
         where o.status in ('pending', 'retry')
           and o.next_attempt_at <= now()
         order by o.event_seq
@@ -190,6 +200,13 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             Ok(value) => value,
             Err(_) => continue,
         };
+        let operation: String = row
+            .try_get("roaming_operation")
+            .unwrap_or_else(|_| "card.put".to_string());
+        let deleted_at = row
+            .try_get::<Option<String>, _>("deleted_at")
+            .ok()
+            .flatten();
         let event = RoamingBoardEvent {
             protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
             event_id: outbox_id.to_string(),
@@ -203,12 +220,20 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             logical_clock: row.try_get("logical_clock").unwrap_or(1),
             entity_type: "card".to_string(),
             entity_id: row.try_get::<Uuid, _>("card_id").unwrap().to_string(),
-            operation: "card.put".to_string(),
-            field_mask: vec!["*".to_string()],
-            payload: json!({
-                "card": row.try_get::<Value, _>("card").unwrap_or_else(|_| json!({})),
-                "checklists": row.try_get::<Value, _>("checklists").unwrap_or_else(|_| json!([])),
-            }),
+            operation: operation.clone(),
+            field_mask: if operation == "card.delete" {
+                vec!["__lifecycle".to_string()]
+            } else {
+                vec!["*".to_string()]
+            },
+            payload: if operation == "card.delete" {
+                json!({ "deletedAt": deleted_at })
+            } else {
+                json!({
+                    "card": row.try_get::<Value, _>("card").unwrap_or_else(|_| json!({})),
+                    "checklists": row.try_get::<Value, _>("checklists").unwrap_or_else(|_| json!([])),
+                })
+            },
             occurred_at: row.try_get("occurred_at").unwrap_or_default(),
         };
         let imported_board_key = row
@@ -509,6 +534,162 @@ async fn apply_checklist_bundle(
     Ok(())
 }
 
+async fn apply_remote_card_delete(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    recovered: &RecoveredRoamingEvent,
+    event_id: Uuid,
+    board_id: Uuid,
+    entity_id: Uuid,
+    replica_id: Uuid,
+) -> anyhow::Result<()> {
+    let event = &recovered.event;
+    let existing_board_id =
+        sqlx::query_scalar::<_, Uuid>("select board_id from cards where id = $1")
+            .bind(entity_id)
+            .fetch_optional(pool)
+            .await?;
+    if existing_board_id.is_some_and(|value| value != board_id) {
+        anyhow::bail!("card id belongs to another board");
+    }
+
+    let deleted_at = event
+        .payload
+        .get("deletedAt")
+        .and_then(Value::as_str)
+        .unwrap_or(event.occurred_at.as_str());
+    let owner_user_id =
+        sqlx::query_scalar::<_, Uuid>("select owner_user_id from workspaces where id = $1")
+            .bind(workspace_id)
+            .fetch_one(pool)
+            .await?;
+
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        r#"
+        insert into roaming_board_events (
+          event_id, nostr_event_id, author_public_key, workspace_id, board_id,
+          replica_id, replica_seq, logical_clock, entity_id, operation, status
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied')
+        "#,
+    )
+    .bind(event_id)
+    .bind(&recovered.nostr_event_id)
+    .bind(&recovered.author_public_key)
+    .bind(workspace_id)
+    .bind(board_id)
+    .bind(replica_id)
+    .bind(event.replica_seq)
+    .bind(event.logical_clock)
+    .bind(entity_id)
+    .bind(&event.operation)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        update cards
+        set
+          deleted_at = greatest(coalesce(deleted_at, $2::timestamptz), $2::timestamptz),
+          updated_at = greatest(updated_at, $2::timestamptz)
+        where id = $1 and board_id = $3
+        "#,
+    )
+    .bind(entity_id)
+    .bind(deleted_at)
+    .bind(board_id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        insert into tombstones (
+          id, workspace_id, entity_type, entity_id,
+          deleted_at, metadata_jsonb
+        ) values (
+          gen_random_uuid(), $1, 'card', $2, $3::timestamptz,
+          jsonb_build_object(
+            'boardId', $4,
+            'scope', 'all_devices',
+            'source', 'roaming',
+            'eventId', $5,
+            'replicaId', $6
+          )
+        )
+        on conflict (entity_type, entity_id) do update set
+          workspace_id = excluded.workspace_id,
+          deleted_at = greatest(tombstones.deleted_at, excluded.deleted_at),
+          metadata_jsonb = tombstones.metadata_jsonb || excluded.metadata_jsonb
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(entity_id)
+    .bind(deleted_at)
+    .bind(board_id)
+    .bind(event_id)
+    .bind(replica_id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        insert into roaming_field_versions (
+          workspace_id, entity_id, field_name, logical_clock, replica_id, event_id
+        ) values ($1,$2,'__lifecycle',$3,$4,$5)
+        on conflict (workspace_id, entity_id, field_name) do update set
+          logical_clock = greatest(roaming_field_versions.logical_clock, excluded.logical_clock),
+          replica_id = case
+            when excluded.logical_clock >= roaming_field_versions.logical_clock then excluded.replica_id
+            else roaming_field_versions.replica_id
+          end,
+          event_id = case
+            when excluded.logical_clock >= roaming_field_versions.logical_clock then excluded.event_id
+            else roaming_field_versions.event_id
+          end,
+          updated_at = now()
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(entity_id)
+    .bind(event.logical_clock)
+    .bind(replica_id)
+    .bind(event_id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        insert into activity_entries (
+          id, workspace_id, board_id, card_id, actor_user_id, kind,
+          entity_type, entity_id, field_mask, payload_jsonb
+        ) values (
+          gen_random_uuid(), $1, $2, $3, $4, 'card.deleted',
+          'card', $5, array['__lifecycle'], $6
+        )
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(board_id)
+    .bind(existing_board_id.map(|_| entity_id))
+    .bind(owner_user_id)
+    .bind(entity_id)
+    .bind(json!({
+        "source": "roaming",
+        "scope": "all_devices",
+        "eventId": event.event_id,
+        "replicaId": event.replica_id,
+    }))
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query("update roaming_board_events set applied_at = now() where event_id = $1")
+        .bind(event_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 async fn apply_remote_event(
     pool: &PgPool,
     workspace_id: Uuid,
@@ -520,7 +701,7 @@ async fn apply_remote_event(
     }
     if event.workspace_id != workspace_id.to_string()
         || event.entity_type != "card"
-        || event.operation != "card.put"
+        || !matches!(event.operation.as_str(), "card.put" | "card.delete")
     {
         anyhow::bail!("unsupported roaming event shape");
     }
@@ -546,6 +727,49 @@ async fn apply_remote_event(
     .await?;
     if !board_matches {
         anyhow::bail!("board does not belong to roaming workspace");
+    }
+
+    if event.operation == "card.delete" {
+        return apply_remote_card_delete(
+            pool,
+            workspace_id,
+            recovered,
+            event_id,
+            board_id,
+            entity_id,
+            replica_id,
+        )
+        .await;
+    }
+
+    let tombstoned = sqlx::query_scalar::<_, bool>(
+        "select exists(select 1 from tombstones where entity_type = 'card' and entity_id = $1)",
+    )
+    .bind(entity_id)
+    .fetch_one(pool)
+    .await?;
+    if tombstoned {
+        sqlx::query(
+            r#"
+            insert into roaming_board_events (
+              event_id, nostr_event_id, author_public_key, workspace_id, board_id,
+              replica_id, replica_seq, logical_clock, entity_id, operation, status, error
+            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'rejected','tombstone_wins')
+            "#,
+        )
+        .bind(event_id)
+        .bind(&recovered.nostr_event_id)
+        .bind(&recovered.author_public_key)
+        .bind(workspace_id)
+        .bind(board_id)
+        .bind(replica_id)
+        .bind(event.replica_seq)
+        .bind(event.logical_clock)
+        .bind(entity_id)
+        .bind(&event.operation)
+        .execute(pool)
+        .await?;
+        return Ok(());
     }
 
     let card = event

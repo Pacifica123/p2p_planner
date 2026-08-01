@@ -1,4 +1,8 @@
-use std::{collections::HashSet, net::IpAddr, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    net::IpAddr,
+    time::Duration,
+};
 
 use axum::http::HeaderMap;
 use serde::Deserialize;
@@ -17,9 +21,9 @@ use crate::{
 
 use super::{
     dto::{
-        NodeLinkBoardCapabilitySnapshot, NodeLinkExportRequest, NodeLinkExportResponse,
-        NodeLinkImportRequest, NodeLinkTransportSnapshot, NodeLinkUserAppearanceSnapshot,
-        NodeLinkUserSnapshot, NodeLinkWorkspaceSnapshot,
+        NodeLinkBoardCapabilitySnapshot, NodeLinkCardTombstoneSnapshot, NodeLinkExportRequest,
+        NodeLinkExportResponse, NodeLinkImportRequest, NodeLinkTransportSnapshot,
+        NodeLinkUserAppearanceSnapshot, NodeLinkUserSnapshot, NodeLinkWorkspaceSnapshot,
     },
     repo,
     service::{
@@ -189,6 +193,38 @@ pub async fn export_node_link(
         )
         .transpose()?;
 
+        let card_tombstones = sqlx::query(
+            r#"
+            select
+              t.workspace_id,
+              b.id as board_id,
+              t.entity_id as card_id,
+              to_char(t.deleted_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as deleted_at
+            from tombstones t
+            join cards c on c.id = t.entity_id
+            join boards b on b.id = c.board_id
+            join workspaces w on w.id = t.workspace_id
+            where t.entity_type = 'card'
+              and w.owner_user_id = $1
+              and w.deleted_at is null
+              and b.deleted_at is null
+            order by t.deleted_at, t.entity_id
+            "#,
+        )
+        .bind(user.id)
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .map(|row| -> Result<NodeLinkCardTombstoneSnapshot, sqlx::Error> {
+            Ok(NodeLinkCardTombstoneSnapshot {
+                workspace_id: row.try_get("workspace_id")?,
+                board_id: row.try_get("board_id")?,
+                card_id: row.try_get("card_id")?,
+                deleted_at: row.try_get("deleted_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
         let exported_at = sqlx::query_scalar::<_, String>(
             r#"select to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')"#,
         )
@@ -213,6 +249,7 @@ pub async fn export_node_link(
             user_appearance,
             workspaces,
             board_capabilities,
+            card_tombstones,
             transport: NodeLinkTransportSnapshot {
                 relays: nostr.relays.clone(),
                 event_kind: nostr.event_kind.saturating_add(ROAMING_EVENT_KIND_OFFSET),
@@ -315,6 +352,7 @@ pub async fn import_node_link(
         }
         import_user_appearance(&mut tx, remote.user.id, remote.user_appearance.as_ref()).await?;
         import_board_capabilities(&mut tx, &remote.board_capabilities).await?;
+        import_card_tombstones(&mut tx, &remote.card_tombstones).await?;
         tx.commit().await?;
 
         let user = repo::find_active_user_by_id(&state.db, remote.user.id)
@@ -430,6 +468,7 @@ fn validate_remote_snapshot(
 
     let mut workspace_ids = HashSet::new();
     let mut board_ids = HashSet::new();
+    let mut board_workspaces = HashMap::new();
     for workspace in &remote.workspaces {
         if workspace.membership_role != "owner" {
             return Err(AppError::bad_request(
@@ -441,6 +480,7 @@ fn validate_remote_snapshot(
             remote.user.id,
             &mut workspace_ids,
             &mut board_ids,
+            &mut board_workspaces,
         )?;
     }
 
@@ -463,6 +503,18 @@ fn validate_remote_snapshot(
         if material.board_tag != capability.board_tag {
             return Err(AppError::bad_request(
                 "Тег доски не соответствует переданному ключу",
+            ));
+        }
+    }
+    let mut tombstone_ids = HashSet::new();
+    for tombstone in &remote.card_tombstones {
+        if !workspace_ids.contains(&tombstone.workspace_id)
+            || !board_ids.contains(&tombstone.board_id)
+            || board_workspaces.get(&tombstone.board_id) != Some(&tombstone.workspace_id)
+            || !tombstone_ids.insert(tombstone.card_id)
+        {
+            return Err(AppError::bad_request(
+                "Tombstone карточки имеет неверный scope или повторяющийся ID",
             ));
         }
     }
@@ -489,6 +541,7 @@ fn validate_bundle(
     user_id: Uuid,
     workspace_ids: &mut HashSet<Uuid>,
     board_ids: &mut HashSet<Uuid>,
+    board_workspaces: &mut HashMap<Uuid, Uuid>,
 ) -> AppResult<()> {
     if bundle.manifest_json.format != "p2p_planner_bundle"
         || bundle.manifest_json.format_version != 1
@@ -540,7 +593,10 @@ fn validate_bundle(
     }
     for board in bundle.payload.boards.as_array().unwrap() {
         let board_id = value_uuid(board, "id")?;
-        if value_uuid(board, "workspaceId")? != workspace_id || !board_ids.insert(board_id) {
+        if value_uuid(board, "workspaceId")? != workspace_id
+            || !board_ids.insert(board_id)
+            || board_workspaces.insert(board_id, workspace_id).is_some()
+        {
             return Err(AppError::bad_request(
                 "Доска имеет неверный scope или повторяющийся ID",
             ));
@@ -854,6 +910,38 @@ async fn import_board_capabilities(
         .bind(capability.board_id)
         .bind(&capability.board_tag)
         .bind(&capability.board_key)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn import_card_tombstones(
+    tx: &mut Transaction<'_, Postgres>,
+    tombstones: &[NodeLinkCardTombstoneSnapshot],
+) -> AppResult<()> {
+    for tombstone in tombstones {
+        sqlx::query(
+            r#"
+            insert into tombstones (
+              id, workspace_id, entity_type, entity_id, deleted_at, metadata_jsonb
+            ) values (
+              gen_random_uuid(), $1, 'card', $2, $3::timestamptz,
+              jsonb_build_object(
+                'boardId', $4,
+                'scope', 'all_devices',
+                'source', 'web_node_link'
+              )
+            )
+            on conflict (entity_type, entity_id) do update set
+              deleted_at = greatest(tombstones.deleted_at, excluded.deleted_at),
+              metadata_jsonb = tombstones.metadata_jsonb || excluded.metadata_jsonb
+            "#,
+        )
+        .bind(tombstone.workspace_id)
+        .bind(tombstone.card_id)
+        .bind(&tombstone.deleted_at)
+        .bind(tombstone.board_id)
         .execute(&mut **tx)
         .await?;
     }

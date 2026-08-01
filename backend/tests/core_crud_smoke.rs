@@ -230,20 +230,50 @@ async fn core_crud_smoke_flow() -> anyhow::Result<()> {
         Value::String("Renamed card".to_string())
     );
 
-    let _listed_cards = request_empty(
+    let _hidden_card = request_empty(
+        &mut app,
+        "POST",
+        &format!("/api/v1/cards/{card_id}/hide-local"),
+        actor,
+    )
+    .await;
+    let visible_cards = request_empty(
         &mut app,
         "GET",
         &format!("/api/v1/boards/{board_id}/cards"),
         actor,
     )
     .await;
-    let _deleted_card = request_empty(
+    assert_eq!(visible_cards["data"]["items"], json!([]));
+    let hidden_cards = request_empty(
         &mut app,
-        "DELETE",
-        &format!("/api/v1/cards/{card_id}"),
+        "GET",
+        &format!("/api/v1/boards/{board_id}/cards?localVisibility=hidden"),
         actor,
     )
     .await;
+    assert_eq!(hidden_cards["data"]["items"][0]["id"], card_id);
+    let _restored_visibility = request_empty(
+        &mut app,
+        "DELETE",
+        &format!("/api/v1/cards/{card_id}/hide-local"),
+        actor,
+    )
+    .await;
+    let _deleted_card = request_empty(
+        &mut app,
+        "DELETE",
+        &format!("/api/v1/cards/{card_id}?scope=all_devices"),
+        actor,
+    )
+    .await;
+    let has_tombstone = sqlx::query_scalar::<_, bool>(
+        "select exists(select 1 from tombstones where entity_type = 'card' and entity_id = $1)",
+    )
+    .bind(Uuid::parse_str(&card_id)?)
+    .fetch_one(&pool)
+    .await?;
+    assert!(has_tombstone);
     let _deleted_column = request_empty(
         &mut app,
         "DELETE",

@@ -13,8 +13,11 @@ export interface ReorderColumnCardsInput {
   }>;
 }
 
-export function getCards(boardId: string) {
-  return apiRequest<CardListResponse>(`/boards/${boardId}/cards`);
+export type CardLocalVisibility = 'visible' | 'hidden' | 'all';
+
+export function getCards(boardId: string, localVisibility: CardLocalVisibility = 'visible') {
+  const query = new URLSearchParams({ localVisibility });
+  return apiRequest<CardListResponse>(`/boards/${boardId}/cards` + `?${query.toString()}`);
 }
 
 export function getCard(cardId: string) {
@@ -84,7 +87,19 @@ export function unarchiveCard(cardId: string) {
 }
 
 export function deleteCard(cardId: string) {
-  return apiRequest<Card>(`/cards/${cardId}`, {
+  return apiRequest<Card>(`/cards/${cardId}` + '?scope=all_devices', {
+    method: 'DELETE',
+  });
+}
+
+export function hideCardLocally(cardId: string) {
+  return apiRequest<Card>(`/cards/${cardId}/hide-local`, {
+    method: 'POST',
+  });
+}
+
+export function unhideCardLocally(cardId: string) {
+  return apiRequest<Card>(`/cards/${cardId}/hide-local`, {
     method: 'DELETE',
   });
 }

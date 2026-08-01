@@ -136,6 +136,14 @@ pub async fn list_cards(
         .map_err(|_| AppError::bad_request("labelId must be a valid UUID"))?;
     let sort_by = query.sort_by.unwrap_or_else(|| "updatedAt".to_string());
     let sort_dir = query.sort_dir.unwrap_or_else(|| "desc".to_string());
+    let local_visibility = query
+        .local_visibility
+        .unwrap_or_else(|| "visible".to_string());
+    if !matches!(local_visibility.as_str(), "visible" | "hidden" | "all") {
+        return Err(AppError::bad_request(
+            "localVisibility must be visible, hidden, or all",
+        ));
+    }
 
     let order_clause = match (sort_by.as_str(), sort_dir.as_str()) {
         ("position", "asc") => "c.position asc, c.id asc",
@@ -193,6 +201,25 @@ pub async fn list_cards(
         left join card_labels cl on cl.card_id = c.id and cl.deleted_at is null
         where c.board_id = $1
           and c.deleted_at is null
+          and (
+            $6::text = 'all'
+            or ($6 = 'visible' and not exists (
+              select 1
+              from local_card_hides lch
+              cross join local_node_identity lni
+              where lch.node_replica_id = lni.replica_id
+                and lch.user_id = $7
+                and lch.card_id = c.id
+            ))
+            or ($6 = 'hidden' and exists (
+              select 1
+              from local_card_hides lch
+              cross join local_node_identity lni
+              where lch.node_replica_id = lni.replica_id
+                and lch.user_id = $7
+                and lch.card_id = c.id
+            ))
+          )
           and ($2::uuid is null or c.column_id = $2)
           and ($3::uuid is null or exists (
                 select 1 from card_labels cl2
@@ -210,7 +237,7 @@ pub async fn list_cards(
           )
         group by c.id
         order by {order_clause}
-        limit $6
+        limit $8
         "#,
     );
 
@@ -220,6 +247,8 @@ pub async fn list_cards(
         .bind(label_id)
         .bind(completed)
         .bind(search)
+        .bind(local_visibility)
+        .bind(actor_user_id)
         .bind(limit)
         .fetch_all(pool)
         .await?;
@@ -336,7 +365,74 @@ pub async fn get_card(
 ) -> AppResult<CardResponse> {
     let (_board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
     require_workspace_access(pool, workspace_id, actor_user_id).await?;
+    let hidden_here = sqlx::query_scalar::<_, bool>(
+        r#"
+        select exists(
+          select 1
+          from local_card_hides lch
+          cross join local_node_identity lni
+          where lch.node_replica_id = lni.replica_id
+            and lch.user_id = $1
+            and lch.card_id = $2
+        )
+        "#,
+    )
+    .bind(actor_user_id)
+    .bind(card_id)
+    .fetch_one(pool)
+    .await?;
+    if hidden_here {
+        return Err(AppError::not_found("Card is hidden on this node"));
+    }
     fetch_card(pool, card_id).await
+}
+
+pub async fn hide_card_locally(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    card_id: Uuid,
+) -> AppResult<CardResponse> {
+    let (_board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
+    require_workspace_access(pool, workspace_id, actor_user_id).await?;
+    let card = fetch_card(pool, card_id).await?;
+    sqlx::query(
+        r#"
+        insert into local_card_hides (node_replica_id, user_id, card_id)
+        select replica_id, $1, $2
+        from local_node_identity
+        on conflict (node_replica_id, user_id, card_id) do update set
+          hidden_at = now()
+        "#,
+    )
+    .bind(actor_user_id)
+    .bind(card_id)
+    .execute(pool)
+    .await?;
+    Ok(card)
+}
+
+pub async fn unhide_card_locally(
+    pool: &PgPool,
+    actor_user_id: Uuid,
+    card_id: Uuid,
+) -> AppResult<CardResponse> {
+    let (_board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
+    require_workspace_access(pool, workspace_id, actor_user_id).await?;
+    let card = fetch_card(pool, card_id).await?;
+    sqlx::query(
+        r#"
+        delete from local_card_hides lch
+        using local_node_identity lni
+        where lch.node_replica_id = lni.replica_id
+          and lch.user_id = $1
+          and lch.card_id = $2
+        "#,
+    )
+    .bind(actor_user_id)
+    .bind(card_id)
+    .execute(pool)
+    .await?;
+    Ok(card)
 }
 
 pub async fn update_card(
@@ -543,13 +639,45 @@ pub async fn delete_card(
     require_workspace_admin(pool, workspace_id, actor_user_id).await?;
     let card = fetch_card(pool, card_id).await?;
 
+    let mut tx = pool.begin().await?;
     sqlx::query("update cards set deleted_at = now(), updated_at = now() where id = $1 and deleted_at is null")
         .bind(card_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
+    sqlx::query(
+        r#"
+        insert into tombstones (
+          id, workspace_id, entity_type, entity_id,
+          deleted_by_user_id, deleted_by_replica_id, deleted_at, metadata_jsonb
+        )
+        select
+          gen_random_uuid(), $2, 'card', c.id,
+          $3, n.replica_id, c.deleted_at,
+          jsonb_build_object(
+            'boardId', c.board_id,
+            'cardTitle', c.title,
+            'scope', 'all_devices',
+            'source', 'card.delete'
+          )
+        from cards c
+        cross join local_node_identity n
+        where c.id = $1
+        on conflict (entity_type, entity_id) do update set
+          deleted_by_user_id = excluded.deleted_by_user_id,
+          deleted_by_replica_id = excluded.deleted_by_replica_id,
+          deleted_at = greatest(tombstones.deleted_at, excluded.deleted_at),
+          metadata_jsonb = tombstones.metadata_jsonb || excluded.metadata_jsonb
+        "#,
+    )
+    .bind(card_id)
+    .bind(workspace_id)
+    .bind(actor_user_id)
+    .execute(&mut *tx)
+    .await?;
+
     let audit_id = record_audit(
-        pool,
+        &mut *tx,
         &NewAuditLogEntry {
             workspace_id: Some(workspace_id),
             actor_user_id: Some(actor_user_id),
@@ -559,12 +687,16 @@ pub async fn delete_card(
             target_entity_type: Some("card".to_string()),
             target_entity_id: Some(card_id),
             request_id: None,
-            metadata_jsonb: json!({"title": card.title.clone(), "boardId": card.board_id}),
+            metadata_jsonb: json!({
+                "title": card.title.clone(),
+                "boardId": card.board_id,
+                "scope": "all_devices",
+            }),
         },
     )
     .await?;
     let _activity_id = record_activity(
-        pool,
+        &mut *tx,
         &NewActivityEntry {
             workspace_id,
             board_id: Uuid::parse_str(&card.board_id).expect("valid board id"),
@@ -573,14 +705,18 @@ pub async fn delete_card(
             kind: "card.deleted",
             entity_type: "card",
             entity_id: card_id,
-            field_mask: vec![],
-            payload_jsonb: json!({"cardTitle": card.title}),
+            field_mask: vec!["__lifecycle".to_string()],
+            payload_jsonb: json!({
+                "cardTitle": card.title,
+                "scope": "all_devices",
+            }),
             request_id: None,
             source_change_event_id: None,
             source_audit_log_id: Some(audit_id),
         },
     )
     .await?;
+    tx.commit().await?;
 
     Ok(card)
 }
@@ -864,6 +1000,7 @@ pub async fn reorder_column_cards(
             completed: None,
             sort_by: Some("position".to_string()),
             sort_dir: Some("asc".to_string()),
+            local_visibility: Some("visible".to_string()),
         },
     )
     .await

@@ -12,6 +12,13 @@ pub struct ListCardsQuery {
     pub completed: Option<bool>,
     pub sort_by: Option<String>,
     pub sort_dir: Option<String>,
+    pub local_visibility: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteCardQuery {
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -20,7 +20,7 @@ import {
 import { getChecklistProgress } from '@/features/boards/lib/checklistProgress';
 import { useColumnsQuery, useCreateColumnMutation, useDeleteColumnMutation, useUpdateColumnMutation } from '@/features/columns/hooks/useColumns';
 import { CardDetailsDrawer } from '@/features/cards/components/CardDetailsDrawer';
-import { useCardsQuery } from '@/features/cards/hooks/useCards';
+import { useCardsQuery, useUnhideCardLocallyMutation } from '@/features/cards/hooks/useCards';
 import { LocalFirstStatusBanner } from '@/features/localFirst/components/LocalFirstStatusBanner';
 import { SyncBaselineStatus } from '@/features/sync/components/SyncBaselineStatus';
 import { useSyncBaseline } from '@/features/sync/hooks/useSyncBaseline';
@@ -84,6 +84,8 @@ export function BoardPage() {
   const boardQuery = useBoardQuery(boardId);
   const columnsQuery = useColumnsQuery(boardId);
   const cardsQuery = useCardsQuery(boardId);
+  const hiddenCardsQuery = useCardsQuery(boardId, 'hidden');
+  const unhideCardMutation = useUnhideCardLocallyMutation(boardId);
   const boardActivityQuery = useBoardActivityQuery(boardId);
   const boardAppearanceQuery = useBoardAppearanceQuery(boardId);
   const createColumnMutation = useCreateColumnMutation(boardId);
@@ -110,6 +112,7 @@ export function BoardPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [isColumnComposerOpen, setColumnComposerOpen] = useState(false);
   const [isActivityOpen, setActivityOpen] = useState(false);
+  const [isHiddenCardsOpen, setHiddenCardsOpen] = useState(false);
   const dropHandledRef = useRef(false);
 
   const hasPendingCardMove = localFirst.isFlushing;
@@ -432,6 +435,9 @@ export function BoardPage() {
               <Icon name="history" size={16} />
               История
             </Button>
+            <Button variant="ghost" onClick={() => setHiddenCardsOpen((current) => !current)} title="Карточки, скрытые только на этом узле">
+              Скрытые здесь{hiddenCardsQuery.data?.items.length ? ` (${hiddenCardsQuery.data.items.length})` : ''}
+            </Button>
             <Button iconOnly variant="ghost" onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))} title="Оформление доски" aria-label="Оформление доски">
               <Icon name="palette" />
             </Button>
@@ -449,6 +455,34 @@ export function BoardPage() {
 
         <LocalFirstStatusBanner runtime={localFirst} />
         <SyncBaselineStatus runtime={syncBaseline} />
+
+        {isHiddenCardsOpen ? (
+          <section className="panel" data-testid="locally-hidden-cards">
+            <div className="entity-header">
+              <div>
+                <h3>Скрытые только на этом узле</h3>
+                <p className="muted">Эти карточки остаются на других устройствах и не создают событий в Nostr.</p>
+              </div>
+            </div>
+            {hiddenCardsQuery.isLoading ? <LoadingState label="Загружаем скрытые карточки…" compact /> : null}
+            {hiddenCardsQuery.data?.items.length ? (
+              <div className="grid">
+                {hiddenCardsQuery.data.items.map((card) => (
+                  <div className="key-value" key={card.id}>
+                    <span>{card.title}</span>
+                    <Button
+                      variant="ghost"
+                      disabled={unhideCardMutation.isPending}
+                      onClick={() => void unhideCardMutation.mutateAsync(card.id)}
+                    >
+                      Вернуть на этот узел
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : hiddenCardsQuery.isSuccess ? <p className="muted">Локально скрытых карточек нет.</p> : null}
+          </section>
+        ) : null}
 
         {exportStatus ? (
           <div className="inline-banner">
