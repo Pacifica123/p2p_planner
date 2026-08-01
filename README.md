@@ -91,6 +91,8 @@ backup и только затем переключает backend/web на пре
   Nostr-синхронизацией карточек и чек-листов;
 - изменения Android принимаются coordinator и появляются на открытой web-доске
   в пределах короткого интервала обновления.
+- явное связывание чистого второго web-узла с основным узлом в доверенной LAN:
+  переносятся identity, owned workspaces, доски и ключи roaming.
 
 ## Что пока не готово
 
@@ -113,6 +115,13 @@ backup и только затем переключает backend/web на пре
 Импорт не перезаписывает существующую доску и не переносит сессии, старые ID,
 авторов или старую activity history. Подробности:
 [`docs/architecture/import-export-backup-v1.md`](docs/architecture/import-export-backup-v1.md).
+
+### Второй независимый web-узел
+
+Email уникален только внутри одного deployment. На чистом втором узле beta.7
+выберите `Подключить с другого узла`; ненужную локальную копию после проверки
+можно удалить командой `python bootstrap.py reset --yes`. Полный порядок:
+[`docs/architecture/web-node-link-v1.md`](docs/architecture/web-node-link-v1.md).
 
 ## Как это устроено
 
@@ -187,6 +196,7 @@ npm run dev
 - [`docs/deployment/application-update-strategy-v1.md`](docs/deployment/application-update-strategy-v1.md) — обновление и rollback;
 - [`docs/deployment/postgresql-backup-restore-v1.md`](docs/deployment/postgresql-backup-restore-v1.md) — PostgreSQL backup/restore;
 - [`docs/architecture/client-uiux-flat-pass-v1.md`](docs/architecture/client-uiux-flat-pass-v1.md) — разбор UI/UX-карты и flat-проход;
+- [`docs/architecture/web-node-link-v1.md`](docs/architecture/web-node-link-v1.md) — перенос identity и досок между двумя web-узлами;
 - [`docs/deployment/free-hosting-transports-v1.md`](docs/deployment/free-hosting-transports-v1.md) — бесплатные transport-варианты;
 - [`docs/adr/ADR-006-homeless-board-transport-stack.md`](docs/adr/ADR-006-homeless-board-transport-stack.md) — выбранная transport-архитектура;
 - [`docs/dev-bootstrap/devbootstrap-v1-operations.md`](docs/dev-bootstrap/devbootstrap-v1-operations.md) — расширенная локальная диагностика;
@@ -199,14 +209,6 @@ npm run dev
 
 ```bash
 python -B tools/check_zero_config_bootstrap.py
-```
-
-Проверка web-контракта beta.6:
-
-```bash
-python -B tools/check_mobile_web_feature_contract.py
-python -B tools/check_web_customization_part2_contract.py
-python -B tools/check_cross_client_crud_contract.py
 ```
 
 Полный набор локальных release gates:

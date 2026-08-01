@@ -479,6 +479,117 @@ components:
           oneOf:
           - $ref: '#/components/schemas/UpsertDeviceRequest'
           - type: 'null'
+    NodeLinkExportRequest:
+      type: object
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+    NodeLinkImportRequest:
+      type: object
+      required:
+      - sourceUrl
+      - email
+      - password
+      properties:
+        sourceUrl:
+          type: string
+          format: uri
+          description: Корневой HTTP(S)-адрес доверенного исходного web-узла в локальной сети.
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+    NodeLinkExportResponse:
+      type: object
+      required:
+      - format
+      - formatVersion
+      - user
+      - workspaces
+      - boardCapabilities
+      - transport
+      - exportedAt
+      - warnings
+      properties:
+        format:
+          type: string
+          enum:
+          - p2p-kanban-web-node-link
+        formatVersion:
+          type: integer
+          enum:
+          - 1
+        user:
+          $ref: '#/components/schemas/User'
+        userAppearance:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+        workspaces:
+          type: array
+          items:
+            type: object
+            required:
+            - membershipRole
+            - bundle
+            properties:
+              membershipRole:
+                type: string
+                enum:
+                - owner
+              bundle:
+                $ref: '#/components/schemas/PortableBundle'
+        boardCapabilities:
+          type: array
+          items:
+            type: object
+            required:
+            - boardId
+            - boardTag
+            - boardKey
+            properties:
+              boardId:
+                type: string
+                format: uuid
+              boardTag:
+                type: string
+              boardKey:
+                type: string
+                description: Секретная capability; возвращается только после проверки пароля.
+        transport:
+          type: object
+          required:
+          - relays
+          - eventKind
+          - minimumRelayAcks
+          properties:
+            relays:
+              type: array
+              items:
+                type: string
+                format: uri
+            eventKind:
+              type: integer
+            minimumRelayAcks:
+              type: integer
+              minimum: 1
+        exportedAt:
+          type: string
+          format: date-time
+        warnings:
+          type: array
+          items:
+            type: string
     DevBootstrapUserRequest:
       type: object
       properties:
@@ -3328,6 +3439,64 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+      x-v1Status: real_v1
+      x-frontendUsed: true
+  /auth/node-link/export:
+    post:
+      tags:
+      - auth
+      summary: Verify credentials on a source node and export an account bootstrap snapshot
+      description: Возвращает идентичность, owned workspace-снимки и relay-capabilities без сессий и password hash.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeLinkExportRequest'
+      responses:
+        '200':
+          description: Source-node snapshot ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeLinkExportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-v1Status: real_v1
+      x-frontendUsed: false
+  /auth/node-link/import:
+    post:
+      tags:
+      - auth
+      summary: Link a clean web node to an existing account on another LAN node
+      description: Целевой backend сам обращается к sourceUrl, проверяет снимок, переносит стабильные UUID и выдаёт локальную сессию.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeLinkImportRequest'
+      responses:
+        '201':
+          description: Node linked and signed in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
       x-v1Status: real_v1
       x-frontendUsed: true
   /auth/refresh:

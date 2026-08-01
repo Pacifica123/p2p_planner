@@ -75,7 +75,7 @@ fn ensure_dev_bootstrap_allowed(state: &AppState) -> AppResult<()> {
     }
 }
 
-fn normalize_email(value: &str) -> AppResult<String> {
+pub(super) fn normalize_email(value: &str) -> AppResult<String> {
     let normalized = value.trim().to_ascii_lowercase();
     if normalized.is_empty() || !normalized.contains('@') {
         return Err(AppError::bad_request(
@@ -95,7 +95,7 @@ fn normalize_display_name(value: &str) -> AppResult<String> {
     Ok(display_name.to_string())
 }
 
-fn validate_password(value: &str) -> AppResult<()> {
+pub(super) fn validate_password(value: &str) -> AppResult<()> {
     if value.len() < 8 {
         return Err(AppError::bad_request(
             "password must be at least 8 characters",
@@ -104,7 +104,7 @@ fn validate_password(value: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn hash_password(password: &str) -> AppResult<String> {
+pub(super) fn hash_password(password: &str) -> AppResult<String> {
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
@@ -322,7 +322,7 @@ async fn complete_session_auth(
     })
 }
 
-async fn create_authenticated_session(
+pub(super) async fn create_authenticated_session(
     state: &AppState,
     user: &AuthUserRecord,
     headers: &HeaderMap,
@@ -397,8 +397,17 @@ pub async fn sign_in(
     headers: &HeaderMap,
     payload: SignInRequest,
 ) -> AppResult<AuthSuccessEnvelope> {
-    let email = normalize_email(&payload.email)?;
-    validate_password(&payload.password)?;
+    let user = authenticate_user_with_password(state, &payload.email, &payload.password).await?;
+    create_authenticated_session(state, &user, headers).await
+}
+
+pub(super) async fn authenticate_user_with_password(
+    state: &AppState,
+    email: &str,
+    password: &str,
+) -> AppResult<AuthUserRecord> {
+    let email = normalize_email(email)?;
+    validate_password(password)?;
 
     let Some(user) = repo::find_active_user_by_email(&state.db, &email).await? else {
         return Err(AppError::unauthorized("Invalid email or password"));
@@ -410,11 +419,11 @@ pub async fn sign_in(
         ));
     };
 
-    if !verify_password(&payload.password, password_hash)? {
+    if !verify_password(password, password_hash)? {
         return Err(AppError::unauthorized("Invalid email or password"));
     }
 
-    create_authenticated_session(state, &user, headers).await
+    Ok(user)
 }
 
 async fn resolve_refresh_session(

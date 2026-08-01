@@ -13,15 +13,20 @@ function errorMessage(error: unknown) {
 }
 
 export function AuthPage() {
-  const { status, signInWithPassword, signUpWithPassword } = useAuthSession();
-  const [mode, setMode] = useState<'sign_in' | 'sign_up'>('sign_in');
+  const { status, signInWithPassword, signUpWithPassword, signInFromAnotherNode } = useAuthSession();
+  const [mode, setMode] = useState<'sign_in' | 'node_link' | 'sign_up'>('sign_in');
+  const [sourceUrl, setSourceUrl] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const title = useMemo(() => (mode === 'sign_in' ? 'Вход' : 'Новый аккаунт'), [mode]);
+  const title = useMemo(() => {
+    if (mode === 'sign_in') return 'Вход на этом узле';
+    if (mode === 'node_link') return 'Подключение существующего аккаунта';
+    return 'Новый отдельный аккаунт';
+  }, [mode]);
 
   if (status === 'authenticated') {
     return <Navigate to="/" replace />;
@@ -35,6 +40,8 @@ export function AuthPage() {
     try {
       if (mode === 'sign_in') {
         await signInWithPassword({ email, password });
+      } else if (mode === 'node_link') {
+        await signInFromAnotherNode({ sourceUrl: sourceUrl.trim(), email, password });
       } else {
         await signUpWithPassword({ email, password, displayName });
       }
@@ -52,16 +59,39 @@ export function AuthPage() {
           <Button data-testid="auth-mode-sign-in" variant={mode === 'sign_in' ? 'primary' : 'default'} onClick={() => setMode('sign_in')}>
             Войти
           </Button>
+          <Button data-testid="auth-mode-node-link" variant={mode === 'node_link' ? 'primary' : 'default'} onClick={() => setMode('node_link')}>
+            Подключить с другого узла
+          </Button>
           <Button data-testid="auth-mode-sign-up" variant={mode === 'sign_up' ? 'primary' : 'default'} onClick={() => setMode('sign_up')}>
-            Зарегистрироваться
+            Создать отдельный аккаунт
           </Button>
         </div>
       </Panel>
 
-      <Panel title={title} description={mode === 'sign_in' ? 'Введите данные своего аккаунта.' : 'Создайте локальный аккаунт для этого сервера.'}>
+      <Panel
+        title={title}
+        description={
+          mode === 'sign_in'
+            ? 'Входит только в аккаунт, который уже существует в локальной базе этого узла.'
+            : mode === 'node_link'
+              ? 'Целевой узел должен быть чистым. Оба web-узла должны быть запущены и доступны друг другу в доверенной локальной сети.'
+              : 'Создаёт новую независимую идентичность. Совпадающий email на другом узле не связывает аккаунты.'
+        }
+      >
         <form className="stack" onSubmit={onSubmit}>
+          {mode === 'node_link' ? (
+            <TextField
+              data-testid="auth-source-url"
+              label="Адрес исходного web-узла"
+              type="url"
+              placeholder="http://192.168.1.42:8080"
+              value={sourceUrl}
+              onChange={(event) => setSourceUrl(event.target.value)}
+              required
+            />
+          ) : null}
           <TextField data-testid="auth-email" label="Email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-          <TextField data-testid="auth-password" label="Пароль" type="password" autoComplete={mode === 'sign_in' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} required />
+          <TextField data-testid="auth-password" label="Пароль" type="password" autoComplete={mode === 'sign_up' ? 'new-password' : 'current-password'} value={password} onChange={(event) => setPassword(event.target.value)} required />
           {mode === 'sign_up' ? (
             <TextField data-testid="auth-display-name" label="Имя" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
           ) : null}
@@ -70,7 +100,13 @@ export function AuthPage() {
 
           <div className="toolbar">
             <Button data-testid="auth-submit" type="submit" variant="primary" disabled={isSubmitting}>
-              {isSubmitting ? 'Подождите…' : mode === 'sign_in' ? 'Войти' : 'Создать аккаунт'}
+              {isSubmitting
+                ? 'Подождите…'
+                : mode === 'sign_in'
+                  ? 'Войти'
+                  : mode === 'node_link'
+                    ? 'Подключить и перенести доски'
+                    : 'Создать отдельный аккаунт'}
             </Button>
           </div>
         </form>

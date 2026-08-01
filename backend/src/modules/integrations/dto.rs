@@ -136,7 +136,7 @@ pub struct PortableBundleManifest {
     pub summary: PortableBundleSummary,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PortableBundleScope {
     pub scope_kind: String,
@@ -144,7 +144,7 @@ pub struct PortableBundleScope {
     pub board_id: Option<Uuid>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PortableBundleOrigin {
     pub exported_by_user_id: Uuid,
@@ -152,7 +152,7 @@ pub struct PortableBundleOrigin {
     pub backend_visible_state: bool,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PortableBundleIncludes {
     pub appearance: bool,
@@ -162,7 +162,7 @@ pub struct PortableBundleIncludes {
     pub local_metadata: bool,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PortableBundlePayload {
     pub workspaces: Value,
@@ -178,7 +178,7 @@ pub struct PortableBundlePayload {
     pub activity_entries: Value,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PortableBundleRestoreHints {
     pub recommended_strategy: String,
@@ -187,7 +187,7 @@ pub struct PortableBundleRestoreHints {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PortableBundle {
     #[serde(rename = "manifest.json")]

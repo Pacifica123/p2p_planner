@@ -42,12 +42,35 @@ pub async fn create_roaming_capability(
 
         let workspace_id = board_workspace_id(&state.db, payload.board_id).await?;
         require_workspace_admin(&state.db, workspace_id, auth.user_id).await?;
-        let master_key = nostr.master_key().map_err(|_| AppError::internal())?;
-        let codec = p2p_kanban_nostr_transport::NostrCodec::new(master_key)
-            .map_err(|_| AppError::internal())?;
-        let material = codec
-            .roaming_capability(&payload.board_id.to_string())
-            .map_err(|_| AppError::internal())?;
+        let imported = sqlx::query_as::<_, (String, String)>(
+            r#"
+            select board_tag, board_key_base64
+            from roaming_board_capabilities
+            where board_id = $1
+            "#,
+        )
+        .bind(payload.board_id)
+        .fetch_optional(&state.db)
+        .await?;
+        let material = if let Some((board_tag, board_key)) = imported {
+            let material =
+                p2p_kanban_nostr_transport::NostrCodec::roaming_capability_from_board_key(
+                    &payload.board_id.to_string(),
+                    &board_key,
+                )
+                .map_err(|_| AppError::internal())?;
+            if material.board_tag != board_tag {
+                return Err(AppError::internal());
+            }
+            material
+        } else {
+            let master_key = nostr.master_key().map_err(|_| AppError::internal())?;
+            let codec = p2p_kanban_nostr_transport::NostrCodec::new(master_key)
+                .map_err(|_| AppError::internal())?;
+            codec
+                .roaming_capability(&payload.board_id.to_string())
+                .map_err(|_| AppError::internal())?
+        };
         let provisioned_at = sqlx::query_scalar::<_, String>(
             r#"select to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')"#,
         )

@@ -1,5 +1,6 @@
 pub mod dto;
 pub mod handler;
+mod pairing;
 pub mod repo;
 pub mod service;
 pub mod token;
@@ -15,6 +16,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/auth/sign-up", post(handler::sign_up))
         .route("/auth/sign-in", post(handler::sign_in))
+        .route("/auth/node-link/export", post(handler::export_node_link))
+        .route("/auth/node-link/import", post(handler::import_node_link))
         .route("/auth/refresh", post(handler::refresh))
         .route("/auth/sign-out", post(handler::sign_out))
         .route("/auth/sign-out-all", post(handler::sign_out_all))

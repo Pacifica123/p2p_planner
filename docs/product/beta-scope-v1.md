@@ -5,7 +5,7 @@
 - Назначение: сузить первую beta-границу после прохождения архитектурных, backend, frontend, local-first, sync, security, testing и deployment тем.
 
 > Исторический baseline первоначальной web-first beta. Фактическое состояние
-> beta.6, включение Android и актуальные релизные блокеры определяются
+> beta.7, включение Android и актуальные релизные блокеры определяются
 > `v1-execution-roadmap.md` и `v1-remaining-checklist.md`. Формулировки ниже о
 > полном исключении mobile больше не описывают текущий продукт.
 

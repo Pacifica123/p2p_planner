@@ -1,8 +1,8 @@
 # Концепция интеграции проектов с GitHub и devctl
 
 - Статус: идейный документ, без обещания готовой интеграции
-- Версия схемы: draft 1
-- Актуально на: 2026-07-29
+- Версия схемы: draft 2
+- Актуально на: 2026-08-01
 
 ## Короткий вывод
 
@@ -109,6 +109,73 @@ flowchart TD
 Главное направление данных: внешние адаптеры создают нормализованные события
 и receipts, а изменение доменных сущностей выполняет обычный application
 service p2pKanban с проверкой прав.
+
+## Как p2pKanban узнаёт об изменении External Resource
+
+Сам по себе adapter не является универсальной «сигнализацией». Полный входной
+путь состоит из трёх разных обязанностей:
+
+1. **Обнаружение** — получить сигнал тем способом, который поддерживает ER:
+   webhook, polling, stream, файловый watcher, CLI receipt или ручной импорт.
+2. **Перевод** — provider adapter проверяет подпись и формат, затем превращает
+   GitHub/devctl-специфичные данные в `NormalizedExternalEvent`.
+3. **Реакция** — integration core дедуплицирует событие, сохраняет его в inbox,
+   применяет настроенные правила и вызывает обычные команды домена.
+
+```mermaid
+flowchart TD
+    ER["External Resource"] --> SC["Source connector"]
+    SC --> IN["Inbox и дедупликация"]
+    IN --> AD["Provider adapter"]
+    AD --> DM["Правила и команды p2pKanban"]
+```
+
+Таким образом, концепция адаптера отвечает на вопрос **как понять и
+нормализовать событие**, а `SourceConnector` — **как его получить**. Один
+provider adapter может поддерживать несколько connectors: например, GitHub
+webhook для быстрого пути и GitHub polling как восстановление пропущенных
+событий.
+
+### Универсальная часть и неизбежная provider-specific часть
+
+Универсальный механизм возможен, но не как один одинаковый запрос ко всем ER.
+Он представляет собой общий runtime с небольшим набором способов доставки.
+
+| Общий runtime | Реализация конкретного ER |
+|---|---|
+| расписание polling и backoff | API endpoint и параметры GitHub/GitLab/другого ER |
+| хранение cursor/checkpoint | смысл `since`, ETag, page token или event ID |
+| webhook ingress и durable inbox | проверка конкретной подписи и заголовков |
+| дедупликация и журнал ошибок | извлечение стабильного внешнего event/object ID |
+| retry, dead letter и health | rate limits и правила повторов провайдера |
+| запуск mapping/rule engine | перевод внешних полей в normalized event |
+
+То есть отдельный polling-движок на каждый ER не нужен. Нужен один scheduler,
+который вызывает provider connector по общему контракту, например:
+
+```text
+observe(checkpoint) -> observations + nextCheckpoint
+verify(rawSignal) -> verifiedPayload
+normalize(verifiedPayload) -> NormalizedExternalEvent[]
+capabilities() -> webhook | poll | stream | file | receipt
+```
+
+При этом маленькая provider-specific реализация всё равно неизбежна: разные ER
+имеют разные auth, API, подписи, пагинацию, rate limits и смысл статусов.
+Попытка убрать и этот слой приведёт либо к конфиг-языку, который фактически
+станет ещё одним adapter SDK, либо к ненадёжным догадкам по похожим полям.
+
+### Как это выглядит для первых двух провайдеров
+
+| Провайдер | Основной сигнал | Резервный путь | Нормализованный результат |
+|---|---|---|---|
+| GitHub | подписанный webhook | polling по cursor/ETag | issue/PR/release/commit event |
+| devctl | evidence receipt после `apply -> checks -> commit` | повторный scan каталога receipts | immutable patch result event |
+
+Webhook не должен напрямую менять карточку, а receipt не должен напрямую
+помечать checklist item выполненным. Оба сначала попадают в durable inbox,
+получают idempotency key, проходят adapter и только затем запускают явно
+настроенное правило контура проекта.
 
 ## Локальный каталог `.p2pkanban`
 

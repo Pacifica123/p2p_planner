@@ -1,6 +1,7 @@
 import { apiRequest, clearAccessToken, setAccessToken } from '@/shared/api/client';
 import type {
   AuthSuccessResponse,
+  NodeLinkImportRequest,
   SessionResponse,
   SignInRequest,
   SignOutResponse,
@@ -18,6 +19,15 @@ export async function signIn(input: SignInRequest) {
 
 export async function signUp(input: SignUpRequest) {
   const response = await apiRequest<AuthSuccessResponse>('/auth/sign-up', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  setAccessToken(response.accessToken);
+  return response;
+}
+
+export async function importAccountFromNode(input: NodeLinkImportRequest) {
+  const response = await apiRequest<AuthSuccessResponse>('/auth/node-link/import', {
     method: 'POST',
     body: JSON.stringify(input),
   });

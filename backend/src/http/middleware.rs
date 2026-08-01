@@ -75,6 +75,7 @@ fn classify_request(path: &str) -> Option<(&'static str, u64, u32)> {
         || path.starts_with("/api/v1/auth/refresh")
         || path.starts_with("/api/v1/auth/sign-out")
         || path.starts_with("/api/v1/auth/sign-out-all")
+        || path.starts_with("/api/v1/auth/node-link/")
         || path.starts_with("/api/v1/auth/dev-bootstrap")
     {
         return Some(("auth", 0, 0));

@@ -1,6 +1,6 @@
 [package]
 name = "p2p-planner-backend"
-version = "1.0.0-beta.6"
+version = "1.0.0-beta.7"
 edition = "2021"
 default-run = "p2p-planner-backend"
 
@@ -23,6 +23,7 @@ argon2 = "0.5"
 base64 = "0.22"
 hmac = "0.12"
 rand = "0.8"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider"] }
 sha2 = "0.10"
 anyhow = "1"
 axum = { version = "0.8", features = ["json", "macros", "query", "tokio", "tracing"] }

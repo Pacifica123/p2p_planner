@@ -76,10 +76,14 @@ pub fn validate_client_event(event: &ClientChangeEvent) -> Result<(), Validation
         return Err(ValidationError::InvalidBaseServerOrder);
     }
     if !ENTITY_TYPES.contains(&event.entity_type.as_str()) {
-        return Err(ValidationError::UnsupportedEntityType(event.entity_type.clone()));
+        return Err(ValidationError::UnsupportedEntityType(
+            event.entity_type.clone(),
+        ));
     }
     if normalize_operation(&event.operation).is_none() {
-        return Err(ValidationError::UnsupportedOperation(event.operation.clone()));
+        return Err(ValidationError::UnsupportedOperation(
+            event.operation.clone(),
+        ));
     }
 
     if let Some(field_mask) = &event.field_mask {

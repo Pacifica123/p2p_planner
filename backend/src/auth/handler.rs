@@ -15,8 +15,8 @@ use crate::{
 use super::{
     dto::{
         DevBootstrapUserRequest, DevBootstrapUserResponse, NativeAuthSuccessResponse,
-        NativeRefreshRequest, NativeSignOutRequest, SessionResponse, SignInRequest,
-        SignOutResponse, SignUpRequest,
+        NativeRefreshRequest, NativeSignOutRequest, NodeLinkExportRequest, NodeLinkExportResponse,
+        NodeLinkImportRequest, SessionResponse, SignInRequest, SignOutResponse, SignUpRequest,
     },
     service,
 };
@@ -56,6 +56,26 @@ pub async fn sign_in(
     let result = service::sign_in(&state, &headers, payload).await?;
     response_with_cookies(
         StatusCode::OK,
+        result.payload,
+        &[result.refresh_cookie, result.device_cookie],
+    )
+}
+
+pub async fn export_node_link(
+    State(state): State<AppState>,
+    Json(payload): Json<NodeLinkExportRequest>,
+) -> AppResult<Json<ApiEnvelope<NodeLinkExportResponse>>> {
+    Ok(ok(super::pairing::export_node_link(&state, payload).await?))
+}
+
+pub async fn import_node_link(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<NodeLinkImportRequest>,
+) -> AppResult<Response> {
+    let result = super::pairing::import_node_link(&state, &headers, payload).await?;
+    response_with_cookies(
+        StatusCode::CREATED,
         result.payload,
         &[result.refresh_cookie, result.device_cookie],
     )

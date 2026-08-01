@@ -74,9 +74,11 @@ impl NostrTransportConfig {
         if self.relays.is_empty() {
             bail!("at least one Nostr relay is required");
         }
-        if self.relays.iter().any(|relay| {
-            !(relay.starts_with("wss://") || relay.starts_with("ws://"))
-        }) {
+        if self
+            .relays
+            .iter()
+            .any(|relay| !(relay.starts_with("wss://") || relay.starts_with("ws://")))
+        {
             bail!("Nostr relay URLs must use ws:// or wss://");
         }
         if self.secret_key.trim().is_empty() {
@@ -144,16 +146,40 @@ impl NostrCodec {
         })
     }
 
+    pub fn roaming_capability_from_board_key(
+        board_id: &str,
+        board_key: &str,
+    ) -> Result<RoamingCapabilityMaterial> {
+        let board_key = decode_roaming_board_key(board_key)?;
+        Ok(RoamingCapabilityMaterial {
+            protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
+            board_tag: roaming_board_tag_from_key(&board_key, board_id)?,
+            board_key: URL_SAFE_NO_PAD.encode(board_key),
+        })
+    }
+
     pub fn seal_roaming(&self, event: &RoamingBoardEvent) -> Result<String> {
+        let board_key = self.roaming_board_key(&event.board_id)?;
+        Self::seal_roaming_with_key(event, &board_key)
+    }
+
+    pub fn seal_roaming_with_board_key(
+        event: &RoamingBoardEvent,
+        board_key: &str,
+    ) -> Result<String> {
+        let board_key = decode_roaming_board_key(board_key)?;
+        Self::seal_roaming_with_key(event, &board_key)
+    }
+
+    fn seal_roaming_with_key(event: &RoamingBoardEvent, board_key: &[u8; 32]) -> Result<String> {
         if event.protocol_version != ROAMING_PROTOCOL_VERSION {
             bail!("unsupported roaming protocol version");
         }
         if event.replica_seq < 1 || event.logical_clock < 1 {
             bail!("roaming event counters must be positive");
         }
-        let board_key = self.roaming_board_key(&event.board_id)?;
         let plaintext = serde_json::to_vec(event).context("could not serialize roaming event")?;
-        let cipher = XChaCha20Poly1305::new_from_slice(&board_key)
+        let cipher = XChaCha20Poly1305::new_from_slice(board_key)
             .map_err(|_| anyhow!("could not initialize XChaCha20-Poly1305"))?;
         let mut nonce_bytes = [0u8; 24];
         OsRng.fill_bytes(&mut nonce_bytes);
@@ -163,24 +189,38 @@ impl NostrCodec {
 
         serde_json::to_string(&CiphertextRecord {
             version: CIPHERTEXT_VERSION,
-            board_tag: self.roaming_board_tag(&event.board_id)?,
+            board_tag: roaming_board_tag_from_key(board_key, &event.board_id)?,
             nonce: URL_SAFE_NO_PAD.encode(nonce_bytes),
             ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
         })
         .context("could not serialize roaming ciphertext record")
     }
 
-    pub fn open_roaming(
-        &self,
+    pub fn open_roaming(&self, board_id: &str, content: &str) -> Result<RoamingBoardEvent> {
+        let board_key = self.roaming_board_key(board_id)?;
+        Self::open_roaming_with_key(board_id, content, &board_key)
+    }
+
+    pub fn open_roaming_with_board_key(
         board_id: &str,
         content: &str,
+        board_key: &str,
     ) -> Result<RoamingBoardEvent> {
-        let record: CiphertextRecord =
-            serde_json::from_str(content).context("Nostr event content is not a ciphertext record")?;
+        let board_key = decode_roaming_board_key(board_key)?;
+        Self::open_roaming_with_key(board_id, content, &board_key)
+    }
+
+    fn open_roaming_with_key(
+        board_id: &str,
+        content: &str,
+        board_key: &[u8; 32],
+    ) -> Result<RoamingBoardEvent> {
+        let record: CiphertextRecord = serde_json::from_str(content)
+            .context("Nostr event content is not a ciphertext record")?;
         if record.version != CIPHERTEXT_VERSION {
             bail!("unsupported roaming ciphertext version");
         }
-        if record.board_tag != self.roaming_board_tag(board_id)? {
+        if record.board_tag != roaming_board_tag_from_key(board_key, board_id)? {
             bail!("roaming event belongs to another board");
         }
         let nonce = URL_SAFE_NO_PAD
@@ -192,8 +232,7 @@ impl NostrCodec {
         let ciphertext = URL_SAFE_NO_PAD
             .decode(record.ciphertext)
             .context("roaming ciphertext is not valid base64url")?;
-        let board_key = self.roaming_board_key(board_id)?;
-        let plaintext = XChaCha20Poly1305::new_from_slice(&board_key)
+        let plaintext = XChaCha20Poly1305::new_from_slice(board_key)
             .map_err(|_| anyhow!("could not initialize XChaCha20-Poly1305"))?
             .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
             .map_err(|_| anyhow!("roaming ciphertext authentication failed"))?;
@@ -219,7 +258,8 @@ impl NostrCodec {
         let workspace_key = self.workspace_key(&workspace_id)?;
         let signed = sign_envelope(envelope, "nostr-shadow-workspace-v1", &workspace_key)
             .context("could not authenticate sync envelope")?;
-        let plaintext = serde_json::to_vec(&signed).context("could not serialize signed sync envelope")?;
+        let plaintext =
+            serde_json::to_vec(&signed).context("could not serialize signed sync envelope")?;
 
         let cipher = XChaCha20Poly1305::new_from_slice(&workspace_key)
             .map_err(|_| anyhow!("could not initialize XChaCha20-Poly1305"))?;
@@ -243,8 +283,8 @@ impl NostrCodec {
         workspace_id: &str,
         content: &str,
     ) -> Result<SignedSyncEnvelope> {
-        let record: CiphertextRecord =
-            serde_json::from_str(content).context("Nostr event content is not a ciphertext record")?;
+        let record: CiphertextRecord = serde_json::from_str(content)
+            .context("Nostr event content is not a ciphertext record")?;
         if record.version != CIPHERTEXT_VERSION {
             bail!("unsupported Nostr ciphertext version {}", record.version);
         }
@@ -267,9 +307,10 @@ impl NostrCodec {
         let plaintext = cipher
             .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
             .map_err(|_| anyhow!("Nostr ciphertext authentication failed"))?;
-        let signed: SignedSyncEnvelope =
-            serde_json::from_slice(&plaintext).context("decrypted Nostr payload is not a signed envelope")?;
-        verify_envelope(&signed, &workspace_key).context("decrypted sync envelope signature is invalid")?;
+        let signed: SignedSyncEnvelope = serde_json::from_slice(&plaintext)
+            .context("decrypted Nostr payload is not a signed envelope")?;
+        verify_envelope(&signed, &workspace_key)
+            .context("decrypted sync envelope signature is invalid")?;
         validate_envelope(&signed.envelope).context("decrypted sync envelope is invalid")?;
         if signed.envelope.workspace_id != workspace_id {
             bail!("decrypted sync envelope belongs to another workspace");
@@ -335,16 +376,36 @@ impl NostrTransport {
         })
     }
 
-    pub async fn publish_roaming(
-        &self,
-        event: &RoamingBoardEvent,
-    ) -> Result<NostrDeliveryReceipt> {
+    pub async fn publish_roaming(&self, event: &RoamingBoardEvent) -> Result<NostrDeliveryReceipt> {
         let board_tag = self.codec.roaming_board_tag(&event.board_id)?;
         let content = self.codec.seal_roaming(event)?;
+        self.publish_roaming_content(board_tag, content).await
+    }
+
+    pub async fn publish_roaming_with_board_key(
+        &self,
+        event: &RoamingBoardEvent,
+        board_key: &str,
+    ) -> Result<NostrDeliveryReceipt> {
+        let material = NostrCodec::roaming_capability_from_board_key(&event.board_id, board_key)?;
+        let content = NostrCodec::seal_roaming_with_board_key(event, board_key)?;
+        self.publish_roaming_content(material.board_tag, content)
+            .await
+    }
+
+    async fn publish_roaming_content(
+        &self,
+        board_tag: String,
+        content: String,
+    ) -> Result<NostrDeliveryReceipt> {
         let identifier = Tag::identifier(board_tag.clone());
         let marker = Tag::hashtag("p2pkanban-roaming");
         let builder = EventBuilder::new(
-            Kind::Custom(self.config.event_kind.saturating_add(ROAMING_EVENT_KIND_OFFSET)),
+            Kind::Custom(
+                self.config
+                    .event_kind
+                    .saturating_add(ROAMING_EVENT_KIND_OFFSET),
+            ),
             content,
         )
         .tags([identifier, marker]);
@@ -369,14 +430,33 @@ impl NostrTransport {
         })
     }
 
-    pub async fn recover_roaming(
+    pub async fn recover_roaming(&self, board_id: &str) -> Result<Vec<RecoveredRoamingEvent>> {
+        let expected_tag = self.codec.roaming_board_tag(board_id)?;
+        self.recover_roaming_records(board_id, expected_tag, None)
+            .await
+    }
+
+    pub async fn recover_roaming_with_board_key(
         &self,
         board_id: &str,
+        board_key: &str,
     ) -> Result<Vec<RecoveredRoamingEvent>> {
-        let expected_tag = self.codec.roaming_board_tag(board_id)?;
+        let material = NostrCodec::roaming_capability_from_board_key(board_id, board_key)?;
+        self.recover_roaming_records(board_id, material.board_tag, Some(board_key))
+            .await
+    }
+
+    async fn recover_roaming_records(
+        &self,
+        board_id: &str,
+        expected_tag: String,
+        board_key: Option<&str>,
+    ) -> Result<Vec<RecoveredRoamingEvent>> {
         let filter = Filter::new()
             .kind(Kind::Custom(
-                self.config.event_kind.saturating_add(ROAMING_EVENT_KIND_OFFSET),
+                self.config
+                    .event_kind
+                    .saturating_add(ROAMING_EVENT_KIND_OFFSET),
             ))
             .identifier(expected_tag.clone());
         let events = self
@@ -391,7 +471,13 @@ impl NostrTransport {
                 _ => continue,
             };
             let content = serde_json::to_string(&record)?;
-            if let Ok(event) = self.codec.open_roaming(board_id, &content) {
+            let opened = match board_key {
+                Some(board_key) => {
+                    NostrCodec::open_roaming_with_board_key(board_id, &content, board_key)
+                }
+                None => self.codec.open_roaming(board_id, &content),
+            };
+            if let Ok(event) = opened {
                 recovered.push(RecoveredRoamingEvent {
                     nostr_event_id: nostr_event.id.to_string(),
                     author_public_key: nostr_event.pubkey.to_string(),
@@ -456,8 +542,8 @@ impl NostrTransport {
 }
 
 fn derive_key(master_key: &[u8], domain: &[u8], workspace_id: &str) -> Result<[u8; 32]> {
-    let mut mac =
-        <HmacSha256 as Mac>::new_from_slice(master_key).map_err(|_| anyhow!("invalid master key"))?;
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(master_key)
+        .map_err(|_| anyhow!("invalid master key"))?;
     mac.update(domain);
     mac.update(&[0]);
     mac.update(workspace_id.as_bytes());
@@ -469,6 +555,19 @@ fn derive_key(master_key: &[u8], domain: &[u8], workspace_id: &str) -> Result<[u
 
 fn derive_tag(master_key: &[u8], domain: &[u8], workspace_id: &str) -> Result<String> {
     Ok(URL_SAFE_NO_PAD.encode(derive_key(master_key, domain, workspace_id)?))
+}
+
+fn decode_roaming_board_key(value: &str) -> Result<[u8; 32]> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(value.trim())
+        .context("roaming board key is not valid base64url")?;
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("roaming board key must contain exactly 32 bytes"))
+}
+
+fn roaming_board_tag_from_key(board_key: &[u8; 32], board_id: &str) -> Result<String> {
+    derive_tag(board_key, BOARD_TAG_DOMAIN, board_id)
 }
 
 #[cfg(test)]
@@ -558,5 +657,28 @@ mod tests {
         assert!(codec
             .open_roaming("018f22e2-aaaa-7aaa-8aaa-aaaaaaaaaaaa", &content)
             .is_err());
+    }
+
+    #[test]
+    fn imported_roaming_key_round_trips_across_node_master_keys() {
+        let source = NostrCodec::new(vec![7; 32]).unwrap();
+        let destination = NostrCodec::new(vec![9; 32]).unwrap();
+        let original = roaming_event();
+        let capability = source.roaming_capability(&original.board_id).unwrap();
+        let content =
+            NostrCodec::seal_roaming_with_board_key(&original, &capability.board_key).unwrap();
+
+        assert!(destination
+            .open_roaming(&original.board_id, &content)
+            .is_err());
+        assert_eq!(
+            NostrCodec::open_roaming_with_board_key(
+                &original.board_id,
+                &content,
+                &capability.board_key,
+            )
+            .unwrap(),
+            original
+        );
     }
 }

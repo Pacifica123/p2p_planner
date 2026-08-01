@@ -1,7 +1,7 @@
 # Что осталось до стабильного v1.0.0
 
-- Актуально на: 2026-07-29
-- Базовая линия: `v1.0.0-beta.6`
+- Актуально на: 2026-08-01
+- Базовая линия: `v1.0.0-beta.7`
 
 ## Закрыто функционально
 
@@ -15,6 +15,7 @@
 - [x] Базовый Android CRUD и перенос карточек между колонками.
 - [x] Исправление направления Android → backend → web.
 - [x] Актуальная карта документации и универсальная концепция GitHub/devctl.
+- [x] Явный перенос identity и owned-досок на чистый второй web-узел.
 
 ## Блокирует stable
 
@@ -29,6 +30,8 @@
 - [ ] Выполнить PostgreSQL backup/restore drill по runbook и сверить counts.
 - [ ] Пройти cross-client матрицу web → Android и Android → web для create,
   edit, move, archive и checklist CRUD.
+- [ ] Пройти web → web матрицу на Linux/Windows: initial link, edit, move,
+  archive и checklist CRUD в обе стороны через общий relay.
 - [ ] Решить границу релиза: Android входит в stable v1 либо остаётся явно
   помеченным beta-клиентом.
 - [ ] Подтвердить import-as-copy smoke на итоговом bundle.
@@ -43,7 +46,7 @@
   замечено.
 - Stop/start и обычная работа выглядят устойчиво в реальном сценарии.
 - Это снижает риск, но не заменяет воспроизводимый update/rollback/restore
-  прогон точного beta.6 commit.
+  прогон точного beta.7 commit.
 
 ## Не блокирует stable автоматически
 

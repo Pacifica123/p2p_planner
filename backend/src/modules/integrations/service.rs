@@ -335,7 +335,7 @@ pub async fn receive_webhook(provider_key: &str) -> AppResult<WebhookReceiptResp
     })
 }
 
-async fn build_portable_bundle(
+pub(crate) async fn build_portable_bundle(
     pool: &PgPool,
     actor_user_id: Uuid,
     scope_kind: &str,

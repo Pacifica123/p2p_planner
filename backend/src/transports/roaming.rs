@@ -84,6 +84,8 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
           o.workspace_id,
           o.board_id,
           o.card_id,
+          n.replica_id as node_replica_id,
+          rbc.board_key_base64,
           to_char(o.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as occurred_at,
           (
             floor(extract(epoch from o.created_at) * 1000)::bigint * 1000
@@ -164,6 +166,8 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
           ), '[]'::jsonb) as checklists
         from roaming_board_outbox o
         join cards c on c.id = o.card_id
+        cross join local_node_identity n
+        left join roaming_board_capabilities rbc on rbc.board_id = o.board_id
         where o.status in ('pending', 'retry')
           and o.next_attempt_at <= now()
         order by o.event_seq
@@ -191,7 +195,10 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             event_id: outbox_id.to_string(),
             workspace_id: row.try_get::<Uuid, _>("workspace_id").unwrap().to_string(),
             board_id: row.try_get::<Uuid, _>("board_id").unwrap().to_string(),
-            replica_id: row.try_get::<Uuid, _>("workspace_id").unwrap().to_string(),
+            replica_id: row
+                .try_get::<Uuid, _>("node_replica_id")
+                .unwrap()
+                .to_string(),
             replica_seq: row.try_get("event_seq").unwrap_or(1),
             logical_clock: row.try_get("logical_clock").unwrap_or(1),
             entity_type: "card".to_string(),
@@ -204,7 +211,19 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             }),
             occurred_at: row.try_get("occurred_at").unwrap_or_default(),
         };
-        match transport.publish_roaming(&event).await {
+        let imported_board_key = row
+            .try_get::<Option<String>, _>("board_key_base64")
+            .ok()
+            .flatten();
+        let delivery = match imported_board_key.as_deref() {
+            Some(board_key) => {
+                transport
+                    .publish_roaming_with_board_key(&event, board_key)
+                    .await
+            }
+            None => transport.publish_roaming(&event).await,
+        };
+        match delivery {
             Ok(receipt) => {
                 let _ = sqlx::query(
                     "update roaming_board_outbox set status = 'delivered', delivered_at = now(), nostr_event_id = $2, last_error = null where id = $1",
@@ -238,9 +257,10 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
 async fn ingest_remote(pool: &PgPool, transport: &NostrTransport) {
     let boards = match sqlx::query(
         r#"
-        select b.id as board_id, b.workspace_id
+        select b.id as board_id, b.workspace_id, rbc.board_key_base64
         from boards b
         join workspaces w on w.id = b.workspace_id
+        left join roaming_board_capabilities rbc on rbc.board_id = b.id
         where b.deleted_at is null and w.deleted_at is null
         order by b.id
         "#,
@@ -264,7 +284,19 @@ async fn ingest_remote(pool: &PgPool, transport: &NostrTransport) {
             Ok(value) => value,
             Err(_) => continue,
         };
-        let events = match transport.recover_roaming(&board_id.to_string()).await {
+        let imported_board_key = board
+            .try_get::<Option<String>, _>("board_key_base64")
+            .ok()
+            .flatten();
+        let recovered = match imported_board_key.as_deref() {
+            Some(board_key) => {
+                transport
+                    .recover_roaming_with_board_key(&board_id.to_string(), board_key)
+                    .await
+            }
+            None => transport.recover_roaming(&board_id.to_string()).await,
+        };
+        let events = match recovered {
             Ok(events) => events,
             Err(error) => {
                 tracing::debug!(%board_id, %error, "could not pull roaming events");

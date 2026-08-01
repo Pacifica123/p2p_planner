@@ -108,7 +108,9 @@ impl IrohTransport {
             .write_all(frame)
             .await
             .context("could not write Iroh sync frame")?;
-        stream.finish().context("could not finish Iroh sync stream")?;
+        stream
+            .finish()
+            .context("could not finish Iroh sync stream")?;
         Ok(())
     }
 
@@ -152,7 +154,8 @@ pub fn decode_frame(frame: &[u8]) -> Result<SignedSyncEnvelope> {
     if frame.len() < 4 {
         bail!("Iroh sync frame is shorter than its length prefix");
     }
-    let length = u32::from_be_bytes(frame[..4].try_into().expect("checked four-byte prefix")) as usize;
+    let length =
+        u32::from_be_bytes(frame[..4].try_into().expect("checked four-byte prefix")) as usize;
     if length > MAX_FRAME_BYTES {
         bail!("Iroh sync frame exceeds {MAX_FRAME_BYTES} bytes");
     }
@@ -162,7 +165,8 @@ pub fn decode_frame(frame: &[u8]) -> Result<SignedSyncEnvelope> {
 
     let envelope: SignedSyncEnvelope =
         serde_json::from_slice(&frame[4..]).context("Iroh sync frame contains invalid JSON")?;
-    validate_envelope(&envelope.envelope).context("Iroh sync frame contains an invalid envelope")?;
+    validate_envelope(&envelope.envelope)
+        .context("Iroh sync frame contains an invalid envelope")?;
     Ok(envelope)
 }
 

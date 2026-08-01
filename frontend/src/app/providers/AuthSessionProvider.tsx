@@ -2,8 +2,8 @@ import type { PropsWithChildren } from 'react';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { clearAccessToken } from '@/shared/api/client';
-import { refreshSession, signIn, signOut, signOutAll, signUp } from '@/features/auth/api/auth';
-import type { AuthSuccessResponse, AuthUser, SignInRequest, SignUpRequest } from '@/shared/types/api';
+import { importAccountFromNode, refreshSession, signIn, signOut, signOutAll, signUp } from '@/features/auth/api/auth';
+import type { AuthSuccessResponse, AuthUser, NodeLinkImportRequest, SignInRequest, SignUpRequest } from '@/shared/types/api';
 
 interface AuthSessionContextValue {
   status: 'loading' | 'authenticated' | 'anonymous';
@@ -12,6 +12,7 @@ interface AuthSessionContextValue {
   deviceId: string | null;
   signInWithPassword: (input: SignInRequest) => Promise<void>;
   signUpWithPassword: (input: SignUpRequest) => Promise<void>;
+  signInFromAnotherNode: (input: NodeLinkImportRequest) => Promise<void>;
   signOutCurrent: () => Promise<void>;
   signOutEverywhere: () => Promise<void>;
   refreshCurrentSession: () => Promise<void>;
@@ -99,6 +100,20 @@ export function AuthSessionProvider({ children }: PropsWithChildren) {
         const actionGeneration = ++authActionGenerationRef.current;
         try {
           const response = await signUp(input);
+          if (authActionGenerationRef.current === actionGeneration) {
+            applyAuthResponse(response);
+          }
+        } catch (error) {
+          if (authActionGenerationRef.current === actionGeneration) {
+            clearLocalSession();
+          }
+          throw error;
+        }
+      },
+      signInFromAnotherNode: async (input) => {
+        const actionGeneration = ++authActionGenerationRef.current;
+        try {
+          const response = await importAccountFromNode(input);
           if (authActionGenerationRef.current === actionGeneration) {
             applyAuthResponse(response);
           }

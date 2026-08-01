@@ -6,6 +6,7 @@ import { AuthSessionProvider, useAuthSession } from '@/app/providers/AuthSession
 import type { AuthSuccessResponse } from '@/shared/types/api';
 
 const authApi = vi.hoisted(() => ({
+  importAccountFromNode: vi.fn(),
   refreshSession: vi.fn(),
   signIn: vi.fn(),
   signOut: vi.fn(),
@@ -58,7 +59,7 @@ function Wrapper({ children }: PropsWithChildren) {
 }
 
 function Harness() {
-  const { status, user, signUpWithPassword } = useAuthSession();
+  const { status, user, signInFromAnotherNode, signUpWithPassword } = useAuthSession();
 
   return (
     <div>
@@ -76,17 +77,47 @@ function Harness() {
       >
         Sign up
       </button>
+      <button
+        type="button"
+        onClick={() => {
+          void signInFromAnotherNode({
+            sourceUrl: 'http://192.168.1.42:8080',
+            email: 'linked@local.test',
+            password: 'password123',
+          });
+        }}
+      >
+        Link node
+      </button>
     </div>
   );
 }
 
 describe('AuthSessionProvider', () => {
   beforeEach(() => {
+    authApi.importAccountFromNode.mockReset();
     authApi.refreshSession.mockReset();
     authApi.signIn.mockReset();
     authApi.signOut.mockReset();
     authApi.signOutAll.mockReset();
     authApi.signUp.mockReset();
+  });
+
+  it('applies an imported web-node identity as the active session', async () => {
+    authApi.refreshSession.mockRejectedValue(new Error('clean node'));
+    authApi.importAccountFromNode.mockResolvedValue(authResponse('linked@local.test'));
+
+    render(<Harness />, { wrapper: Wrapper });
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('anonymous'));
+    fireEvent.click(screen.getByRole('button', { name: 'Link node' }));
+
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('authenticated'));
+    expect(screen.getByTestId('email')).toHaveTextContent('linked@local.test');
+    expect(authApi.importAccountFromNode).toHaveBeenCalledWith({
+      sourceUrl: 'http://192.168.1.42:8080',
+      email: 'linked@local.test',
+      password: 'password123',
+    });
   });
 
   it('does not let a stale bootstrap refresh failure clear a successful explicit sign-up', async () => {

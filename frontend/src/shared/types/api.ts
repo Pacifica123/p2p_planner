@@ -499,6 +499,12 @@ export interface SignUpRequest {
   displayName: string;
 }
 
+export interface NodeLinkImportRequest {
+  sourceUrl: string;
+  email: string;
+  password: string;
+}
+
 export interface AuthSuccessResponse {
   authenticated: boolean;
   mode: string;

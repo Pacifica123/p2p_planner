@@ -2797,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "p2p-planner-backend"
-version = "1.0.0-beta.6"
+version = "1.0.0-beta.7"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2811,6 +2811,7 @@ dependencies = [
  "p2p-kanban-nostr-transport",
  "p2p-kanban-sync-core",
  "rand 0.8.5",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Проверяет статический контракт Android -> coordinator -> web для beta.6."""
+"""Проверяет статический контракт Android -> coordinator -> web для beta.6+."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ def require(relative: str, *needles: str) -> None:
 def main() -> None:
     version = read("VERSION").strip()
     frontend = json.loads(read("frontend/package.json"))
-    if version != "1.0.0-beta.6" or frontend.get("version") != version:
-        raise SystemExit("FAIL: beta.6 versions are not aligned")
+    if not version.startswith("1.0.0-beta.") or frontend.get("version") != version:
+        raise SystemExit("FAIL: beta versions are not aligned")
 
     require(
         "backend/src/modules/cards/service.rs",
