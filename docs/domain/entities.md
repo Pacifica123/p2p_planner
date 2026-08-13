@@ -195,7 +195,7 @@ attachments, custom fields и dependencies.
 
 ## 10. ChecklistItem
 
-Элемент чеклиста.
+Элемент чек-листа.
 - id
 - checklist_id
 - title

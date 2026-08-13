@@ -29,6 +29,7 @@ import { createPortableExport } from '@/features/integrations/api/importExport';
 import { useLocalFirstBoardRuntime } from '@/features/localFirst/hooks/useLocalFirstBoard';
 import { getBoardSurfaceStyle } from '@/shared/appearance/theme';
 import { formatDateTime } from '@/shared/lib/date';
+import { formatCountRu } from '@/shared/lib/russian';
 import type { BoardColumn, Card } from '@/shared/types/api';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
@@ -204,7 +205,7 @@ export function BoardPage() {
       link.remove();
       URL.revokeObjectURL(url);
       const counts = response.bundleManifest.summary.entityCounts;
-      setExportStatus(`Резервная копия готова: ${counts.columns} колонок, ${counts.cards} карточек.`);
+      setExportStatus(`Резервная копия готова: ${formatCountRu(counts.columns, 'колонка', 'колонки', 'колонок')}, ${formatCountRu(counts.cards, 'карточка', 'карточки', 'карточек')}.`);
     } catch (error) {
       setExportStatus(error instanceof Error ? error.message : 'Не удалось создать резервную копию.');
     } finally {

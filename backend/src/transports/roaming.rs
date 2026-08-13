@@ -25,6 +25,105 @@ const CARD_FIELDS: &[&str] = &[
     "checklists",
 ];
 
+const CHECKLIST_DELTA_KEY: &str = "checklistDelta";
+
+fn find_checklist<'a>(checklists: &'a Value, checklist_id: Uuid) -> Option<&'a Value> {
+    let expected = checklist_id.to_string();
+    checklists
+        .as_array()?
+        .iter()
+        .find(|checklist| string_field(checklist, "id") == Some(expected.as_str()))
+}
+
+fn find_checklist_item<'a>(checklists: &'a Value, item_id: Uuid) -> Option<(&'a Value, &'a Value)> {
+    let expected = item_id.to_string();
+    checklists.as_array()?.iter().find_map(|checklist| {
+        checklist
+            .get("items")?
+            .as_array()?
+            .iter()
+            .find(|item| string_field(item, "id") == Some(expected.as_str()))
+            .map(|item| (checklist, item))
+    })
+}
+
+fn checklist_delta_from_activity(
+    kind: &str,
+    entity_type: &str,
+    entity_id: Uuid,
+    card_id: Uuid,
+    field_mask: &[String],
+    checklists: &Value,
+    occurred_at: &str,
+) -> Option<Value> {
+    let fields = if kind.ends_with(".created") {
+        vec!["*".to_string()]
+    } else if kind.ends_with(".deleted") {
+        vec!["__lifecycle".to_string()]
+    } else {
+        field_mask.to_vec()
+    };
+
+    match entity_type {
+        "checklist" if kind.ends_with(".deleted") => Some(json!({
+            "kind": "checklist.delete",
+            "cardId": card_id,
+            "checklistId": entity_id,
+            "fieldMask": fields,
+            "deletedAt": occurred_at,
+        })),
+        "checklist" => find_checklist(checklists, entity_id).map_or_else(
+            || {
+                Some(json!({
+                    "kind": "checklist.delete",
+                    "cardId": card_id,
+                    "checklistId": entity_id,
+                    "fieldMask": ["__lifecycle"],
+                    "deletedAt": occurred_at,
+                }))
+            },
+            |checklist| {
+                Some(json!({
+                    "kind": "checklist.put",
+                    "cardId": card_id,
+                    "checklistId": entity_id,
+                    "fieldMask": fields,
+                    "checklist": checklist,
+                }))
+            },
+        ),
+        "checklist_item" if kind.ends_with(".deleted") => Some(json!({
+            "kind": "checklist_item.delete",
+            "cardId": card_id,
+            "itemId": entity_id,
+            "fieldMask": fields,
+            "deletedAt": occurred_at,
+        })),
+        "checklist_item" => find_checklist_item(checklists, entity_id).map_or_else(
+            || {
+                Some(json!({
+                    "kind": "checklist_item.delete",
+                    "cardId": card_id,
+                    "itemId": entity_id,
+                    "fieldMask": ["__lifecycle"],
+                    "deletedAt": occurred_at,
+                }))
+            },
+            |(checklist, item)| {
+                Some(json!({
+                    "kind": "checklist_item.put",
+                    "cardId": card_id,
+                    "checklistId": string_field(checklist, "id"),
+                    "itemId": entity_id,
+                    "fieldMask": fields,
+                    "item": item,
+                }))
+            },
+        ),
+        _ => None,
+    }
+}
+
 pub async fn run(settings: std::sync::Arc<Settings>, db: PgPool) -> anyhow::Result<()> {
     if !settings.transports.nostr.enabled {
         return Ok(());
@@ -84,6 +183,10 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
           o.workspace_id,
           o.board_id,
           o.card_id,
+          ae.kind as source_activity_kind,
+          ae.entity_type as source_entity_type,
+          ae.entity_id as source_entity_id,
+          ae.field_mask as source_field_mask,
           n.replica_id as node_replica_id,
           rbc.board_key_base64,
           case
@@ -173,6 +276,7 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
           ), '[]'::jsonb) as checklists
         from roaming_board_outbox o
         join cards c on c.id = o.card_id
+        left join activity_entries ae on ae.id = o.source_activity_id
         cross join local_node_identity n
         left join roaming_board_capabilities rbc on rbc.board_id = o.board_id
         left join tombstones t
@@ -207,6 +311,70 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             .try_get::<Option<String>, _>("deleted_at")
             .ok()
             .flatten();
+        let card = row
+            .try_get::<Value, _>("card")
+            .unwrap_or_else(|_| json!({}));
+        let checklists = row
+            .try_get::<Value, _>("checklists")
+            .unwrap_or_else(|_| json!([]));
+        let source_kind = row
+            .try_get::<Option<String>, _>("source_activity_kind")
+            .ok()
+            .flatten();
+        let source_entity_type = row
+            .try_get::<Option<String>, _>("source_entity_type")
+            .ok()
+            .flatten();
+        let source_entity_id = row
+            .try_get::<Option<Uuid>, _>("source_entity_id")
+            .ok()
+            .flatten();
+        let source_field_mask = row
+            .try_get::<Option<Vec<String>>, _>("source_field_mask")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let occurred_at: String = row.try_get("occurred_at").unwrap_or_default();
+        let card_id: Uuid = row.try_get("card_id").unwrap();
+        let checklist_delta = source_kind
+            .as_deref()
+            .zip(source_entity_type.as_deref())
+            .zip(source_entity_id)
+            .and_then(|((kind, entity_type), entity_id)| {
+                checklist_delta_from_activity(
+                    kind,
+                    entity_type,
+                    entity_id,
+                    card_id,
+                    &source_field_mask,
+                    &checklists,
+                    &occurred_at,
+                )
+            });
+        let field_mask = if operation == "card.delete" {
+            vec!["__lifecycle".to_string()]
+        } else if checklist_delta.is_some() {
+            vec!["checklists".to_string()]
+        } else if source_kind.as_deref() == Some("card.created") || source_kind.is_none() {
+            vec!["*".to_string()]
+        } else {
+            source_field_mask
+        };
+        let payload = if operation == "card.delete" {
+            json!({ "deletedAt": deleted_at })
+        } else if let Some(delta) = checklist_delta {
+            json!({
+                "card": card,
+                "checklistDelta": delta,
+            })
+        } else if field_mask.iter().any(|field| field == "*") {
+            json!({
+                "card": card,
+                "checklists": checklists,
+            })
+        } else {
+            json!({ "card": card })
+        };
         let event = RoamingBoardEvent {
             protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
             event_id: outbox_id.to_string(),
@@ -219,22 +387,11 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             replica_seq: row.try_get("event_seq").unwrap_or(1),
             logical_clock: row.try_get("logical_clock").unwrap_or(1),
             entity_type: "card".to_string(),
-            entity_id: row.try_get::<Uuid, _>("card_id").unwrap().to_string(),
+            entity_id: card_id.to_string(),
             operation: operation.clone(),
-            field_mask: if operation == "card.delete" {
-                vec!["__lifecycle".to_string()]
-            } else {
-                vec!["*".to_string()]
-            },
-            payload: if operation == "card.delete" {
-                json!({ "deletedAt": deleted_at })
-            } else {
-                json!({
-                    "card": row.try_get::<Value, _>("card").unwrap_or_else(|_| json!({})),
-                    "checklists": row.try_get::<Value, _>("checklists").unwrap_or_else(|_| json!([])),
-                })
-            },
-            occurred_at: row.try_get("occurred_at").unwrap_or_default(),
+            field_mask,
+            payload,
+            occurred_at,
         };
         let imported_board_key = row
             .try_get::<Option<String>, _>("board_key_base64")
@@ -366,6 +523,43 @@ fn normalized_card_priority(card: &Value) -> anyhow::Result<Option<&str>> {
     Ok(priority)
 }
 
+async fn card_projection(
+    tx: &mut Transaction<'_, Postgres>,
+    card_id: Uuid,
+) -> anyhow::Result<Value> {
+    let value = sqlx::query_scalar::<_, Value>(
+        r#"
+        select jsonb_build_object(
+          'columnId', column_id::text,
+          'parentCardId', parent_card_id::text,
+          'title', title,
+          'description', description,
+          'status', status,
+          'priority', priority,
+          'position', position::double precision,
+          'startAt', case when start_at is null then null else to_char(start_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
+          'dueAt', case when due_at is null then null else to_char(due_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
+          'completedAt', case when completed_at is null then null else to_char(completed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
+          'isArchived', archived_at is not null
+        )
+        from cards where id = $1
+        "#,
+    )
+    .bind(card_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(value)
+}
+
+fn actual_card_changes(before: &Value, after: &Value, winning_fields: &[String]) -> Vec<String> {
+    winning_fields
+        .iter()
+        .filter(|field| field.as_str() != "checklists")
+        .filter(|field| before.get(field.as_str()) != after.get(field.as_str()))
+        .cloned()
+        .collect()
+}
+
 async fn apply_checklist_bundle(
     tx: &mut Transaction<'_, Postgres>,
     card_id: Uuid,
@@ -374,13 +568,11 @@ async fn apply_checklist_bundle(
     let values = checklists
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("checklists payload must be an array"))?;
-    let mut checklist_ids = Vec::with_capacity(values.len());
     for checklist in values {
         let checklist_id = Uuid::parse_str(
             string_field(checklist, "id")
                 .ok_or_else(|| anyhow::anyhow!("checklist id is missing"))?,
         )?;
-        checklist_ids.push(checklist_id);
         let checklist_card_id = Uuid::parse_str(
             string_field(checklist, "cardId")
                 .ok_or_else(|| anyhow::anyhow!("checklist card id is missing"))?,
@@ -407,11 +599,7 @@ async fn apply_checklist_bundle(
             r#"
             insert into checklists (id, card_id, title, position)
             values ($1, $2, $3, $4)
-            on conflict (id) do update set
-              title = excluded.title,
-              position = excluded.position,
-              deleted_at = null
-            where checklists.card_id = excluded.card_id
+            on conflict (id) do nothing
             "#,
         )
         .bind(checklist_id)
@@ -425,13 +613,11 @@ async fn apply_checklist_bundle(
             .get("items")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow::anyhow!("checklist items must be an array"))?;
-        let mut item_ids = Vec::with_capacity(items.len());
         for item in items {
             let item_id = Uuid::parse_str(
                 string_field(item, "id")
                     .ok_or_else(|| anyhow::anyhow!("checklist item id is missing"))?,
             )?;
-            item_ids.push(item_id);
             let item_checklist_id = Uuid::parse_str(
                 string_field(item, "checklistId")
                     .ok_or_else(|| anyhow::anyhow!("checklist item checklist id is missing"))?,
@@ -465,16 +651,7 @@ async fn apply_checklist_bundle(
                 ) values (
                   $1, $2, $3, $4, $5, case when $4 then now() else null end
                 )
-                on conflict (id) do update set
-                  title = excluded.title,
-                  is_done = excluded.is_done,
-                  position = excluded.position,
-                  completed_at = case
-                    when excluded.is_done then coalesce(checklist_items.completed_at, now())
-                    else null
-                  end,
-                  deleted_at = null
-                where checklist_items.checklist_id = excluded.checklist_id
+                on conflict (id) do nothing
                 "#,
             )
             .bind(item_id)
@@ -485,52 +662,616 @@ async fn apply_checklist_bundle(
             .execute(&mut **tx)
             .await?;
         }
-        sqlx::query(
-            r#"
-            update checklist_items
-            set deleted_at = now()
-            where checklist_id = $1
-              and deleted_at is null
-              and not (id = any($2::uuid[]))
-            "#,
+        // Legacy v1 snapshots only fill missing rows. Absence and conflicting
+        // values are not authoritative because an older full snapshot may
+        // arrive after a newer checklist change.
+    }
+    Ok(())
+}
+
+async fn roaming_field_wins(
+    tx: &mut Transaction<'_, Postgres>,
+    workspace_id: Uuid,
+    entity_id: Uuid,
+    field_name: &str,
+    logical_clock: i64,
+    replica_id: Uuid,
+    event_id: Uuid,
+) -> anyhow::Result<bool> {
+    let current = sqlx::query(
+        "select logical_clock, replica_id, event_id from roaming_field_versions where workspace_id = $1 and entity_id = $2 and field_name = $3",
+    )
+    .bind(workspace_id)
+    .bind(entity_id)
+    .bind(field_name)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(current.map_or(true, |row| {
+        let current_clock: i64 = row.try_get("logical_clock").unwrap_or(0);
+        let current_replica: Uuid = row.try_get("replica_id").unwrap_or(Uuid::nil());
+        let current_event: Uuid = row.try_get("event_id").unwrap_or(Uuid::nil());
+        (logical_clock, replica_id, event_id) > (current_clock, current_replica, current_event)
+    }))
+}
+
+async fn store_roaming_field_version(
+    tx: &mut Transaction<'_, Postgres>,
+    workspace_id: Uuid,
+    entity_id: Uuid,
+    field_name: &str,
+    logical_clock: i64,
+    replica_id: Uuid,
+    event_id: Uuid,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        insert into roaming_field_versions (
+          workspace_id, entity_id, field_name, logical_clock, replica_id, event_id
+        ) values ($1,$2,$3,$4,$5,$6)
+        on conflict (workspace_id, entity_id, field_name) do update set
+          logical_clock = excluded.logical_clock,
+          replica_id = excluded.replica_id,
+          event_id = excluded.event_id,
+          updated_at = now()
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(entity_id)
+    .bind(field_name)
+    .bind(logical_clock)
+    .bind(replica_id)
+    .bind(event_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn record_roaming_child_activity(
+    tx: &mut Transaction<'_, Postgres>,
+    workspace_id: Uuid,
+    board_id: Uuid,
+    card_id: Uuid,
+    actor_user_id: Uuid,
+    kind: &str,
+    entity_type: &str,
+    entity_id: Uuid,
+    field_mask: &[String],
+    event: &RoamingBoardEvent,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        insert into activity_entries (
+          id, workspace_id, board_id, card_id, actor_user_id, kind,
+          entity_type, entity_id, field_mask, payload_jsonb
+        ) values (
+          gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9
         )
-        .bind(checklist_id)
-        .bind(&item_ids)
-        .execute(&mut **tx)
-        .await?;
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(board_id)
+    .bind(card_id)
+    .bind(actor_user_id)
+    .bind(kind)
+    .bind(entity_type)
+    .bind(entity_id)
+    .bind(field_mask)
+    .bind(json!({
+        "source": "roaming",
+        "eventId": event.event_id,
+        "replicaId": event.replica_id,
+    }))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+fn delta_field_mask(delta: &Value) -> Vec<String> {
+    delta
+        .get("fieldMask")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+async fn apply_remote_checklist_delta(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    recovered: &RecoveredRoamingEvent,
+    event_id: Uuid,
+    board_id: Uuid,
+    card_id: Uuid,
+    replica_id: Uuid,
+    delta: &Value,
+) -> anyhow::Result<()> {
+    let event = &recovered.event;
+    let delta_card_id = Uuid::parse_str(
+        string_field(delta, "cardId").ok_or_else(|| anyhow::anyhow!("delta cardId is missing"))?,
+    )?;
+    if delta_card_id != card_id {
+        anyhow::bail!("checklist delta card scope mismatch");
+    }
+    let card_matches = sqlx::query_scalar::<_, bool>(
+        r#"
+        select exists(
+          select 1 from cards
+          where id = $1 and board_id = $2 and deleted_at is null
+        )
+        "#,
+    )
+    .bind(card_id)
+    .bind(board_id)
+    .fetch_one(pool)
+    .await?;
+    if !card_matches {
+        anyhow::bail!("checklist delta card is missing");
     }
 
+    let owner_user_id =
+        sqlx::query_scalar::<_, Uuid>("select owner_user_id from workspaces where id = $1")
+            .bind(workspace_id)
+            .fetch_one(pool)
+            .await?;
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
-        update checklist_items
-        set deleted_at = now()
-        where deleted_at is null
-          and checklist_id in (
-            select id
-            from checklists
-            where card_id = $1
-              and deleted_at is null
-              and not (id = any($2::uuid[]))
-          )
+        insert into roaming_board_events (
+          event_id, nostr_event_id, author_public_key, workspace_id, board_id,
+          replica_id, replica_seq, logical_clock, entity_id, operation, status
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied')
         "#,
     )
+    .bind(event_id)
+    .bind(&recovered.nostr_event_id)
+    .bind(&recovered.author_public_key)
+    .bind(workspace_id)
+    .bind(board_id)
+    .bind(replica_id)
+    .bind(event.replica_seq)
+    .bind(event.logical_clock)
     .bind(card_id)
-    .bind(&checklist_ids)
-    .execute(&mut **tx)
+    .bind(&event.operation)
+    .execute(&mut *tx)
     .await?;
-    sqlx::query(
-        r#"
-        update checklists
-        set deleted_at = now()
-        where card_id = $1
-          and deleted_at is null
-          and not (id = any($2::uuid[]))
-        "#,
-    )
-    .bind(card_id)
-    .bind(&checklist_ids)
-    .execute(&mut **tx)
-    .await?;
+
+    let kind = string_field(delta, "kind")
+        .ok_or_else(|| anyhow::anyhow!("checklist delta kind is missing"))?;
+    let requested = delta_field_mask(delta);
+    let requests_all = requested.iter().any(|field| field == "*");
+    let requests = |field: &str| requests_all || requested.iter().any(|value| value == field);
+    let mut activity_kind: Option<&str> = None;
+    let mut activity_entity_type = "checklist";
+    let activity_entity_id: Uuid;
+    let mut changed_fields = Vec::new();
+    let mut version_fields = Vec::new();
+
+    match kind {
+        "checklist.put" => {
+            let checklist = delta
+                .get("checklist")
+                .ok_or_else(|| anyhow::anyhow!("checklist delta payload is missing"))?;
+            let checklist_id = Uuid::parse_str(
+                string_field(delta, "checklistId")
+                    .ok_or_else(|| anyhow::anyhow!("delta checklistId is missing"))?,
+            )?;
+            let expected_checklist_id = checklist_id.to_string();
+            let expected_card_id = card_id.to_string();
+            if string_field(checklist, "id") != Some(expected_checklist_id.as_str())
+                || string_field(checklist, "cardId") != Some(expected_card_id.as_str())
+            {
+                anyhow::bail!("checklist delta payload scope mismatch");
+            }
+            let title = string_field(checklist, "title")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("checklist title is missing"))?;
+            let position = finite_number(checklist, "position", 1_000.0)?;
+            let existing = sqlx::query(
+                "select card_id, title, position::double precision as position, deleted_at is not null as deleted from checklists where id = $1",
+            )
+            .bind(checklist_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if existing
+                .as_ref()
+                .is_some_and(|row| row.try_get::<Uuid, _>("card_id").ok() != Some(card_id))
+            {
+                anyhow::bail!("checklist id belongs to another card");
+            }
+            let lifecycle_requested = requests_all || existing.is_none();
+            let lifecycle_wins = lifecycle_requested
+                && roaming_field_wins(
+                    &mut tx,
+                    workspace_id,
+                    checklist_id,
+                    "checklist.__lifecycle",
+                    event.logical_clock,
+                    replica_id,
+                    event_id,
+                )
+                .await?;
+            let title_wins = requests("title")
+                && roaming_field_wins(
+                    &mut tx,
+                    workspace_id,
+                    checklist_id,
+                    "checklist.title",
+                    event.logical_clock,
+                    replica_id,
+                    event_id,
+                )
+                .await?;
+            let position_wins = requests("position")
+                && roaming_field_wins(
+                    &mut tx,
+                    workspace_id,
+                    checklist_id,
+                    "checklist.position",
+                    event.logical_clock,
+                    replica_id,
+                    event_id,
+                )
+                .await?;
+            let was_deleted = existing
+                .as_ref()
+                .and_then(|row| row.try_get::<bool, _>("deleted").ok())
+                .unwrap_or(false);
+            if existing.is_none() && lifecycle_wins {
+                sqlx::query(
+                    "insert into checklists (id, card_id, title, position) values ($1,$2,$3,$4)",
+                )
+                .bind(checklist_id)
+                .bind(card_id)
+                .bind(title)
+                .bind(position)
+                .execute(&mut *tx)
+                .await?;
+                activity_kind = Some("checklist.created");
+                changed_fields.push("title".to_string());
+            } else if existing.is_some() && (!was_deleted || lifecycle_wins) {
+                let before_title: String = existing.as_ref().unwrap().try_get("title")?;
+                let before_position: f64 = existing.as_ref().unwrap().try_get("position")?;
+                sqlx::query(
+                    r#"
+                    update checklists set
+                      title = case when $2 then $3 else title end,
+                      position = case when $4 then $5 else position end,
+                      deleted_at = case when $6 then null else deleted_at end
+                    where id = $1 and card_id = $7
+                    "#,
+                )
+                .bind(checklist_id)
+                .bind(title_wins)
+                .bind(title)
+                .bind(position_wins)
+                .bind(position)
+                .bind(lifecycle_wins)
+                .bind(card_id)
+                .execute(&mut *tx)
+                .await?;
+                if was_deleted && lifecycle_wins {
+                    activity_kind = Some("checklist.created");
+                    changed_fields.push("title".to_string());
+                } else {
+                    if title_wins && before_title != title {
+                        changed_fields.push("title".to_string());
+                    }
+                    if position_wins && (before_position - position).abs() > f64::EPSILON {
+                        changed_fields.push("position".to_string());
+                    }
+                    if !changed_fields.is_empty() {
+                        activity_kind = Some("checklist.updated");
+                    }
+                }
+            }
+            if lifecycle_wins {
+                version_fields.push("checklist.__lifecycle");
+            }
+            if title_wins {
+                version_fields.push("checklist.title");
+            }
+            if position_wins {
+                version_fields.push("checklist.position");
+            }
+            activity_entity_id = checklist_id;
+        }
+        "checklist.delete" => {
+            let checklist_id = Uuid::parse_str(
+                string_field(delta, "checklistId")
+                    .ok_or_else(|| anyhow::anyhow!("delta checklistId is missing"))?,
+            )?;
+            let wins = roaming_field_wins(
+                &mut tx,
+                workspace_id,
+                checklist_id,
+                "checklist.__lifecycle",
+                event.logical_clock,
+                replica_id,
+                event_id,
+            )
+            .await?;
+            if wins {
+                let affected = sqlx::query(
+                    "update checklists set deleted_at = now() where id = $1 and card_id = $2 and deleted_at is null",
+                )
+                .bind(checklist_id)
+                .bind(card_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+                if affected > 0 {
+                    sqlx::query(
+                        "update checklist_items set deleted_at = now() where checklist_id = $1 and deleted_at is null",
+                    )
+                    .bind(checklist_id)
+                    .execute(&mut *tx)
+                    .await?;
+                    activity_kind = Some("checklist.deleted");
+                }
+                version_fields.push("checklist.__lifecycle");
+            }
+            activity_entity_id = checklist_id;
+        }
+        "checklist_item.put" => {
+            activity_entity_type = "checklist_item";
+            let checklist_id = Uuid::parse_str(
+                string_field(delta, "checklistId")
+                    .ok_or_else(|| anyhow::anyhow!("delta checklistId is missing"))?,
+            )?;
+            let item_id = Uuid::parse_str(
+                string_field(delta, "itemId")
+                    .ok_or_else(|| anyhow::anyhow!("delta itemId is missing"))?,
+            )?;
+            let item = delta
+                .get("item")
+                .ok_or_else(|| anyhow::anyhow!("checklist item delta payload is missing"))?;
+            let expected_item_id = item_id.to_string();
+            let expected_checklist_id = checklist_id.to_string();
+            if string_field(item, "id") != Some(expected_item_id.as_str())
+                || string_field(item, "checklistId") != Some(expected_checklist_id.as_str())
+            {
+                anyhow::bail!("checklist item delta payload scope mismatch");
+            }
+            let checklist_matches = sqlx::query_scalar::<_, bool>(
+                "select exists(select 1 from checklists where id = $1 and card_id = $2 and deleted_at is null)",
+            )
+            .bind(checklist_id)
+            .bind(card_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if !checklist_matches {
+                anyhow::bail!("checklist item delta parent is missing");
+            }
+            let title = string_field(item, "title")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("checklist item title is missing"))?;
+            let position = finite_number(item, "position", 1_000.0)?;
+            let is_done = item
+                .get("isDone")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| anyhow::anyhow!("checklist item state is missing"))?;
+            let existing = sqlx::query(
+                "select checklist_id, title, position::double precision as position, is_done, deleted_at is not null as deleted from checklist_items where id = $1",
+            )
+            .bind(item_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if existing.as_ref().is_some_and(|row| {
+                row.try_get::<Uuid, _>("checklist_id").ok() != Some(checklist_id)
+            }) {
+                anyhow::bail!("checklist item id belongs to another checklist");
+            }
+            let lifecycle_requested = requests_all || existing.is_none();
+            let lifecycle_wins = lifecycle_requested
+                && roaming_field_wins(
+                    &mut tx,
+                    workspace_id,
+                    item_id,
+                    "checklist_item.__lifecycle",
+                    event.logical_clock,
+                    replica_id,
+                    event_id,
+                )
+                .await?;
+            let title_wins = requests("title")
+                && roaming_field_wins(
+                    &mut tx,
+                    workspace_id,
+                    item_id,
+                    "checklist_item.title",
+                    event.logical_clock,
+                    replica_id,
+                    event_id,
+                )
+                .await?;
+            let position_wins = requests("position")
+                && roaming_field_wins(
+                    &mut tx,
+                    workspace_id,
+                    item_id,
+                    "checklist_item.position",
+                    event.logical_clock,
+                    replica_id,
+                    event_id,
+                )
+                .await?;
+            let done_wins = requests("isDone")
+                && roaming_field_wins(
+                    &mut tx,
+                    workspace_id,
+                    item_id,
+                    "checklist_item.isDone",
+                    event.logical_clock,
+                    replica_id,
+                    event_id,
+                )
+                .await?;
+            let was_deleted = existing
+                .as_ref()
+                .and_then(|row| row.try_get::<bool, _>("deleted").ok())
+                .unwrap_or(false);
+            if existing.is_none() && lifecycle_wins {
+                sqlx::query(
+                    r#"
+                    insert into checklist_items (
+                      id, checklist_id, title, is_done, position, completed_at
+                    ) values ($1,$2,$3,$4,$5,case when $4 then now() else null end)
+                    "#,
+                )
+                .bind(item_id)
+                .bind(checklist_id)
+                .bind(title)
+                .bind(is_done)
+                .bind(position)
+                .execute(&mut *tx)
+                .await?;
+                activity_kind = Some("checklist_item.created");
+                changed_fields.push("title".to_string());
+            } else if existing.is_some() && (!was_deleted || lifecycle_wins) {
+                let row = existing.as_ref().unwrap();
+                let before_title: String = row.try_get("title")?;
+                let before_position: f64 = row.try_get("position")?;
+                let before_done: bool = row.try_get("is_done")?;
+                sqlx::query(
+                    r#"
+                    update checklist_items set
+                      title = case when $2 then $3 else title end,
+                      position = case when $4 then $5 else position end,
+                      is_done = case when $6 then $7 else is_done end,
+                      completed_at = case
+                        when $6 and $7 then coalesce(completed_at, now())
+                        when $6 then null
+                        else completed_at
+                      end,
+                      deleted_at = case when $8 then null else deleted_at end
+                    where id = $1 and checklist_id = $9
+                    "#,
+                )
+                .bind(item_id)
+                .bind(title_wins)
+                .bind(title)
+                .bind(position_wins)
+                .bind(position)
+                .bind(done_wins)
+                .bind(is_done)
+                .bind(lifecycle_wins)
+                .bind(checklist_id)
+                .execute(&mut *tx)
+                .await?;
+                if was_deleted && lifecycle_wins {
+                    activity_kind = Some("checklist_item.created");
+                    changed_fields.push("title".to_string());
+                } else {
+                    if title_wins && before_title != title {
+                        changed_fields.push("title".to_string());
+                    }
+                    if position_wins && (before_position - position).abs() > f64::EPSILON {
+                        changed_fields.push("position".to_string());
+                    }
+                    if done_wins && before_done != is_done {
+                        changed_fields.push("isDone".to_string());
+                        activity_kind = Some(if is_done {
+                            "checklist_item.completed"
+                        } else {
+                            "checklist_item.reopened"
+                        });
+                    } else if !changed_fields.is_empty() {
+                        activity_kind = Some("checklist_item.updated");
+                    }
+                }
+            }
+            if lifecycle_wins {
+                version_fields.push("checklist_item.__lifecycle");
+            }
+            if title_wins {
+                version_fields.push("checklist_item.title");
+            }
+            if position_wins {
+                version_fields.push("checklist_item.position");
+            }
+            if done_wins {
+                version_fields.push("checklist_item.isDone");
+            }
+            activity_entity_id = item_id;
+        }
+        "checklist_item.delete" => {
+            activity_entity_type = "checklist_item";
+            let item_id = Uuid::parse_str(
+                string_field(delta, "itemId")
+                    .ok_or_else(|| anyhow::anyhow!("delta itemId is missing"))?,
+            )?;
+            let wins = roaming_field_wins(
+                &mut tx,
+                workspace_id,
+                item_id,
+                "checklist_item.__lifecycle",
+                event.logical_clock,
+                replica_id,
+                event_id,
+            )
+            .await?;
+            if wins {
+                let affected = sqlx::query(
+                    r#"
+                    update checklist_items chi set deleted_at = now()
+                    from checklists ch
+                    where chi.id = $1
+                      and chi.checklist_id = ch.id
+                      and ch.card_id = $2
+                      and chi.deleted_at is null
+                    "#,
+                )
+                .bind(item_id)
+                .bind(card_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+                if affected > 0 {
+                    activity_kind = Some("checklist_item.deleted");
+                }
+                version_fields.push("checklist_item.__lifecycle");
+            }
+            activity_entity_id = item_id;
+        }
+        _ => anyhow::bail!("unsupported checklist delta kind"),
+    }
+
+    for field in version_fields {
+        store_roaming_field_version(
+            &mut tx,
+            workspace_id,
+            activity_entity_id,
+            field,
+            event.logical_clock,
+            replica_id,
+            event_id,
+        )
+        .await?;
+    }
+    if let Some(activity_kind) = activity_kind {
+        record_roaming_child_activity(
+            &mut tx,
+            workspace_id,
+            board_id,
+            card_id,
+            owner_user_id,
+            activity_kind,
+            activity_entity_type,
+            activity_entity_id,
+            &changed_fields,
+            event,
+        )
+        .await?;
+    }
+    sqlx::query("update roaming_board_events set applied_at = now() where event_id = $1")
+        .bind(event_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -772,6 +1513,20 @@ async fn apply_remote_event(
         return Ok(());
     }
 
+    if let Some(delta) = event.payload.get(CHECKLIST_DELTA_KEY) {
+        return apply_remote_checklist_delta(
+            pool,
+            workspace_id,
+            recovered,
+            event_id,
+            board_id,
+            entity_id,
+            replica_id,
+            delta,
+        )
+        .await;
+    }
+
     let card = event
         .payload
         .get("card")
@@ -847,7 +1602,7 @@ async fn apply_remote_event(
         .bind(field)
         .fetch_optional(&mut *tx)
         .await?;
-        let wins = current.is_none_or(|row| {
+        let wins = current.map_or(true, |row| {
             let current_clock: i64 = row.try_get("logical_clock").unwrap_or(0);
             let current_replica: Uuid = row.try_get("replica_id").unwrap_or(Uuid::nil());
             let current_event: Uuid = row.try_get("event_id").unwrap_or(Uuid::nil());
@@ -873,6 +1628,11 @@ async fn apply_remote_event(
         anyhow::bail!("card id belongs to another board");
     }
     let card_exists = existing_card_board_id.is_some();
+    let before_card = if card_exists {
+        Some(card_projection(&mut tx, entity_id).await?)
+    } else {
+        None
+    };
     if !card_exists {
         sqlx::query(
             r#"
@@ -986,18 +1746,49 @@ async fn apply_remote_event(
         .collect::<Vec<_>>();
     winning_fields.sort();
 
-    if !winning_fields.is_empty() {
+    let after_card = card_projection(&mut tx, entity_id).await?;
+    let activity_fields = if card_exists {
+        actual_card_changes(
+            before_card.as_ref().expect("existing card projection"),
+            &after_card,
+            &winning_fields,
+        )
+    } else {
+        vec![
+            "title".to_string(),
+            "description".to_string(),
+            "columnId".to_string(),
+        ]
+    };
+    if !activity_fields.is_empty() {
+        let before_completed = before_card.as_ref().is_some_and(|value| {
+            value.get("status").and_then(Value::as_str) == Some("completed")
+                || value
+                    .get("completedAt")
+                    .is_some_and(|inner| !inner.is_null())
+        });
+        let after_completed = after_card.get("status").and_then(Value::as_str) == Some("completed")
+            || after_card
+                .get("completedAt")
+                .is_some_and(|inner| !inner.is_null());
         let activity_kind = if !card_exists {
             "card.created"
-        } else if winning.contains("columnId") {
+        } else if activity_fields.iter().any(|field| field == "columnId") {
             "card.moved"
-        } else if winning.contains("isArchived")
-            && card
+        } else if activity_fields.iter().any(|field| field == "isArchived") {
+            if after_card
                 .get("isArchived")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
-        {
-            "card.archived"
+            {
+                "card.archived"
+            } else {
+                "card.restored"
+            }
+        } else if !before_completed && after_completed {
+            "card.completed"
+        } else if before_completed && !after_completed {
+            "card.reopened"
         } else {
             "card.updated"
         };
@@ -1017,11 +1808,13 @@ async fn apply_remote_event(
         .bind(entity_id)
         .bind(owner_user_id)
         .bind(activity_kind)
-        .bind(&winning_fields)
+        .bind(&activity_fields)
         .bind(json!({
             "source": "roaming",
             "eventId": event.event_id,
             "replicaId": event.replica_id,
+            "fromColumnId": before_card.as_ref().and_then(|value| value.get("columnId")),
+            "toColumnId": after_card.get("columnId"),
         }))
         .execute(&mut *tx)
         .await?;
@@ -1061,8 +1854,12 @@ async fn apply_remote_event(
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use uuid::Uuid;
 
-    use super::{normalized_card_priority, normalized_card_status};
+    use super::{
+        actual_card_changes, checklist_delta_from_activity, normalized_card_priority,
+        normalized_card_status,
+    };
 
     #[test]
     fn mobile_legacy_statuses_are_normalized_before_database_apply() {
@@ -1084,5 +1881,54 @@ mod tests {
     fn roaming_card_rejects_invalid_database_values() {
         assert!(normalized_card_status(&json!({"status": "unknown"})).is_err());
         assert!(normalized_card_priority(&json!({"priority": "maximum"})).is_err());
+    }
+
+    #[test]
+    fn unchanged_column_and_checklist_snapshot_do_not_create_card_activity() {
+        let before = json!({"columnId": "column-a", "title": "Задача"});
+        let after = before.clone();
+        let winning = vec![
+            "columnId".to_string(),
+            "title".to_string(),
+            "checklists".to_string(),
+        ];
+
+        assert!(actual_card_changes(&before, &after, &winning).is_empty());
+    }
+
+    #[test]
+    fn checklist_activity_is_encoded_as_one_entity_delta() {
+        let card_id = Uuid::from_u128(1);
+        let checklist_id = Uuid::from_u128(2);
+        let item_id = Uuid::from_u128(3);
+        let checklists = json!([{
+            "id": checklist_id,
+            "cardId": card_id,
+            "title": "Проверки",
+            "position": 1000,
+            "items": [{
+                "id": item_id,
+                "checklistId": checklist_id,
+                "title": "Первый пункт",
+                "isDone": false,
+                "position": 1000
+            }]
+        }]);
+
+        let delta = checklist_delta_from_activity(
+            "checklist_item.created",
+            "checklist_item",
+            item_id,
+            card_id,
+            &["title".to_string()],
+            &checklists,
+            "2026-08-13T10:00:00.000Z",
+        )
+        .expect("checklist item delta");
+
+        assert_eq!(delta["kind"], "checklist_item.put");
+        assert_eq!(delta["itemId"], item_id.to_string());
+        assert_eq!(delta["fieldMask"], json!(["*"]));
+        assert!(delta.get("checklists").is_none());
     }
 }

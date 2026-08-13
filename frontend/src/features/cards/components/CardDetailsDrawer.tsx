@@ -481,7 +481,7 @@ export function CardDetailsDrawer() {
                       <div className="entity-header">
                         <div>
                           <strong>{checklist.title}</strong>
-                          <p className="muted">{checklist.items.filter((item) => item.isDone).length}/{checklist.items.length} выполнено</p>
+                          <p className="muted">Выполнено: {checklist.items.filter((item) => item.isDone).length} из {checklist.items.length}</p>
                         </div>
                         <div className="row-actions">
                           <Button iconOnly onClick={() => void handleRenameChecklist(checklist)} disabled={updateChecklistMutation.isPending} title="Переименовать чек-лист" aria-label="Переименовать чек-лист"><Icon name="edit" size={16} /></Button>

@@ -100,7 +100,7 @@ Private data — это пользовательское содержимое и
 
 Сюда относятся:
 - названия и описания workspace/board/card;
-- комментарии, чеклисты, labels;
+- комментарии, чек-листы, labels;
 - imports/exports/backups;
 - локальная offline queue и unsynced changes;
 - activity/audit детали, если они раскрывают private context;

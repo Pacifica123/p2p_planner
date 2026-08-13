@@ -12,6 +12,7 @@ import { Button } from '@/shared/ui/Button';
 import { ErrorState } from '@/shared/ui/ErrorState';
 import { TextField } from '@/shared/ui/Field';
 import { Panel } from '@/shared/ui/Panel';
+import { formatCountRu } from '@/shared/lib/russian';
 
 interface BoardImportPanelProps {
   workspaceId: string;
@@ -144,13 +145,16 @@ export function BoardImportPanel({
             <div>
               <span className="muted">Состав</span>
               <strong>
-                {preview.counts.columns} колонок, {preview.counts.cards} карточек
+                {formatCountRu(preview.counts.columns, 'колонка', 'колонки', 'колонок')},{' '}
+                {formatCountRu(preview.counts.cards, 'карточка', 'карточки', 'карточек')}
               </strong>
             </div>
             <div>
               <span className="muted">Дополнительно</span>
               <strong>
-                {preview.counts.labels} меток, {preview.counts.checklists} списков, {preview.counts.comments} комментариев
+                {formatCountRu(preview.counts.labels, 'метка', 'метки', 'меток')},{' '}
+                {formatCountRu(preview.counts.checklists, 'чек-лист', 'чек-листа', 'чек-листов')},{' '}
+                {formatCountRu(preview.counts.comments, 'комментарий', 'комментария', 'комментариев')}
               </strong>
             </div>
           </div>

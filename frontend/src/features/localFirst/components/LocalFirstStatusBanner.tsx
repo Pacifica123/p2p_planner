@@ -1,6 +1,7 @@
 import type { LocalFirstBoardRuntime } from '@/features/localFirst/types';
 import { Button } from '@/shared/ui/Button';
 import { Icon } from '@/shared/ui/Icon';
+import { formatCountRu } from '@/shared/lib/russian';
 
 interface LocalFirstStatusBannerProps {
   runtime: LocalFirstBoardRuntime;
@@ -17,7 +18,7 @@ export function LocalFirstStatusBanner({ runtime }: LocalFirstStatusBannerProps)
     let label = 'Изменения сохранены';
     if (isOffline) label = 'Работаем без сети — изменения сохранены на устройстве';
     else if (runtime.isFlushing) label = 'Синхронизируем изменения…';
-    else if (hasPending) label = `${runtime.pendingCount} изменений сохранено локально`;
+    else if (hasPending) label = `Сохранено локально: ${formatCountRu(runtime.pendingCount, 'изменение', 'изменения', 'изменений')}`;
 
     return (
       <div className={`sync-notice ${runtime.isFlushing ? 'sync-notice--progress' : ''}`} data-testid="local-first-status">

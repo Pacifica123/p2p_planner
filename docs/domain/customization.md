@@ -24,7 +24,7 @@
    - `wallpaper` вида `none | accent | solid | gradient | preset | image`;
    - `column_density`;
    - `card_preview_mode`;
-   - флаги отображения описания, дат и прогресса чеклистов;
+   - флаги отображения описания, дат и прогресса чек-листов;
    - `custom_properties` как ограниченный JSON-объект для future-ready расширения.
 3. Чтение дефолтных настроек даже если кастомная запись еще не создана.
 4. Отдельный API surface для `me/appearance` и `boards/{boardId}/appearance`.

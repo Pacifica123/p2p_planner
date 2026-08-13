@@ -172,6 +172,16 @@ body {
   margin-top: auto;
 }
 
+.app-sidebar__version {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 0 8px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .sidebar-group__summary {
   min-height: 30px;
   padding: 5px 8px;

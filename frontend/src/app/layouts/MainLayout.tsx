@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet, useParams } from 'react-router-dom';
 import { paths } from '@/app/router/paths';
 import { useAuthSession } from '@/app/providers/AuthSessionProvider';
@@ -8,6 +9,8 @@ import { LoadingState } from '@/shared/ui/LoadingState';
 import { ErrorState } from '@/shared/ui/ErrorState';
 import { Button } from '@/shared/ui/Button';
 import { Icon } from '@/shared/ui/Icon';
+import { getBackendVersion } from '@/features/system/api/version';
+import { webClientVersion } from '@/shared/version';
 
 const NAV_COLLAPSED_KEY = 'p2pkanban:navigation-collapsed';
 
@@ -20,6 +23,12 @@ export function MainLayout() {
   const { user, signOutCurrent, signOutEverywhere } = useAuthSession();
   const workspacesQuery = useWorkspacesQuery();
   const boardsQuery = useBoardsQuery(workspaceId);
+  const backendVersionQuery = useQuery({
+    queryKey: ['backend-version'],
+    queryFn: getBackendVersion,
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: 1,
+  });
   const [isNavigationCollapsed, setNavigationCollapsed] = useState(
     () => window.localStorage.getItem(NAV_COLLAPSED_KEY) === 'true',
   );
@@ -114,6 +123,10 @@ export function MainLayout() {
             ) : null}
           </nav>
         </details>
+        <div className="app-sidebar__version" title="Версии клиента и подключённого backend-узла">
+          <span>Web {webClientVersion}</span>
+          <span>Backend {backendVersionQuery.data?.version || 'недоступен'}</span>
+        </div>
       </aside>
 
       <div className="app-main">

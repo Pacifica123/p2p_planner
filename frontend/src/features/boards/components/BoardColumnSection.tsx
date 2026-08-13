@@ -3,6 +3,7 @@ import { CreateCardInlineForm } from '@/features/boards/components/CreateCardInl
 import type { BoardColumn, Card } from '@/shared/types/api';
 import { Button } from '@/shared/ui/Button';
 import { Icon } from '@/shared/ui/Icon';
+import { formatCountRu } from '@/shared/lib/russian';
 
 interface BoardColumnSectionProps {
   boardId: string;
@@ -41,7 +42,7 @@ export function BoardColumnSection({
       <div className="column-card__header">
         <div>
           <h3>{column.name}</h3>
-          <p className="muted">{cards.length} карточек</p>
+          <p className="muted">{formatCountRu(cards.length, 'карточка', 'карточки', 'карточек')}</p>
         </div>
         <div className="row-actions">
           <Button iconOnly onClick={() => onRename(column)} disabled={isMutating} title="Переименовать колонку" aria-label="Переименовать колонку">
