@@ -18,7 +18,7 @@
 - [`deployment/application-update-strategy-v1.md`](deployment/application-update-strategy-v1.md) — рабочее обновление и rollback;
 - [`deployment/postgresql-backup-restore-v1.md`](deployment/postgresql-backup-restore-v1.md) — ручной backup и проверяемый restore;
 - [`product/v1-known-limitations.md`](product/v1-known-limitations.md) — честные ограничения;
-- [`product/v1.0.0-beta.9-release-notes.md`](product/v1.0.0-beta.9-release-notes.md) — текст текущего релиза.
+- [`product/v1.0.0-beta.10-release-notes.md`](product/v1.0.0-beta.10-release-notes.md) — текст текущего релиза.
 
 Разработчику:
 
@@ -35,6 +35,8 @@
   — проверки;
 - [`architecture/client-uiux-flat-pass-v1.md`](architecture/client-uiux-flat-pass-v1.md)
   — подробный разбор проблем интерфейса и принятые изменения;
+- [`architecture/local-card-reminders-v1.md`](architecture/local-card-reminders-v1.md)
+  — floating-local контракт напоминаний web и Android;
 - [`architecture/web-node-link-v1.md`](architecture/web-node-link-v1.md)
   — почему одинаковая почта не связывает self-hosted узлы и как перенести данные;
 - [`dev-bootstrap/devbootstrap-v1-operations.md`](dev-bootstrap/devbootstrap-v1-operations.md)
@@ -52,15 +54,15 @@
 
 | Область | Фактическое решение |
 |---|---|
-| Версия | `v1.0.0-beta.9` |
+| Версия | `v1.0.0-beta.10` |
 | Основной запуск | `python bootstrap.py`, весь runtime в Docker |
-| Обновление | `python bootstrap.py update`, backup + versioned images + rollback |
+| Обновление | Web-плашка или CLI, commit SHA + backup + versioned images + rollback |
 | Канонический путь | React/Vite → Nginx → Rust/Axum → PostgreSQL |
 | Local-first | Локальный snapshot и очередь исходящих операций для основного web-сценария |
 | Синхронизация | Backend-координируемая; активный web polling, web-node link и roaming карточек/чек-листов |
 | P2P | Nostr roaming используется Android; `sync-core`, Iroh и edge coordinator остаются экспериментальными |
 | Edge coordinator | Отдельный совместимый прототип; не заменяет основной backend |
-| Mobile | Отдельный Android-клиент с базовым CRUD, local-first карточками/чек-листами и переносом по колонкам |
+| Mobile | Android mobile.8: CRUD, local-first, напоминания и web-совместимое оформление |
 | Релиз | Основной артефакт — self-host bootstrap ZIP, а не AppImage и не одинокий `.exe` |
 
 ## Важная граница

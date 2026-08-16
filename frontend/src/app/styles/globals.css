@@ -1437,3 +1437,126 @@ body {
   display: grid;
   gap: 4px;
 }
+
+.local-reminder-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 1200;
+  width: min(420px, calc(100vw - 36px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--surface-strong);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  box-shadow: 0 12px 36px rgba(2, 6, 23, 0.28);
+}
+
+.local-reminder-toast p {
+  margin: 3px 0 0;
+}
+
+.reminder-panel {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--surface-border));
+}
+
+.reminder-panel__limit {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.source-update-banner {
+  position: fixed;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  z-index: 1100;
+  width: min(760px, calc(100vw - 28px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 15px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--surface-border));
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  box-shadow: 0 14px 44px rgba(2, 6, 23, 0.32);
+}
+
+.source-update-banner__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.source-update-banner__copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-update-banner__copy a {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+
+.source-update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.source-update-card {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid var(--surface-strong);
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  box-shadow: 0 20px 70px rgba(2, 6, 23, 0.42);
+}
+
+.source-update-card h2,
+.source-update-card p {
+  margin: 0;
+}
+
+.source-update-card__eyebrow {
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.source-update-progress {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-soft);
+}
+
+.source-update-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 280ms ease;
+}
+
+.source-update-card__facts {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+}

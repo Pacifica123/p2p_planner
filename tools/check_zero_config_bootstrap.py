@@ -29,7 +29,7 @@ def service_block(compose_text: str, service_name: str) -> str:
     remainder = compose_text[start + len(marker) :]
     boundaries = [
         index
-        for name in ("bootstrap-init", "postgres", "backend", "web")
+    for name in ("bootstrap-init", "postgres", "backend", "web", "gateway")
         if name != service_name
         for index in [remainder.find(f"\n  {name}:\n")]
         if index >= 0
@@ -39,7 +39,11 @@ def service_block(compose_text: str, service_name: str) -> str:
 
 
 def check_python() -> None:
-    for relative in ("bootstrap.py", "tools/container_bootstrap.py"):
+    for relative in (
+        "bootstrap.py",
+        "tools/container_bootstrap.py",
+        "tools/update_control_plane.py",
+    ):
         path = ROOT / relative
         ast.parse(path.read_text(encoding="utf-8"), filename=relative)
 
@@ -84,6 +88,16 @@ def check_python() -> None:
     require("PostgreSQL backup" in update_plan.stdout, update_plan.stdout)
     require("Docker volumes" in update_plan.stdout, update_plan.stdout)
 
+    control_tests = subprocess.run(
+        [sys.executable, "-B", "tools/test_update_control_plane.py"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    require(control_tests.returncode == 0, control_tests.stdout)
+
 
 def check_compose_contract() -> None:
     compose_path = ROOT / "deploy/bootstrap/compose.yaml"
@@ -91,6 +105,7 @@ def check_compose_contract() -> None:
     postgres = service_block(text, "postgres")
     backend = service_block(text, "backend")
     web = service_block(text, "web")
+    gateway = service_block(text, "gateway")
     init = service_block(text, "bootstrap-init")
 
     require("POSTGRES_PASSWORD_FILE:" in postgres, "PostgreSQL must use a secret file")
@@ -98,7 +113,8 @@ def check_compose_contract() -> None:
     require("POSTGRES_DB: p2pkanban" in postgres, "managed PostgreSQL DB is missing")
     require("\n    ports:" not in postgres, "PostgreSQL must not publish a host port")
     require("\n    ports:" not in backend, "backend must not publish a host port")
-    require("\n    ports:" in web, "web gateway must publish the only host port")
+    require("\n    ports:" not in web, "versioned web must stay on the Docker network")
+    require("\n    ports:" in gateway, "stable gateway must publish the only host port")
     require("service_completed_successfully" in init + postgres + backend, "init ordering is missing")
     require("bootstrap_secrets:" in text, "persistent secret volume is missing")
     require("postgres_data:" in text, "persistent PostgreSQL volume is missing")
@@ -109,6 +125,10 @@ def check_compose_contract() -> None:
     require(
         "image: p2pkanban/web:${P2PKANBAN_IMAGE_TAG:-local}" in web,
         "web does not use a rollback-safe versioned image tag",
+    )
+    require(
+        "image: p2pkanban/gateway:local" in gateway,
+        "gateway must keep a stable image identity across app switches",
     )
     require("VITE_API_BASE_URL: /api/v1" in web, "frontend API must be same-origin")
     require("change-me" not in text.lower(), "compose contains a placeholder secret")
@@ -123,6 +143,9 @@ def check_images_and_proxy() -> None:
         "deploy/bootstrap/backend.Dockerfile",
         "deploy/bootstrap/frontend.Dockerfile",
         "deploy/bootstrap/nginx.conf",
+        "deploy/bootstrap/gateway.Dockerfile",
+        "deploy/bootstrap/gateway.conf",
+        "deploy/bootstrap/maintenance.html",
     )
     for relative in required:
         require((ROOT / relative).is_file(), f"missing {relative}")
@@ -136,6 +159,65 @@ def check_images_and_proxy() -> None:
     require("location /api/" in nginx, "Nginx API proxy is missing")
     require("proxy_pass http://backend:18080" in nginx, "Nginx backend target is wrong")
     require("try_files $uri $uri/ /index.html" in nginx, "SPA fallback is missing")
+
+    gateway = (ROOT / "deploy/bootstrap/gateway.conf").read_text(encoding="utf-8")
+    require("resolver 127.0.0.11" in gateway, "gateway needs dynamic Docker DNS")
+    require("proxy_pass http://$web_upstream:8080" in gateway, "gateway web proxy is missing")
+    require("proxy_pass http://$backend_upstream:18080" in gateway, "gateway API proxy is missing")
+    require("location = /healthz" in gateway, "gateway needs an exact readiness route")
+    health_start = gateway.index("location = /healthz")
+    health_end = gateway.index("\n    }", health_start)
+    require(
+        "error_page" not in gateway[health_start:health_end],
+        "readiness must not turn an upstream failure into maintenance HTTP 200",
+    )
+    require("error_page 502 503 504 =200 /maintenance.html" in gateway, "maintenance fallback is missing")
+
+    maintenance = (ROOT / "deploy/bootstrap/maintenance.html").read_text(encoding="utf-8")
+    require("127.0.0.1:8765/v1/status" in maintenance, "maintenance progress polling is missing")
+
+
+def check_update_control_contract() -> None:
+    bootstrap = (ROOT / "tools/container_bootstrap.py").read_text(encoding="utf-8")
+    control = (ROOT / "tools/update_control_plane.py").read_text(encoding="utf-8")
+    reminders = (
+        ROOT / "frontend/src/features/reminders/lib/localReminders.ts"
+    ).read_text(encoding="utf-8")
+
+    require(
+        bootstrap.count('get("scriptSha256") == desired_script_sha') >= 2,
+        "bootstrap must verify the exact loaded control-plane script",
+    )
+    switch_start = bootstrap.index('print("Переключаю backend и web')
+    switch_end = bootstrap.index("ready =", switch_start)
+    switch_block = bootstrap[switch_start:switch_end]
+    require('"backend"' in switch_block and '"web"' in switch_block, "update switch scope is incomplete")
+    require('"--remove-orphans"' not in switch_block, "gateway must remain up during app switch")
+    for table in (
+        "users",
+        "workspaces",
+        "boards",
+        "board_columns",
+        "cards",
+        "board_labels",
+        "card_labels",
+        "checklists",
+        "checklist_items",
+        "comments",
+        "user_appearance_preferences",
+        "board_appearance_settings",
+        "tombstones",
+        "roaming_board_events",
+    ):
+        require(f'"{table}"' in bootstrap, f"update data count is missing: {table}")
+
+    require('"-u"' in control, "UI updater child process must stream progress")
+    require("loaded_script_sha256" in control, "control-plane health lacks loaded script identity")
+    require("ThreadingHTTPServer((\"127.0.0.1\", port)" in control, "control plane must bind loopback only")
+    require("secrets.compare_digest" in control, "mutating update calls must verify a random token")
+    require("origin in self.app.allowed_origins()" in control, "control plane must enforce exact web origins")
+    require("userId: string" in reminders, "web reminders must be scoped by authenticated user")
+    require("item.userId === userId" in reminders, "web reminder reads are not user-isolated")
 
 
 def check_manifest_and_readme() -> None:
@@ -265,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         ("python CLI", check_python),
         ("compose isolation and secrets", check_compose_contract),
         ("container images and gateway", check_images_and_proxy),
+        ("UI update and local reminder contract", check_update_control_contract),
         ("Cargo and README contract", check_manifest_and_readme),
         ("optional Compose parser", optional_compose_validation),
     )

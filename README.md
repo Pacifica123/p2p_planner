@@ -25,7 +25,7 @@ py bootstrap.py
 
 Bootstrap сам:
 
-- найдёт свободный web-порт;
+- при первом запуске найдёт свободный web-порт и закрепит его за узлом;
 - создаст контейнеры;
 - сгенерирует и сохранит случайные секреты;
 - создаст PostgreSQL-роль и БД;
@@ -42,7 +42,7 @@ SQL не нужно. Первый build может занять нескольк
 | Действие | Команда |
 |---|---|
 | Запустить stack | `python bootstrap.py` |
-| Обновить backend и web из `main` | `python bootstrap.py update` |
+| Обновить из `main` | плашка в web либо `python bootstrap.py update` |
 | Вернуть прошлую версию кода | `python bootstrap.py rollback` |
 | Посмотреть состояние | `python bootstrap.py status` |
 | Посмотреть последние логи | `python bootstrap.py logs` |
@@ -63,10 +63,10 @@ python bootstrap.py reset --yes
 
 Подробности: [`docs/deployment/zero-config-bootstrap-v1.md`](docs/deployment/zero-config-bootstrap-v1.md).
 
-Перед обновлением bootstrap собирает новые images отдельно, создаёт PostgreSQL
-backup и только затем переключает backend/web на прежние volumes данных и
-секретов. Если старый release bundle не знает адрес GitHub-репозитория, при
-первом обновлении передайте его через `update --repository URL`.
+Web на loopback сам проверяет новый commit в `main` и показывает его сообщение.
+Принятое обновление собирает images отдельно, создаёт PostgreSQL backup и лишь
+затем переключает backend/web за стабильным gateway на прежние volumes. CLI
+`python bootstrap.py update` остаётся равноправным аварийным путём.
 
 ## Что уже работает
 
@@ -80,7 +80,8 @@ backup и только затем переключает backend/web на пре
 - история активности и audit API;
 - читаемая русская история без ложных перемещений от checklist-синхронизации;
 - настройки внешнего вида пользователя и доски, включая wallpaper по URL;
-- безопасное обновление Docker-связки с backup и rollback images;
+- локальные напоминания карточек в web и системные напоминания на Android;
+- UI-обновление Docker-связки с commit message, progress, backup и rollback;
 - локальный snapshot и очередь pending operations;
 - backend-координируемая push/pull синхронизация;
 - экспорт доски/workspace и импорт board-level JSON как новой копии;
@@ -88,8 +89,7 @@ backup и только затем переключает backend/web на пре
 - Nostr shadow outbox/recovery и native Iroh adapter как экспериментальный transport foundation;
 - отдельный Android-клиент с native auth, локальными snapshot и независимой
   Nostr-синхронизацией карточек и чек-листов;
-- изменения Android принимаются coordinator и появляются на открытой web-доске
-  в пределах короткого интервала обновления.
+- изменения Android появляются на открытой web-доске после короткого polling;
 - checklist roaming использует entity-delta и не удаляет пункты поздним snapshot;
 - явное связывание чистого второго web-узла с основным узлом в доверенной LAN:
   переносятся identity, owned workspaces, доски и ключи roaming.
@@ -118,7 +118,7 @@ backup и только затем переключает backend/web на пре
 
 ### Второй независимый web-узел
 
-Email уникален только внутри одного deployment. На чистом втором узле beta.9
+Email уникален только внутри одного deployment. На чистом втором узле beta.10
 выберите `Подключить с другого узла`; ненужную локальную копию после проверки
 можно удалить командой `python bootstrap.py reset --yes`. Полный порядок:
 [`docs/architecture/web-node-link-v1.md`](docs/architecture/web-node-link-v1.md).

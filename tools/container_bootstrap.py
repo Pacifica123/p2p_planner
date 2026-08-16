@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
 STATE_VERSION = 2
 COMPOSE_PROJECT = "p2pkanban-bootstrap"
 COMPOSE_RELATIVE_PATH = Path("deploy/bootstrap/compose.yaml")
@@ -44,8 +44,13 @@ UPDATE_REPORTS_RELATIVE_PATH = Path(".dev-bootstrap/update-reports")
 DEFAULT_WEB_PORT = 8080
 DEFAULT_TIMEOUT_SECONDS = 900
 DEFAULT_UPDATE_BRANCH = "main"
+DEFAULT_UPDATE_REPOSITORY = "https://github.com/Pacifica123/p2p_planner"
+UPDATE_CONTROL_RELATIVE_PATH = Path("tools/update_control_plane.py")
+UPDATE_CONTROL_STATE_RELATIVE_PATH = Path(".dev-bootstrap/update-control.json")
+DEFAULT_UPDATE_CONTROL_PORT = 8765
 DEFAULT_MIN_FREE_SPACE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_UPDATE_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_UPDATE_EXTRACTED_BYTES = 1024 * 1024 * 1024
 
 
 class BootstrapError(RuntimeError):
@@ -165,6 +170,7 @@ def source_fingerprint(source_root: Path) -> str:
         Path("VERSION"),
         Path("bootstrap.py"),
         Path("tools/container_bootstrap.py"),
+        UPDATE_CONTROL_RELATIVE_PATH,
         Path("backend/Cargo.toml"),
         Path("backend/Cargo.lock"),
         Path("backend/build.rs"),
@@ -212,6 +218,10 @@ def validate_update_source(source_root: Path) -> str:
         Path("frontend/package.json"),
         Path("bootstrap.py"),
         Path("tools/container_bootstrap.py"),
+        UPDATE_CONTROL_RELATIVE_PATH,
+        Path("deploy/bootstrap/gateway.Dockerfile"),
+        Path("deploy/bootstrap/gateway.conf"),
+        Path("deploy/bootstrap/maintenance.html"),
     )
     missing = [path.as_posix() for path in required if not (source_root / path).is_file()]
     if missing:
@@ -276,6 +286,7 @@ def discover_update_repository(
         state.get("updateRepository"),
         current_build_info(project_root, state).get("gitRepository"),
         git_output(project_root, "remote", "get-url", "origin"),
+        DEFAULT_UPDATE_REPOSITORY,
     ]
     for candidate in candidates:
         if not isinstance(candidate, str):
@@ -298,12 +309,57 @@ def github_branch_archive_url(repository: str, branch: str) -> str:
     return f"https://github.com/{owner_repo}/archive/refs/heads/{quoted_branch}.zip"
 
 
+def github_commit_archive_url(repository: str, commit_sha: str) -> str:
+    normalized = normalize_github_repository(repository)
+    if not normalized:
+        raise BootstrapError("Некорректный GitHub-репозиторий обновления.")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+        raise BootstrapError("Некорректный GitHub commit SHA.")
+    owner_repo = normalized.removeprefix("https://github.com/")
+    return f"https://github.com/{owner_repo}/archive/{commit_sha}.zip"
+
+
+def github_latest_commit(repository: str, branch: str) -> dict[str, Any]:
+    normalized = normalize_github_repository(repository)
+    if not normalized:
+        raise BootstrapError("Некорректный GitHub-репозиторий обновления.")
+    owner_repo = normalized.removeprefix("https://github.com/")
+    url = (
+        f"https://api.github.com/repos/{owner_repo}/commits/"
+        f"{urllib.parse.quote(branch, safe='')}"
+    )
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"p2pKanban-bootstrap/{TOOL_VERSION}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise BootstrapError(f"Не удалось определить последний commit main: {exc}") from exc
+    sha = str(payload.get("sha") or "") if isinstance(payload, dict) else ""
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise BootstrapError("GitHub не вернул корректный commit SHA для main.")
+    commit_value = payload.get("commit") if isinstance(payload, dict) else None
+    commit = commit_value if isinstance(commit_value, dict) else {}
+    return {
+        "sha": sha,
+        "message": str(commit.get("message") or ""),
+        "url": str(payload.get("html_url") or f"{normalized}/commit/{sha}"),
+    }
+
+
 def safe_extract_zip(archive_path: Path, destination: Path) -> Path:
     destination_resolved = destination.resolve()
     with zipfile.ZipFile(archive_path) as archive:
         file_members = [item for item in archive.infolist() if not item.is_dir()]
         if not file_members:
             raise BootstrapError("Архив обновления пуст.")
+        extracted_bytes = 0
         for item in archive.infolist():
             target = (destination / item.filename).resolve()
             try:
@@ -314,6 +370,9 @@ def safe_extract_zip(archive_path: Path, destination: Path) -> Path:
                 ) from exc
             if item.file_size > MAX_UPDATE_ARCHIVE_BYTES:
                 raise BootstrapError("Один из файлов обновления слишком большой.")
+            extracted_bytes += item.file_size
+            if extracted_bytes > MAX_UPDATE_EXTRACTED_BYTES:
+                raise BootstrapError("Распакованный source обновления слишком большой.")
         archive.extractall(destination)
 
     roots = {
@@ -428,11 +487,67 @@ def is_port_available(port: int, host: str = "127.0.0.1") -> bool:
     return True
 
 
-def choose_web_port(requested: int | None, state: dict[str, Any]) -> int:
+def discover_owned_web_port(project_root: Path) -> int | None:
+    docker = shutil.which("docker")
+    if not docker:
+        return None
+    for service in ("gateway", "web"):
+        containers = run_capture(
+            [
+                docker,
+                "ps",
+                "--filter",
+                f"label=com.docker.compose.project={COMPOSE_PROJECT}",
+                "--filter",
+                f"label=com.docker.compose.service={service}",
+                "--format",
+                "{{.ID}}",
+            ],
+            cwd=project_root,
+            env=os.environ.copy(),
+            timeout=20,
+        )
+        container_id = containers.stdout.strip().splitlines()
+        if containers.returncode != 0 or not container_id:
+            continue
+        inspected = run_capture(
+            [
+                docker,
+                "inspect",
+                "--format",
+                "{{json .NetworkSettings.Ports}}",
+                container_id[0],
+            ],
+            cwd=project_root,
+            env=os.environ.copy(),
+            timeout=20,
+        )
+        if inspected.returncode != 0:
+            continue
+        try:
+            ports = json.loads(inspected.stdout)
+            bindings = ports.get("8080/tcp") if isinstance(ports, dict) else None
+            host_port = int(bindings[0]["HostPort"]) if bindings else 0
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if 1 <= host_port <= 65535:
+            return host_port
+    return None
+
+
+def choose_web_port(
+    requested: int | None,
+    state: dict[str, Any],
+    project_root: Path | None = None,
+) -> int:
     if requested is not None:
         if not 1 <= requested <= 65535:
             raise BootstrapError("Порт должен быть числом от 1 до 65535.")
         return requested
+
+    owned = discover_owned_web_port(project_root) if project_root else None
+    if owned is not None:
+        return owned
 
     previous = state.get("webPort")
     if isinstance(previous, int) and 1 <= previous <= 65535:
@@ -581,6 +696,103 @@ def wait_until_ready(url: str, timeout_seconds: int) -> bool:
     return False
 
 
+def update_control_health(project_root: Path) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{DEFAULT_UPDATE_CONTROL_PORT}/health",
+        headers={"User-Agent": f"p2pKanban-bootstrap/{TOOL_VERSION}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=1.5) as response:
+            value = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, dict) or value.get("projectRoot") != str(project_root.resolve()):
+        return {}
+    return value
+
+
+def ensure_update_control_plane(project_root: Path) -> None:
+    tool = project_root / UPDATE_CONTROL_RELATIVE_PATH
+    if not tool.is_file():
+        raise BootstrapError("Не найден локальный control plane обновлений.")
+    health = update_control_health(project_root)
+    desired_script_sha = file_sha256(tool)
+    if health.get("controlVersion"):
+        if health.get("scriptSha256") == desired_script_sha:
+            return
+        stop_update_control_plane(project_root)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not is_port_available(DEFAULT_UPDATE_CONTROL_PORT):
+            time.sleep(0.1)
+    if not is_port_available(DEFAULT_UPDATE_CONTROL_PORT):
+        raise BootstrapError(
+            f"Локальный порт control plane {DEFAULT_UPDATE_CONTROL_PORT} занят "
+            "другим процессом. p2pKanban не будет подменять его или выбирать новый порт."
+        )
+
+    log_path = project_root / ".dev-bootstrap/update-control.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log = log_path.open("ab")
+    command = [
+        sys.executable,
+        "-B",
+        str(tool),
+        "serve",
+        "--project-root",
+        str(project_root),
+        "--port",
+        str(DEFAULT_UPDATE_CONTROL_PORT),
+    ]
+    kwargs: dict[str, Any] = {
+        "cwd": str(project_root),
+        "stdin": subprocess.DEVNULL,
+        "stdout": log,
+        "stderr": subprocess.STDOUT,
+        "close_fds": os.name != "nt",
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "DETACHED_PROCESS", 0)
+        )
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        subprocess.Popen(command, **kwargs)
+    except OSError as exc:
+        raise BootstrapError(f"Не удалось запустить control plane обновлений: {exc}") from exc
+    finally:
+        log.close()
+
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if update_control_health(project_root).get("scriptSha256") == desired_script_sha:
+            return
+        time.sleep(0.2)
+    raise BootstrapError(
+        "Control plane обновлений не стал доступен. См. .dev-bootstrap/update-control.log."
+    )
+
+
+def stop_update_control_plane(project_root: Path) -> None:
+    state = read_json_object(project_root / UPDATE_CONTROL_STATE_RELATIVE_PATH)
+    token = state.get("sessionToken")
+    if not isinstance(token, str) or not token:
+        return
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{DEFAULT_UPDATE_CONTROL_PORT}/internal/shutdown",
+        method="POST",
+        headers={
+            "X-P2PKanban-Control": token,
+            "User-Agent": f"p2pKanban-bootstrap/{TOOL_VERSION}",
+        },
+    )
+    try:
+        urllib.request.urlopen(request, timeout=2).close()
+    except (OSError, urllib.error.URLError):
+        pass
+
+
 def print_compose_diagnostics(
     source_root: Path,
     env: dict[str, str],
@@ -690,12 +902,38 @@ def create_database_backup(
 
 
 def database_counts(source_root: Path, env: dict[str, str]) -> dict[str, int]:
+    count_keys = (
+        "users",
+        "workspaces",
+        "boards",
+        "board_columns",
+        "cards",
+        "board_labels",
+        "card_labels",
+        "checklists",
+        "checklist_items",
+        "comments",
+        "user_appearance_preferences",
+        "board_appearance_settings",
+        "tombstones",
+        "roaming_board_events",
+    )
     query = (
         "select json_build_object("
         "'users',(select count(*) from users),"
         "'workspaces',(select count(*) from workspaces),"
         "'boards',(select count(*) from boards),"
-        "'cards',(select count(*) from cards)"
+        "'board_columns',(select count(*) from board_columns),"
+        "'cards',(select count(*) from cards),"
+        "'board_labels',(select count(*) from board_labels),"
+        "'card_labels',(select count(*) from card_labels),"
+        "'checklists',(select count(*) from checklists),"
+        "'checklist_items',(select count(*) from checklist_items),"
+        "'comments',(select count(*) from comments),"
+        "'user_appearance_preferences',(select count(*) from user_appearance_preferences),"
+        "'board_appearance_settings',(select count(*) from board_appearance_settings),"
+        "'tombstones',(select count(*) from tombstones),"
+        "'roaming_board_events',(select count(*) from roaming_board_events)"
         ")::text;"
     )
     result = run_capture(
@@ -720,7 +958,7 @@ def database_counts(source_root: Path, env: dict[str, str]) -> dict[str, int]:
     )
     if result.returncode != 0:
         raise BootstrapError(
-            "Не удалось проверить количество пользователей и досок перед обновлением."
+            "Не удалось проверить количество основных сущностей перед обновлением."
         )
     try:
         value = json.loads(result.stdout.strip())
@@ -732,7 +970,7 @@ def database_counts(source_root: Path, env: dict[str, str]) -> dict[str, int]:
         raise BootstrapError("Контрольная проверка PostgreSQL вернула неверный формат.")
     return {
         key: int(value.get(key, 0))
-        for key in ("users", "workspaces", "boards", "cards")
+        for key in count_keys
     }
 
 
@@ -824,8 +1062,10 @@ def install_launcher_update(
     )
     pairs = (
         (project_root / "tools/container_bootstrap.py", source_root / "tools/container_bootstrap.py"),
+        (project_root / UPDATE_CONTROL_RELATIVE_PATH, source_root / UPDATE_CONTROL_RELATIVE_PATH),
         (project_root / "bootstrap.py", source_root / "bootstrap.py"),
     )
+    temporary_paths: list[Path] = []
     try:
         backup_root.mkdir(parents=True, exist_ok=False)
         for destination, _source in pairs:
@@ -836,9 +1076,31 @@ def install_launcher_update(
         for destination, source in pairs:
             temporary = destination.with_name(f"{destination.name}.update-tmp")
             shutil.copy2(source, temporary)
+            temporary_paths.append(temporary)
+        for (destination, _source), temporary in zip(pairs, temporary_paths, strict=True):
             os.replace(temporary, destination)
     except OSError as exc:
-        return str(exc)
+        for temporary in temporary_paths:
+            temporary.unlink(missing_ok=True)
+        restore_errors: list[str] = []
+        for destination, _source in pairs:
+            backup = backup_root / destination.relative_to(project_root)
+            if not backup.is_file():
+                continue
+            temporary = destination.with_name(f"{destination.name}.rollback-tmp")
+            try:
+                shutil.copy2(backup, temporary)
+                os.replace(temporary, destination)
+            except OSError as restore_exc:
+                temporary.unlink(missing_ok=True)
+                restore_errors.append(f"{destination.name}: {restore_exc}")
+        suffix = (
+            " Не удалось полностью восстановить launcher: "
+            + "; ".join(restore_errors)
+            if restore_errors
+            else " Исходные launcher-файлы восстановлены."
+        )
+        return f"{exc}.{suffix}"
     return None
 
 
@@ -877,9 +1139,17 @@ def prepare_update_source(
             "--repository https://github.com/owner/repository"
         )
 
+    print(f"Получаю исходники {repository} ({branch}).")
+    latest_commit = github_latest_commit(repository, branch)
+    target_commit = str(args.target_commit or latest_commit["sha"]).lower()
+    if args.target_commit and target_commit != latest_commit["sha"]:
+        raise BootstrapError(
+            "main изменился после предложения обновления. "
+            "Повторите проверку и выберите актуальный commit."
+        )
     archive_path = staging_parent / "source.zip"
     archive_sha = download_update_archive(
-        github_branch_archive_url(repository, branch),
+        github_commit_archive_url(repository, target_commit),
         archive_path,
     )
     extracted_parent = staging_parent / "extracted"
@@ -887,14 +1157,17 @@ def prepare_update_source(
     extracted = safe_extract_zip(archive_path, extracted_parent)
     staging = staging_parent / "source"
     os.replace(extracted, staging)
+    print("Проверяю полученный source перед сборкой.")
     version = validate_update_source(staging)
-    build_info = read_json_object(staging / BUILD_INFO_FILENAME)
-    revision = str(build_info.get("gitCommit") or archive_sha)
+    fingerprint = source_fingerprint(staging)
     return staging, {
-        "kind": "github-branch",
+        "kind": "github-commit",
         "repository": repository,
         "branch": branch,
-        "revision": revision,
+        "revision": target_commit,
+        "commitMessage": latest_commit["message"],
+        "commitUrl": latest_commit["url"],
+        "sourceFingerprint": fingerprint,
         "archiveSha256": archive_sha,
         "version": version,
     }
@@ -933,7 +1206,7 @@ def stack_state(
 def command_start(args: argparse.Namespace, project_root: Path) -> int:
     previous = load_state(project_root)
     source_root = active_source_root(project_root, previous)
-    web_port = choose_web_port(args.port, previous)
+    web_port = choose_web_port(args.port, previous, project_root)
     previous_listen = "lan" if previous.get("bindAddress") == "0.0.0.0" else "local"
     listen = args.listen or previous_listen
     bind_address = listen_to_bind_address(listen)
@@ -958,6 +1231,7 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
         print(f"- Web: {public_url}")
         print(f"- Доступ: {'локальная сеть' if listen == 'lan' else 'только этот компьютер'}")
         print("- PostgreSQL, роль, БД и секреты создаются внутри Docker.")
+        print(f"- Порт узла закрепляется; UI updater использует loopback {DEFAULT_UPDATE_CONTROL_PORT}.")
         if source_root != project_root:
             print(
                 "- Код: активная проверенная версия из "
@@ -971,13 +1245,19 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
     ensure_docker_ready(source_root, env)
     validate_compose(source_root, env)
 
+    owned_port = discover_owned_web_port(project_root)
     if args.port is not None:
-        previous_port = previous.get("webPort")
-        same_owned_port = previous_port == web_port
+        same_owned_port = owned_port == web_port
         if not same_owned_port and not is_port_available(web_port):
             raise BootstrapError(
                 f"Порт {web_port} уже занят. Уберите --port или выберите другой."
             )
+    elif owned_port != web_port and not is_port_available(web_port):
+        raise BootstrapError(
+            f"Закреплённый порт узла {web_port} занят другим процессом. "
+            "Bootstrap не будет молча создавать новый адрес. Освободите порт "
+            "либо явно выберите новый: python bootstrap.py start --port <порт>."
+        )
 
     write_state(
         project_root,
@@ -1038,6 +1318,14 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
             previous=previous,
         ),
     )
+
+    try:
+        ensure_update_control_plane(project_root)
+    except BootstrapError as exc:
+        print(
+            f"Предупреждение: UI-обновления недоступны: {exc}",
+            file=sys.stderr,
+        )
 
     print("\np2pKanban запущен.")
     print(f"Открыть: {public_url}")
@@ -1137,6 +1425,7 @@ def command_stop(args: argparse.Namespace, project_root: Path) -> int:
             previous=state,
         ),
     )
+    stop_update_control_plane(project_root)
     print("p2pKanban остановлен. БД и секреты сохранены.")
     return 0
 
@@ -1174,6 +1463,7 @@ def command_reset(args: argparse.Namespace, project_root: Path) -> int:
     )
     if completed.returncode != 0:
         raise BootstrapError("Docker не смог удалить stack volumes.")
+    stop_update_control_plane(project_root)
     remove_state(project_root)
     print("Локальные контейнеры, БД и секреты p2pKanban удалены.")
     return 0
@@ -1349,7 +1639,8 @@ def command_update(args: argparse.Namespace, project_root: Path) -> int:
                     "up",
                     "--detach",
                     "--no-build",
-                    "--remove-orphans",
+                    "backend",
+                    "web",
                 ),
                 cwd=str(source_root),
                 env=target_env,
@@ -1377,7 +1668,8 @@ def command_update(args: argparse.Namespace, project_root: Path) -> int:
                         "up",
                         "--detach",
                         "--no-build",
-                        "--remove-orphans",
+                        "backend",
+                        "web",
                     ),
                     cwd=str(current_source),
                     env=rollback_env,
@@ -1403,6 +1695,7 @@ def command_update(args: argparse.Namespace, project_root: Path) -> int:
                 )
 
             try:
+                print("Проверяю сохранность данных после переключения.")
                 counts_after = database_counts(source_root, target_env)
                 assert_counts_preserved(counts_before, counts_after)
             except BootstrapError as verification_error:
@@ -1417,7 +1710,8 @@ def command_update(args: argparse.Namespace, project_root: Path) -> int:
                         "up",
                         "--detach",
                         "--no-build",
-                        "--remove-orphans",
+                        "backend",
+                        "web",
                     ),
                     cwd=str(current_source),
                     env=rollback_env,
@@ -1599,7 +1893,8 @@ def command_rollback(args: argparse.Namespace, project_root: Path) -> int:
                 "up",
                 "--detach",
                 "--no-build",
-                "--remove-orphans",
+                "backend",
+                "web",
             ),
             cwd=str(previous_source),
             env=previous_env,
@@ -1615,7 +1910,8 @@ def command_rollback(args: argparse.Namespace, project_root: Path) -> int:
                     "up",
                     "--detach",
                     "--no-build",
-                    "--remove-orphans",
+                    "backend",
+                    "web",
                 ),
                 cwd=str(current_source),
                 env=current_env,
@@ -1635,7 +1931,8 @@ def command_rollback(args: argparse.Namespace, project_root: Path) -> int:
                     "up",
                     "--detach",
                     "--no-build",
-                    "--remove-orphans",
+                    "backend",
+                    "web",
                 ),
                 cwd=str(current_source),
                 env=current_env,
@@ -1756,6 +2053,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--branch",
         default=None,
         help=f"Ветка обновления, по умолчанию {DEFAULT_UPDATE_BRANCH}.",
+    )
+    update.add_argument(
+        "--target-commit",
+        help=argparse.SUPPRESS,
     )
     update.add_argument(
         "--source-dir",

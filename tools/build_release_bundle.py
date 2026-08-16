@@ -33,6 +33,7 @@ SOURCE_DIRS = (
 )
 TOOL_FILES = (
     "tools/container_bootstrap.py",
+    "tools/update_control_plane.py",
 )
 EXCLUDED_PARTS = {
     ".git",

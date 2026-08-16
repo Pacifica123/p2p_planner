@@ -11,6 +11,7 @@ import { Button } from '@/shared/ui/Button';
 import { Icon } from '@/shared/ui/Icon';
 import { getBackendVersion } from '@/features/system/api/version';
 import { webClientVersion } from '@/shared/version';
+import { SourceUpdateSurface } from '@/features/system/components/SourceUpdateSurface';
 
 const NAV_COLLAPSED_KEY = 'p2pkanban:navigation-collapsed';
 
@@ -42,7 +43,9 @@ export function MainLayout() {
   }
 
   return (
-    <div className={`app-shell ${isNavigationCollapsed ? 'app-shell--navigation-collapsed' : ''}`} data-testid="app-shell">
+    <>
+      <SourceUpdateSurface />
+      <div className={`app-shell ${isNavigationCollapsed ? 'app-shell--navigation-collapsed' : ''}`} data-testid="app-shell">
       <aside className="app-sidebar" data-testid="main-nav">
         <div className="app-sidebar__brand">
           <NavLink to={paths.home} className="brand-link">
@@ -170,6 +173,7 @@ export function MainLayout() {
           <Outlet />
         </main>
       </div>
-    </div>
+      </div>
+    </>
   );
 }

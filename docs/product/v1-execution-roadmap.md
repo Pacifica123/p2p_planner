@@ -1,7 +1,7 @@
 # Текущее состояние и путь к v1
 
-- Актуально на: 2026-08-13
-- Текущая версия web/backend: `v1.0.0-beta.9`
+- Актуально на: 2026-08-16
+- Текущая версия web/backend: `v1.0.0-beta.10`
 - Следующий стабильный тег: `v1.0.0` после закрытия релизных доказательств
 
 Это основная таблица фактического состояния. Старые планы и release notes
@@ -30,10 +30,22 @@
 | Backend sync | Частично | Реплики, idempotent push, cursor, tombstones и `serverOrder` |
 | Roaming | Частично | Зашифрованные snapshot и операции карточек/чек-листов через несколько Nostr-реле |
 | Backup/import | Частично | JSON export, preview и импорт доски как новой копии |
-| Zero-config bootstrap | Готово в beta | Docker runtime одной командой, безопасное update и rollback кода |
-| Android | Частично | Базовый CRUD, карточки, чек-листы, метки, комментарии и перенос карточек между колонками |
+| Zero-config bootstrap | Готово в beta | Стабильный gateway/порт, UI и CLI update, backup и rollback кода |
+| Android | Частично | CRUD, local-first карточки/чек-листы, локальные уведомления и web-совместимое оформление |
 | Iroh и edge coordinator | Эксперимент | Адаптеры и прототипы существуют, но не входят в обычный путь |
 | GitHub/devctl | Концепция | Определена provider-neutral модель проекта, manifests и receipts |
+
+## Что изменилось в beta.10
+
+- web предлагает новый commit `main`, показывает commit message и выполняет
+  host-controlled update с progress/maintenance на прежнем URL;
+- внешний порт закреплён за stable gateway, а потерянный state восстанавливается
+  по Compose labels без молчаливого создания нового узла;
+- web и Android получили одно локальное напоминание на карточку без backend или
+  relay-синхронизации;
+- Android mobile.8 применяет web-настройки темы, плотности, board palette,
+  accent, wallpaper и карточек;
+- Android source self-update отложен до signed APK/OTA pipeline.
 
 ## Что изменилось в beta.9
 
@@ -110,8 +122,8 @@
 5. При необходимости подключить Android к узлу и дождаться подготовки досок.
 6. Сохранить прикладной backup доски.
 7. Остановить stack через `python bootstrap.py stop`; данные остаются в volume.
-8. Перед обновлением выполнить `python bootstrap.py update`: updater создаст
-   PostgreSQL dump и сохранит rollback images.
+8. Принять web-плашку нового commit либо выполнить `python bootstrap.py update`:
+   общий updater создаст PostgreSQL dump и сохранит rollback images.
 
 ## Почему это ещё beta
 
@@ -121,7 +133,7 @@
 1. двух последовательных `full-local-release`;
 2. smoke распакованного release ZIP на Windows и Linux;
 3. stop/start, update/rollback и контролируемого restore с проверкой данных;
-4. cross-client матрицы web ↔ Android и web ↔ web после исправлений beta.9;
+4. cross-client матрицы web ↔ Android и web ↔ web после исправлений beta.10;
 5. решения о границе Android в обещании stable v1;
 6. выбранной лицензии или явного решения распространять код без публичной
    лицензии;

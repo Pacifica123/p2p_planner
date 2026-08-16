@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAppearance } from '@/app/providers/AppearanceProvider';
+import { useAuthSession } from '@/app/providers/AuthSessionProvider';
 import { useCardActivityQuery } from '@/features/activity/hooks/useActivity';
 import { ActivityFeed } from '@/features/activity/components/ActivityFeed';
 import {
@@ -50,6 +51,16 @@ import {
   checklistSubmitHint,
   shouldSubmitChecklistItem,
 } from '@/features/checklists/lib/checklistComposer';
+import {
+  REMINDERS_CHANGED_EVENT,
+  getLocalCardReminder,
+  moveLocalCardReminder,
+  removeLocalCardReminder,
+  requestBrowserNotificationPermission,
+  saveLocalCardReminder,
+  toLocalDateTimeInput,
+  updateLocalCardReminderTitle,
+} from '@/features/reminders/lib/localReminders';
 
 const STATUS_OPTIONS = [
   { value: '', label: '—' },
@@ -75,6 +86,7 @@ export function CardDetailsDrawer() {
   const { boardId, workspaceId } = useParams();
   const [searchParams] = useSearchParams();
   const { effectiveUserAppearance } = useAppearance();
+  const { user } = useAuthSession();
   const cardId = searchParams.get('card');
   const localFirst = useOptionalLocalFirstBoard();
   const effectiveCardId = cardId ? resolveLocalFirstCardId(cardId) : null;
@@ -124,6 +136,9 @@ export function CardDetailsDrawer() {
   const [newChecklistTitle, setNewChecklistTitle] = useState('');
   const [newItemByChecklist, setNewItemByChecklist] = useState<Record<string, string>>({});
   const [newCommentBody, setNewCommentBody] = useState('');
+  const [reminderLocalDateTime, setReminderLocalDateTime] = useState('');
+  const [reminderError, setReminderError] = useState<string | null>(null);
+  const [reminderNotice, setReminderNotice] = useState<string | null>(null);
   const checklistItemSubmitMode = effectiveUserAppearance?.checklistItemSubmitMode ?? 'ctrl_enter';
   const cardDetailsMode = effectiveUserAppearance?.cardDetailsMode ?? 'drawer';
 
@@ -134,7 +149,19 @@ export function CardDetailsDrawer() {
     setStatus(card.status || null);
     setPriority(card.priority || null);
     setColumnId(card.columnId);
-  }, [card]);
+    setReminderLocalDateTime(user ? getLocalCardReminder(card.id, user.id)?.localDateTime || '' : '');
+    setReminderError(null);
+    setReminderNotice(null);
+  }, [card, user]);
+
+  useEffect(() => {
+    if (!card) return;
+    const refreshReminder = () => {
+      setReminderLocalDateTime(user ? getLocalCardReminder(card.id, user.id)?.localDateTime || '' : '');
+    };
+    window.addEventListener(REMINDERS_CHANGED_EVENT, refreshReminder);
+    return () => window.removeEventListener(REMINDERS_CHANGED_EVENT, refreshReminder);
+  }, [card?.id, user]);
 
   const columnOptions = useMemo(() => {
     if (localFirst && localFirst.boardId === boardId && localFirst.columns.length) {
@@ -146,10 +173,11 @@ export function CardDetailsDrawer() {
 
   useEffect(() => {
     if (!cardId || !effectiveCardId || cardId === effectiveCardId) return;
+    if (user) moveLocalCardReminder(cardId, effectiveCardId, user.id);
     const next = new URLSearchParams(searchParams);
     next.set('card', effectiveCardId);
     navigate({ search: next.toString() }, { replace: true });
-  }, [cardId, effectiveCardId, navigate, searchParams]);
+  }, [cardId, effectiveCardId, navigate, searchParams, user]);
 
   function closeDrawer() {
     navigate(workspaceId && boardId ? `/workspaces/${workspaceId}/boards/${boardId}` : '/', { replace: true });
@@ -183,6 +211,7 @@ export function CardDetailsDrawer() {
       if (columnId && columnId !== card.columnId) {
         localFirst.enqueueMoveCard(card.id, { targetColumnId: columnId });
       }
+      if (user) updateLocalCardReminderTitle(card.id, nextCardInput.title, user.id);
       return;
     }
 
@@ -191,6 +220,50 @@ export function CardDetailsDrawer() {
     if (columnId && columnId !== card.columnId) {
       await moveCardMutation.mutateAsync({ targetColumnId: columnId });
     }
+    if (user) updateLocalCardReminderTitle(card.id, nextCardInput.title, user.id);
+  }
+
+  async function handleSaveReminder() {
+    if (!card || !boardId || !workspaceId || !user) return;
+    setReminderError(null);
+    setReminderNotice(null);
+    try {
+      const permission = await requestBrowserNotificationPermission();
+      saveLocalCardReminder({
+        userId: user.id,
+        cardId: card.id,
+        boardId,
+        workspaceId,
+        cardTitle: title.trim() || card.title,
+        localDateTime: reminderLocalDateTime,
+      });
+      setReminderNotice(permission === 'granted'
+        ? 'Напоминание запланировано в локальном времени этого компьютера.'
+        : 'Напоминание запланировано внутри приложения; системные уведомления браузера недоступны.');
+    } catch (error) {
+      setReminderError(error instanceof Error ? error.message : 'Не удалось запланировать напоминание.');
+    }
+  }
+
+  function handleRemoveReminder() {
+    if (!card) return;
+    if (user) removeLocalCardReminder(card.id, user.id);
+    setReminderLocalDateTime('');
+    setReminderError(null);
+    setReminderNotice('Напоминание отключено.');
+  }
+
+  function setReminderOffset(milliseconds: number, tomorrowAtNine = false) {
+    const next = new Date();
+    if (tomorrowAtNine) {
+      next.setDate(next.getDate() + 1);
+      next.setHours(9, 0, 0, 0);
+    } else {
+      next.setTime(next.getTime() + milliseconds);
+    }
+    setReminderLocalDateTime(toLocalDateTimeInput(next));
+    setReminderError(null);
+    setReminderNotice(null);
   }
 
   async function handleArchiveToggle() {
@@ -208,6 +281,7 @@ export function CardDetailsDrawer() {
       `Удалить карточку «${card.title}» на всех устройствах? Старые локальные копии не смогут восстановить её автоматически.`,
     )) return;
     await deleteCardMutation.mutateAsync();
+    if (user) removeLocalCardReminder(card.id, user.id);
     closeDrawer();
   }
 
@@ -217,6 +291,7 @@ export function CardDetailsDrawer() {
       `Скрыть карточку «${card.title}» только на этом web-узле? На других устройствах она останется.`,
     )) return;
     await hideCardLocallyMutation.mutateAsync();
+    if (user) removeLocalCardReminder(card.id, user.id);
     closeDrawer();
   }
 
@@ -381,6 +456,42 @@ export function CardDetailsDrawer() {
                 ))}
               </SelectField>
             </div>
+
+            <section className="panel reminder-panel">
+              <div className="entity-header">
+                <div>
+                  <h4>Напоминание</h4>
+                  <p className="muted">Одно локальное напоминание на карточку. Между устройствами оно не синхронизируется.</p>
+                </div>
+                <Badge tone={reminderLocalDateTime ? 'done' : 'default'}>
+                  {reminderLocalDateTime ? 'запланировано' : 'выключено'}
+                </Badge>
+              </div>
+              <TextField
+                label="Локальные дата и время"
+                type="datetime-local"
+                value={reminderLocalDateTime}
+                min={toLocalDateTimeInput(new Date(Date.now() + 60_000))}
+                onChange={(event) => {
+                  setReminderLocalDateTime(event.target.value);
+                  setReminderError(null);
+                  setReminderNotice(null);
+                }}
+              />
+              <div className="inline-actions">
+                <Button type="button" onClick={() => setReminderOffset(60 * 60_000)}>Через час</Button>
+                <Button type="button" onClick={() => setReminderOffset(24 * 60 * 60_000, true)}>Завтра в 09:00</Button>
+                <Button type="button" variant="primary" onClick={() => void handleSaveReminder()} disabled={!reminderLocalDateTime}>Сохранить</Button>
+                {user && getLocalCardReminder(card.id, user.id) ? (
+                  <Button type="button" variant="ghost" onClick={handleRemoveReminder}>Отключить</Button>
+                ) : null}
+              </div>
+              {reminderError ? <p className="form-error" role="alert">{reminderError}</p> : null}
+              {reminderNotice ? <p className="muted">{reminderNotice}</p> : null}
+              <p className="muted reminder-panel__limit">
+                Web показывает напоминание, пока вкладка открыта. Android-клиент использует системное уведомление и не требует открытой вкладки.
+              </p>
+            </section>
 
             <div className="grid">
               <div className="key-value"><span className="muted">Создана</span><span>{formatDateTime(card.createdAt)}</span></div>

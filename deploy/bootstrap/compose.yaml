@@ -95,10 +95,28 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/healthz"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    networks:
+      - internal
+
+  gateway:
+    image: p2pkanban/gateway:local
+    build:
+      context: ../..
+      dockerfile: deploy/bootstrap/gateway.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
     ports:
       - "${P2PKANBAN_BIND_ADDRESS:-127.0.0.1}:${P2PKANBAN_WEB_PORT:-8080}:8080"
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/healthz"]
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/gateway-health"]
       interval: 3s
       timeout: 5s
       retries: 30
