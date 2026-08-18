@@ -1,7 +1,7 @@
 # Что осталось до стабильного v1.0.0
 
-- Актуально на: 2026-08-16
-- Базовая линия: `v1.0.0-beta.10`
+- Актуально на: 2026-08-18
+- Базовая линия: `v1.0.0-beta.11`
 
 ## Закрыто функционально
 
@@ -23,7 +23,9 @@
 - [x] Relay-first для подготовленной Android-доски в мобильной сети и экраны
   версий web/Android/backend.
 - [x] Локальные per-card reminders в web и Android без cross-device sync.
-- [x] Android mobile.8 применяет переносимые настройки оформления web.
+- [x] Android mobile.9 применяет переносимые настройки оформления web через coordinator/relay.
+- [x] Column-state заменяет фиксированный status карточки во всех активных контрактах.
+- [x] Checklist snapshot merge учитывает элементы и tombstone, backend relay pull выполняется конкурентно.
 - [x] UI updater `main` через loopback control plane и стабильный gateway/порт.
 
 ## Блокирует stable
@@ -56,7 +58,7 @@
   замечено.
 - Stop/start и обычная работа выглядят устойчиво в реальном сценарии.
 - Это снижает риск, но не заменяет воспроизводимый update/rollback/restore
-  прогон точного beta.10 commit.
+  прогон точного beta.11 commit.
 
 ## Не блокирует stable автоматически
 

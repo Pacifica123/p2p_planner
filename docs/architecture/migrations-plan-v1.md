@@ -109,7 +109,7 @@
 
 Содержимое:
 - опциональные seed-значения или технические comments on table/column;
-- базовые server-side board type/status/priority conventions, если решим фиксировать их reference-данными, а не только check constraints.
+- базовые server-side board type/priority conventions, если решим фиксировать их reference-данными, а не только check constraints; состояние карточки всегда задаёт пользовательская колонка.
 
 ## Что сознательно не делаем в первой волне
 

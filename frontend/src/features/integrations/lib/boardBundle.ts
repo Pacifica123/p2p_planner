@@ -1,4 +1,4 @@
-import type { CardPriority, CardStatus, UpdateBoardAppearanceRequest } from '@/shared/types/api';
+import type { CardPriority, UpdateBoardAppearanceRequest } from '@/shared/types/api';
 
 export const BOARD_BUNDLE_FORMAT = 'p2p_planner_bundle';
 export const BOARD_BUNDLE_FORMAT_VERSION = 1;
@@ -28,12 +28,10 @@ export interface ImportedCardSource {
   parentCardId?: string;
   title: string;
   description?: string;
-  status: CardStatus;
   priority: CardPriority;
   position: number;
   startAt?: string;
   dueAt?: string;
-  completedAt?: string;
   isArchived: boolean;
 }
 
@@ -201,19 +199,6 @@ function ensureReferences(
       throw new BoardBundleValidationError(`${label}${sourceId} ссылается на отсутствующий id ${item.ref}.`);
     }
   }
-}
-
-function normalizeCardStatus(value: unknown, cardId: string, warnings: string[]): CardStatus {
-  if (value === null || value === undefined || value === '') return null;
-  if (typeof value !== 'string') {
-    warnings.push(`Статус карточки ${cardId} имеет неверный тип и будет сброшен.`);
-    return null;
-  }
-  if (['active', 'todo', 'in_progress', 'blocked'].includes(value)) return 'active';
-  if (['completed', 'done'].includes(value)) return 'completed';
-  if (value === 'cancelled') return 'cancelled';
-  warnings.push(`Неизвестный статус карточки ${cardId} (${value}) будет сброшен.`);
-  return null;
 }
 
 function normalizeCardPriority(value: unknown, cardId: string, warnings: string[]): CardPriority {
@@ -404,12 +389,10 @@ export function parseBoardBundleText(text: string, fileName = 'board.bundle.json
         parentCardId: optionalString(row, 'parentCardId'),
         title: requiredString(row, 'title', `card ${id}`),
         description: optionalString(row, 'description'),
-        status: normalizeCardStatus(row.status, id, warnings),
         priority: normalizeCardPriority(row.priority, id, warnings),
         position: optionalFiniteNumber(row, 'position', (index + 1) * 1024, `card ${id}`),
         startAt: optionalTimestamp(row, 'startAt', `card ${id}`),
         dueAt: optionalTimestamp(row, 'dueAt', `card ${id}`),
-        completedAt: optionalTimestamp(row, 'completedAt', `card ${id}`),
         isArchived: isArchived(row),
       };
     })

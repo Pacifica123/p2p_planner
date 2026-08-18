@@ -12,15 +12,6 @@ use super::dto::{
     MoveCardRequest, ReorderColumnCardsRequest, UpdateCardRequest,
 };
 
-pub(crate) fn normalize_status(value: &str) -> Option<&'static str> {
-    match value {
-        "active" | "todo" | "in_progress" | "blocked" => Some("active"),
-        "completed" | "done" => Some("completed"),
-        "cancelled" => Some("cancelled"),
-        _ => None,
-    }
-}
-
 pub async fn list_cards(
     state: &AppState,
     actor_user_id: Uuid,
@@ -34,17 +25,10 @@ pub async fn create_card(
     state: &AppState,
     actor_user_id: Uuid,
     board_id: Uuid,
-    mut payload: CreateCardRequest,
+    payload: CreateCardRequest,
 ) -> AppResult<CardResponse> {
     if payload.title.trim().is_empty() {
         return Err(AppError::bad_request("Card title is required"));
-    }
-    if let Some(status) = payload.status.as_deref() {
-        payload.status = Some(
-            normalize_status(status)
-                .ok_or_else(|| AppError::bad_request("Unsupported card status"))?
-                .to_string(),
-        );
     }
     if let Some(priority) = payload.priority.as_deref() {
         if !matches!(priority, "low" | "medium" | "high" | "urgent") {
@@ -67,21 +51,14 @@ pub async fn update_card(
     state: &AppState,
     actor_user_id: Uuid,
     card_id: Uuid,
-    mut payload: UpdateCardRequest,
+    payload: UpdateCardRequest,
 ) -> AppResult<CardResponse> {
     if let Some(title) = &payload.title {
         if title.trim().is_empty() {
             return Err(AppError::bad_request("Card title cannot be empty"));
         }
     }
-    if let Some(status) = payload.status.as_deref() {
-        payload.status = Some(
-            normalize_status(status)
-                .ok_or_else(|| AppError::bad_request("Unsupported card status"))?
-                .to_string(),
-        );
-    }
-    if let Some(priority) = payload.priority.as_deref() {
+    if let Some(priority) = payload.priority.as_ref().and_then(Option::as_deref) {
         if !matches!(priority, "low" | "medium" | "high" | "urgent") {
             return Err(AppError::bad_request("Unsupported card priority"));
         }

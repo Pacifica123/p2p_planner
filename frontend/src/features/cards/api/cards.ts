@@ -30,7 +30,6 @@ export function createCard(boardId: string, input: {
   columnId: string;
   parentCardId?: string;
   position?: number;
-  status?: Card['status'];
   priority?: Card['priority'];
   startAt?: string;
   dueAt?: string;
@@ -46,12 +45,10 @@ export function updateCard(cardId: string, input: {
   description?: string | null;
   columnId?: string;
   parentCardId?: string | null;
-  status?: Card['status'];
   priority?: Card['priority'];
   position?: number;
   startAt?: string | null;
   dueAt?: string | null;
-  completedAt?: string | null;
   isArchived?: boolean;
 }) {
   return apiRequest<Card>(`/cards/${cardId}`, {

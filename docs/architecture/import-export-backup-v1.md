@@ -483,8 +483,8 @@ V1 baseline **не выполняет destructive restore**. `POST /integrations
    - `formatVersion=1`;
    - `scopeKind=board`;
    - проверка обязательных разделов, уникальности ID и ссылок между сущностями;
-   - нормализация legacy card status (`todo/in_progress/blocked → active`,
-     `done → completed`);
+   - игнорирование legacy card-status полей: состояние импортированной карточки
+     однозначно задаётся ссылкой `columnId`;
    - preview состава, потерь и нового имени.
 2. **После явного `Создать копию`:**
    - новая доска в выбранном workspace;

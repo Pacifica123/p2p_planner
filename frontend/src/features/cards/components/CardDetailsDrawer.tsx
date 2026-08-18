@@ -46,7 +46,8 @@ import { SelectField, TextAreaField, TextField } from '@/shared/ui/Field';
 import { Icon } from '@/shared/ui/Icon';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { formatDateTime } from '@/shared/lib/date';
-import type { BoardLabel, CardPriority, CardStatus, Checklist, ChecklistItem, Comment } from '@/shared/types/api';
+import { getBoardThemeStyle, type ResolvedThemeMode } from '@/shared/appearance/theme';
+import type { BoardAppearanceSettings, BoardLabel, CardPriority, Checklist, ChecklistItem, Comment } from '@/shared/types/api';
 import {
   checklistSubmitHint,
   shouldSubmitChecklistItem,
@@ -62,17 +63,6 @@ import {
   updateLocalCardReminderTitle,
 } from '@/features/reminders/lib/localReminders';
 
-const STATUS_OPTIONS = [
-  { value: '', label: '—' },
-  { value: 'active', label: 'Активна' },
-  { value: 'completed', label: 'Завершена' },
-  { value: 'cancelled', label: 'Отменена' },
-  { value: 'todo', label: 'Запланирована (старый формат)' },
-  { value: 'in_progress', label: 'В работе (старый формат)' },
-  { value: 'blocked', label: 'Заблокирована (старый формат)' },
-  { value: 'done', label: 'Готово (старый формат)' },
-];
-
 const PRIORITY_OPTIONS = [
   { value: '', label: '—' },
   { value: 'low', label: 'Низкий' },
@@ -81,7 +71,13 @@ const PRIORITY_OPTIONS = [
   { value: 'urgent', label: 'Срочный' },
 ];
 
-export function CardDetailsDrawer() {
+export function CardDetailsDrawer({
+  boardAppearance,
+  resolvedTheme,
+}: {
+  boardAppearance?: BoardAppearanceSettings;
+  resolvedTheme: ResolvedThemeMode;
+}) {
   const navigate = useNavigate();
   const { boardId, workspaceId } = useParams();
   const [searchParams] = useSearchParams();
@@ -128,7 +124,6 @@ export function CardDetailsDrawer() {
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [status, setStatus] = useState<CardStatus>(null);
   const [priority, setPriority] = useState<CardPriority>(null);
   const [columnId, setColumnId] = useState('');
   const [newLabelName, setNewLabelName] = useState('');
@@ -146,7 +141,6 @@ export function CardDetailsDrawer() {
     if (!card) return;
     setTitle(card.title);
     setDescription(card.description || '');
-    setStatus(card.status || null);
     setPriority(card.priority || null);
     setColumnId(card.columnId);
     setReminderLocalDateTime(user ? getLocalCardReminder(card.id, user.id)?.localDateTime || '' : '');
@@ -202,7 +196,6 @@ export function CardDetailsDrawer() {
     const nextCardInput = {
       title: title.trim(),
       description: description.trim() || null,
-      status: status || null,
       priority: priority || null,
     };
 
@@ -407,6 +400,7 @@ export function CardDetailsDrawer() {
       onClick={closeDrawer}
       role="presentation"
       data-testid="card-details-overlay"
+      style={boardAppearance ? getBoardThemeStyle(boardAppearance, resolvedTheme) : undefined}
     >
       <aside
         className="drawer__surface"
@@ -434,13 +428,6 @@ export function CardDetailsDrawer() {
             <div className="grid" style={{ gap: 14 }}>
               <TextField label="Название" value={title} onChange={(event) => setTitle(event.target.value)} />
               <TextAreaField label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} />
-              <SelectField label="Статус" value={status ?? ''} onChange={(event) => setStatus(event.target.value ? (event.target.value as CardStatus) : null)}>
-                {STATUS_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </SelectField>
               <SelectField label="Приоритет" value={priority ?? ''} onChange={(event) => setPriority(event.target.value ? (event.target.value as CardPriority) : null)}>
                 {PRIORITY_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
@@ -448,7 +435,7 @@ export function CardDetailsDrawer() {
                   </option>
                 ))}
               </SelectField>
-              <SelectField label="Колонка" value={columnId} onChange={(event) => setColumnId(event.target.value)}>
+              <SelectField label="Колонка · это статус карточки" value={columnId} onChange={(event) => setColumnId(event.target.value)}>
                 {columnOptions.map((column) => (
                   <option key={column.id} value={column.id}>
                     {column.name}

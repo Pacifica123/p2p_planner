@@ -29,7 +29,7 @@
 - selectors;
 - validators;
 - mappers;
-- status derivation;
+- derived column placement and workflow selectors;
 - conflict/apply helpers.
 
 ### Integration — основной слой доверия

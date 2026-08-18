@@ -19,7 +19,7 @@ import {
   boardProductivityQueryKey,
   cardActivityQueryKey,
 } from '@/features/activity/hooks/useActivity';
-import type { CardPriority, CardStatus } from '@/shared/types/api';
+import type { CardPriority } from '@/shared/types/api';
 
 export const cardsQueryKey = (boardId?: string, localVisibility: CardLocalVisibility = 'visible') =>
   ['cards', boardId, localVisibility];
@@ -72,7 +72,7 @@ export function useCreateCardMutation(boardId?: string) {
 export function useUpdateCardMutation(boardId?: string, cardId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { title?: string; description?: string | null; status?: CardStatus; priority?: CardPriority }) =>
+    mutationFn: (input: { title?: string; description?: string | null; priority?: CardPriority }) =>
       updateCard(cardId!, input),
     onSuccess: () => {
       invalidateBoardSurface(queryClient, boardId, cardId);

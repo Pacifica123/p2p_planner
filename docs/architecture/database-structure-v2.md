@@ -246,20 +246,16 @@
 - `title text not null`
 - `description text null`
 - `position numeric(20,10) not null`
-- `status text not null default 'active'`
 - `priority text null`
 - `start_at timestamptz null`
 - `due_at timestamptz null`
-- `completed_at timestamptz null`
 - `created_by_user_id uuid null fk -> users`
 - `created_at timestamptz not null`
 - `updated_at timestamptz not null`
 - `deleted_at timestamptz null`
 
 Ограничения:
-- `status in ('active','completed','cancelled')`
 - `priority is null or priority in ('low','medium','high','urgent')`
-- `completed_at is null or status = 'completed'`
 - `due_at is null or start_at is null or due_at >= start_at`
 - `(board_id, column_id)` должен ссылаться на колонку той же доски
 - `(board_id, parent_card_id)` должен ссылаться на карточку той же доски
@@ -268,8 +264,12 @@
 - `(board_id, column_id, position, id)` active
 - `(board_id, updated_at desc)` active
 - `(board_id, due_at)` active
-- `(board_id, completed_at)` active
 - unique `(board_id, id)` для downstream composite FK
+
+Состояние карточки определяется только `column_id`. Фиксированного card-status
+enum и отдельной даты завершения в domain/API нет. Миграция beta.11 также
+физически удаляет из `cards` прежние колонки `status` и `completed_at`, чтобы в
+хранилище не оставалось второго, конкурирующего определения состояния.
 
 ### board_labels
 Поля:

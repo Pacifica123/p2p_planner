@@ -720,19 +720,19 @@ async fn import_workspace_bundle(
         r#"
         insert into cards (
           id, board_id, column_id, parent_card_id, title, description, position,
-          status, priority, start_at, due_at, completed_at, created_by_user_id,
+          priority, start_at, due_at, created_by_user_id,
           created_at, updated_at, archived_at
         )
         select
           x.id, x."boardId", x."columnId", null, x.title, x.description, x.position,
-          x.status, x.priority, x."startAt", x."dueAt", x."completedAt",
+          x.priority, x."startAt", x."dueAt",
           case when x."createdByUserId" = $2 then $2 else null end,
           x."createdAt", x."updatedAt", x."archivedAt"
         from jsonb_to_recordset($1::jsonb) as x(
           id uuid, "boardId" uuid, "columnId" uuid, "parentCardId" uuid,
-          title text, description text, position double precision, status text,
+          title text, description text, position double precision,
           priority text, "startAt" timestamptz, "dueAt" timestamptz,
-          "completedAt" timestamptz, "createdByUserId" uuid,
+          "createdByUserId" uuid,
           "createdAt" timestamptz, "updatedAt" timestamptz, "archivedAt" timestamptz
         )
         "#,

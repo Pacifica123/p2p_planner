@@ -146,19 +146,18 @@ Future-ready сущность для приглашения пользовате
 - title
 - description
 - position
-- status
 - priority
 - due_at
 - start_at
-- completed_at nullable
 - created_by
 - created_at
 - updated_at
 - deleted_at
 
 ### Комментарий
-В v1 card сознательно **не обязана** иметь assignees, watchers,
-attachments, custom fields и dependencies.
+Состояние card полностью задаётся `column_id`: набор состояний и их названия
+принадлежат пользователю. В v1 card сознательно **не обязана** иметь assignees,
+watchers, attachments, custom fields и dependencies.
 
 ## 7. BoardLabel
 

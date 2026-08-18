@@ -76,7 +76,7 @@ export class BoardImportExecutionError extends Error {
 
 function countOperations(preview: BoardBundlePreview): number {
   const cardsWithPostCreateUpdate = preview.cards.filter(
-    (card) => card.parentCardId || card.completedAt || card.isArchived,
+    (card) => card.parentCardId || card.isArchived,
   ).length;
   const cardsWithLabels = new Set(preview.cardLabels.map((item) => item.cardId)).size;
   return 1
@@ -169,7 +169,6 @@ export async function importBoardCopy({
         description: card.description,
         columnId: targetColumnId,
         position: card.position,
-        status: card.status || undefined,
         priority: card.priority || undefined,
         startAt: card.startAt,
         dueAt: card.dueAt,
@@ -179,7 +178,7 @@ export async function importBoardCopy({
     }
 
     const cardsWithUpdates = preview.cards.filter(
-      (card) => card.parentCardId || card.completedAt || card.isArchived,
+      (card) => card.parentCardId || card.isArchived,
     );
     for (const [index, card] of cardsWithUpdates.entries()) {
       currentStage = `восстановление свойств карточки ${index + 1}/${cardsWithUpdates.length}`;
@@ -191,7 +190,6 @@ export async function importBoardCopy({
       }
       await api.updateCard(targetCardId, {
         parentCardId,
-        completedAt: card.completedAt,
         isArchived: card.isArchived || undefined,
       });
       advance(`Свойства карточек: ${index + 1}/${cardsWithUpdates.length}`);

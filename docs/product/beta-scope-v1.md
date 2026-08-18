@@ -213,7 +213,7 @@ Must-have — это то, без чего beta не считается чест
 - создать/открыть/редактировать/архивировать/удалить card;
 - переместить card между columns;
 - изменить порядок cards;
-- изменить базовые поля card: title, description, priority, status/completed, start/due date;
+- изменить базовые поля card: title, description, priority и start/due date; состояние карточки задаётся её колонкой;
 - корректные loading / empty / error / retry states;
 - отсутствие white screen при drag-and-drop и card drawer interactions.
 

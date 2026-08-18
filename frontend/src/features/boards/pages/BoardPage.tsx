@@ -37,31 +37,11 @@ import { ErrorState } from '@/shared/ui/ErrorState';
 import { Icon } from '@/shared/ui/Icon';
 import { LoadingState } from '@/shared/ui/LoadingState';
 
-const statusTone: Record<string, string> = {
-  active: 'default',
-  completed: 'done',
-  cancelled: 'urgent',
-  todo: 'default',
-  in_progress: 'in_progress',
-  blocked: 'urgent',
-  done: 'done',
-};
-
 const priorityTone: Record<string, string> = {
   low: 'low',
   medium: 'medium',
   high: 'high',
   urgent: 'urgent',
-};
-
-const statusLabel: Record<string, string> = {
-  active: 'активна',
-  blocked: 'заблокирована',
-  cancelled: 'отменена',
-  completed: 'завершена',
-  done: 'готово',
-  in_progress: 'в работе',
-  todo: 'запланировано',
 };
 
 const priorityLabel: Record<string, string> = {
@@ -388,7 +368,6 @@ export function BoardPage() {
               </div>
             ) : null}
             <div className="card-tile__footer">
-              {card.status ? <Badge tone={statusTone[card.status] || 'default'}>{statusLabel[card.status] || card.status}</Badge> : null}
               {card.priority ? <Badge tone={priorityTone[card.priority] || 'default'}>{priorityLabel[card.priority] || card.priority}</Badge> : null}
               {localFirst.getEntityStatus('card', card.id)?.status === 'pending' ? <Badge tone="warning">сохранено локально</Badge> : null}
               {localFirst.getEntityStatus('card', card.id)?.status === 'failed' ? <Badge tone="urgent">ошибка синхронизации</Badge> : null}
@@ -630,7 +609,7 @@ export function BoardPage() {
           </div>
         ) : null}
 
-        <CardDetailsDrawer />
+        <CardDetailsDrawer boardAppearance={boardAppearance} resolvedTheme={resolvedTheme} />
       </div>
     </LocalFirstBoardProvider>
   );

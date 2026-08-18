@@ -176,8 +176,6 @@ User-facing activity создается только тогда, когда до
 - `card.created`
 - `card.updated`
 - `card.moved`
-- `card.completed`
-- `card.reopened`
 - `card.archived`
 - `card.restored`
 - `card.deleted`
@@ -207,10 +205,15 @@ User-facing activity создается только тогда, когда до
 В `fieldMask` и `payload` для `card.updated` в v1 имеет смысл выводить только прикладно значимые поля:
 - `title`
 - `description`
-- `status`
 - `priority`
 - `startAt`
 - `dueAt`
+
+Переход между пользовательскими состояниями фиксируется отдельным
+`card.moved` через изменение `columnId`; card-status enum отсутствует.
+Исторические записи прежних beta с kind `card.completed`/`card.reopened`
+клиент может прочитать как нейтральное «карточка изменена», но новые события
+таких видов не создаются и в board feed не входят.
 
 Технические поля вроде `updatedAt` в history не выводим.
 

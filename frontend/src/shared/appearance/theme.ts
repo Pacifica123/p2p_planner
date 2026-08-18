@@ -329,7 +329,7 @@ export function getWallpaperBackground(
   return WALLPAPER_PRESETS[presetWallpaperKey]?.[themeMode] || resolvePresetPreview(preset, themeMode);
 }
 
-export function getBoardSurfaceStyle(
+export function getBoardThemeStyle(
   appearance: BoardAppearanceSettings,
   themeMode: ResolvedThemeMode = 'dark',
 ): CSSProperties {
@@ -338,17 +338,29 @@ export function getBoardSurfaceStyle(
   const style: CSSProperties & CssVariableMap = {
     ...resolvePresetVariables(preset, themeMode),
     ...(accentColor ? getAccentPalette(accentColor, themeMode) : {}),
+    '--board-column-width': appearance.columnDensity === 'compact' ? '280px' : '320px',
+    '--board-card-gap': appearance.columnDensity === 'compact' ? '10px' : '12px',
+    '--board-info-scrim': themeMode === 'light'
+      ? 'rgba(255, 255, 255, 0.76)'
+      : 'rgba(2, 6, 23, 0.68)',
+  };
+  return style;
+}
+
+export function getBoardSurfaceStyle(
+  appearance: BoardAppearanceSettings,
+  themeMode: ResolvedThemeMode = 'dark',
+): CSSProperties {
+  const preset = getBoardPresetDefinition(appearance.themePreset);
+  const accentColor = getBoardAccentColor(appearance);
+  const style: CSSProperties & CssVariableMap = {
+    ...getBoardThemeStyle(appearance, themeMode),
     background: getWallpaperBackground(
       appearance.wallpaper,
       appearance.themePreset,
       themeMode,
       accentColor,
     ),
-    '--board-column-width': appearance.columnDensity === 'compact' ? '280px' : '320px',
-    '--board-card-gap': appearance.columnDensity === 'compact' ? '10px' : '12px',
-    '--board-info-scrim': themeMode === 'light'
-      ? 'rgba(255, 255, 255, 0.76)'
-      : 'rgba(2, 6, 23, 0.68)',
   };
   if (appearance.wallpaper.kind === 'image' && appearance.wallpaper.value) {
     style.backgroundColor = resolvePresetVariables(preset, themeMode)['--bg'];

@@ -30,12 +30,10 @@ fn map_card(row: &sqlx::postgres::PgRow) -> AppResult<CardResponse> {
             .map(|id| id.to_string()),
         title: row.try_get("title")?,
         description: row.try_get("description")?,
-        status: row.try_get("status")?,
         priority: row.try_get("priority")?,
         position: row.try_get("position")?,
         start_at: row.try_get("start_at")?,
         due_at: row.try_get("due_at")?,
-        completed_at: row.try_get("completed_at")?,
         is_archived: row.try_get::<Option<String>, _>("archived_at")?.is_some(),
         label_ids: row
             .try_get::<Option<Vec<Uuid>>, _>("label_ids")?
@@ -66,12 +64,10 @@ pub async fn fetch_card(pool: &PgPool, card_id: Uuid) -> AppResult<CardResponse>
           c.parent_card_id,
           c.title,
           c.description,
-          c.status,
           c.priority,
           c.position::double precision as position,
           case when c.start_at is null then null else to_char(c.start_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as start_at,
           case when c.due_at is null then null else to_char(c.due_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as due_at,
-          case when c.completed_at is null then null else to_char(c.completed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as completed_at,
           c.created_by_user_id,
           to_char(c.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at,
           to_char(c.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as updated_at,
@@ -121,7 +117,6 @@ pub async fn list_cards(
     let limit = normalize_limit(query.limit);
     let search = trim_to_option(query.q);
     let _cursor = query.cursor;
-    let completed = query.completed;
     let column_id = query
         .column_id
         .as_deref()
@@ -168,12 +163,10 @@ pub async fn list_cards(
           c.parent_card_id,
           c.title,
           c.description,
-          c.status,
           c.priority,
           c.position::double precision as position,
           case when c.start_at is null then null else to_char(c.start_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as start_at,
           case when c.due_at is null then null else to_char(c.due_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as due_at,
-          case when c.completed_at is null then null else to_char(c.completed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as completed_at,
           c.created_by_user_id,
           to_char(c.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at,
           to_char(c.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as updated_at,
@@ -202,21 +195,21 @@ pub async fn list_cards(
         where c.board_id = $1
           and c.deleted_at is null
           and (
-            $6::text = 'all'
-            or ($6 = 'visible' and not exists (
+            $5::text = 'all'
+            or ($5 = 'visible' and not exists (
               select 1
               from local_card_hides lch
               cross join local_node_identity lni
               where lch.node_replica_id = lni.replica_id
-                and lch.user_id = $7
+                and lch.user_id = $6
                 and lch.card_id = c.id
             ))
-            or ($6 = 'hidden' and exists (
+            or ($5 = 'hidden' and exists (
               select 1
               from local_card_hides lch
               cross join local_node_identity lni
               where lch.node_replica_id = lni.replica_id
-                and lch.user_id = $7
+                and lch.user_id = $6
                 and lch.card_id = c.id
             ))
           )
@@ -226,18 +219,13 @@ pub async fn list_cards(
                 where cl2.card_id = c.id and cl2.label_id = $3 and cl2.deleted_at is null
           ))
           and (
-            $4::bool is null
-            or ($4 = true and (c.status = 'completed' or c.completed_at is not null))
-            or ($4 = false and coalesce(c.status, 'active') <> 'completed' and c.completed_at is null)
-          )
-          and (
-            $5::text is null
-            or c.title ilike '%' || $5 || '%'
-            or coalesce(c.description, '') ilike '%' || $5 || '%'
+            $4::text is null
+            or c.title ilike '%' || $4 || '%'
+            or coalesce(c.description, '') ilike '%' || $4 || '%'
           )
         group by c.id
         order by {order_clause}
-        limit $8
+        limit $7
         "#,
     );
 
@@ -245,7 +233,6 @@ pub async fn list_cards(
         .bind(board_id)
         .bind(column_id)
         .bind(label_id)
-        .bind(completed)
         .bind(search)
         .bind(local_visibility)
         .bind(actor_user_id)
@@ -279,17 +266,15 @@ pub async fn create_card(
         Some(position) => position,
         None => next_position_for_card(pool, board_id, payload.column_id).await?,
     };
-    let status = payload.status.unwrap_or_else(|| "active".to_string());
-
     sqlx::query(
         r#"
         insert into cards (
-          id, board_id, column_id, parent_card_id, title, description, position, status,
+          id, board_id, column_id, parent_card_id, title, description, position,
           priority, start_at, due_at, created_by_user_id
         )
         values (
-          $1, $2, $3, $4, $5, $6, $7, $8,
-          $9, $10::timestamptz, $11::timestamptz, $12
+          $1, $2, $3, $4, $5, $6, $7,
+          $8, $9::timestamptz, $10::timestamptz, $11
         )
         "#,
     )
@@ -300,7 +285,6 @@ pub async fn create_card(
     .bind(payload.title.trim())
     .bind(trim_to_option(payload.description))
     .bind(position)
-    .bind(status)
     .bind(payload.priority)
     .bind(payload.start_at)
     .bind(payload.due_at)
@@ -450,7 +434,6 @@ pub async fn update_card(
     let description = payload.description.map(trim_to_option);
     let start_at = payload.start_at.clone();
     let due_at = payload.due_at.clone();
-    let completed_at = payload.completed_at.clone();
     let row = sqlx::query(
         r#"
         update cards
@@ -459,15 +442,13 @@ pub async fn update_card(
           description = case when $3 then $4 else description end,
           column_id = coalesce($5, column_id),
           parent_card_id = case when $6 then $7 else parent_card_id end,
-          status = coalesce($8, status),
-          priority = case when $9 then $10 else priority end,
-          position = coalesce($11, position),
-          start_at = case when $12 then $13::timestamptz else start_at end,
-          due_at = case when $14 then $15::timestamptz else due_at end,
-          completed_at = case when $16 then $17::timestamptz else completed_at end,
+          priority = case when $8 then $9 else priority end,
+          position = coalesce($10, position),
+          start_at = case when $11 then $12::timestamptz else start_at end,
+          due_at = case when $13 then $14::timestamptz else due_at end,
           archived_at = case
-            when $18 then now()
-            when $19 then null
+            when $15 then now()
+            when $16 then null
             else archived_at
           end
         where id = $1 and deleted_at is null
@@ -481,16 +462,13 @@ pub async fn update_card(
     .bind(payload.column_id)
     .bind(payload.parent_card_id.is_some())
     .bind(payload.parent_card_id.flatten())
-    .bind(payload.status)
     .bind(payload.priority.is_some())
-    .bind(payload.priority)
+    .bind(payload.priority.flatten())
     .bind(payload.position)
     .bind(payload.start_at.is_some())
     .bind(start_at.flatten())
     .bind(payload.due_at.is_some())
     .bind(due_at.flatten())
-    .bind(payload.completed_at.is_some())
-    .bind(completed_at.flatten())
     .bind(matches!(payload.is_archived, Some(true)))
     .bind(matches!(payload.is_archived, Some(false)))
     .fetch_optional(pool)
@@ -522,13 +500,6 @@ pub async fn update_card(
             json!({"before": before.column_id, "after": card.column_id.clone()}),
         );
     }
-    if before.status != card.status {
-        field_mask.push("status".to_string());
-        changes.insert(
-            "status".to_string(),
-            json!({"before": before.status, "after": card.status.clone()}),
-        );
-    }
     if before.priority != card.priority {
         field_mask.push("priority".to_string());
         changes.insert(
@@ -550,13 +521,6 @@ pub async fn update_card(
             json!({"before": before.due_at, "after": card.due_at.clone()}),
         );
     }
-    if before.completed_at != card.completed_at {
-        field_mask.push("completedAt".to_string());
-        changes.insert(
-            "completedAt".to_string(),
-            json!({"before": before.completed_at, "after": card.completed_at.clone()}),
-        );
-    }
     if before.is_archived != card.is_archived {
         field_mask.push("isArchived".to_string());
         changes.insert(
@@ -573,10 +537,6 @@ pub async fn update_card(
             }
         } else if before.column_id != card.column_id {
             "card.moved"
-        } else if before.completed_at.is_none() && card.completed_at.is_some() {
-            "card.completed"
-        } else if before.completed_at.is_some() && card.completed_at.is_none() {
-            "card.reopened"
         } else {
             "card.updated"
         };
@@ -776,13 +736,6 @@ pub async fn move_card(
             json!({"before": before.column_id, "after": card.column_id.clone()}),
         );
     }
-    if before.status != card.status {
-        field_mask.push("status".to_string());
-        changes.insert(
-            "status".to_string(),
-            json!({"before": before.status, "after": card.status.clone()}),
-        );
-    }
     if before.priority != card.priority {
         field_mask.push("priority".to_string());
         changes.insert(
@@ -804,13 +757,6 @@ pub async fn move_card(
             json!({"before": before.due_at, "after": card.due_at.clone()}),
         );
     }
-    if before.completed_at != card.completed_at {
-        field_mask.push("completedAt".to_string());
-        changes.insert(
-            "completedAt".to_string(),
-            json!({"before": before.completed_at, "after": card.completed_at.clone()}),
-        );
-    }
     if before.is_archived != card.is_archived {
         field_mask.push("isArchived".to_string());
         changes.insert(
@@ -827,10 +773,6 @@ pub async fn move_card(
             }
         } else if before.column_id != card.column_id {
             "card.moved"
-        } else if before.completed_at.is_none() && card.completed_at.is_some() {
-            "card.completed"
-        } else if before.completed_at.is_some() && card.completed_at.is_none() {
-            "card.reopened"
         } else {
             "card.updated"
         };
@@ -997,7 +939,6 @@ pub async fn reorder_column_cards(
             q: None,
             column_id: Some(column_id.to_string()),
             label_id: None,
-            completed: None,
             sort_by: Some("position".to_string()),
             sort_dir: Some("asc".to_string()),
             local_visibility: Some("visible".to_string()),

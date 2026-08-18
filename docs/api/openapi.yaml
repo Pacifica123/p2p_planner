@@ -1186,16 +1186,6 @@ components:
           type:
           - string
           - 'null'
-        status:
-          type:
-          - string
-          - 'null'
-          enum:
-          - todo
-          - in_progress
-          - blocked
-          - done
-          - null
         priority:
           type:
           - string
@@ -1214,11 +1204,6 @@ components:
           - 'null'
           format: date-time
         dueAt:
-          type:
-          - string
-          - 'null'
-          format: date-time
-        completedAt:
           type:
           - string
           - 'null'
@@ -1294,16 +1279,6 @@ components:
           type:
           - number
           - 'null'
-        status:
-          type:
-          - string
-          - 'null'
-          enum:
-          - todo
-          - in_progress
-          - blocked
-          - done
-          - null
         priority:
           type:
           - string
@@ -1346,16 +1321,6 @@ components:
           - string
           - 'null'
           format: uuid
-        status:
-          type:
-          - string
-          - 'null'
-          enum:
-          - todo
-          - in_progress
-          - blocked
-          - done
-          - null
         priority:
           type:
           - string
@@ -1376,11 +1341,6 @@ components:
           - 'null'
           format: date-time
         dueAt:
-          type:
-          - string
-          - 'null'
-          format: date-time
-        completedAt:
           type:
           - string
           - 'null'
@@ -4481,12 +4441,6 @@ paths:
           - string
           - 'null'
           format: uuid
-      - name: completed
-        in: query
-        schema:
-          type:
-          - boolean
-          - 'null'
       - name: sortBy
         in: query
         schema:

@@ -1,4 +1,4 @@
-import { apiRequest, clearAccessToken, setAccessToken } from '@/shared/api/client';
+import { apiRequest, clearAccessToken } from '@/shared/api/client';
 import type {
   AuthSuccessResponse,
   NodeLinkImportRequest,
@@ -9,37 +9,30 @@ import type {
 } from '@/shared/types/api';
 
 export async function signIn(input: SignInRequest) {
-  const response = await apiRequest<AuthSuccessResponse>('/auth/sign-in', {
+  return apiRequest<AuthSuccessResponse>('/auth/sign-in', {
     method: 'POST',
     body: JSON.stringify(input),
-  });
-  setAccessToken(response.accessToken);
-  return response;
+  }, { skipAuthRefresh: true });
 }
 
 export async function signUp(input: SignUpRequest) {
-  const response = await apiRequest<AuthSuccessResponse>('/auth/sign-up', {
+  return apiRequest<AuthSuccessResponse>('/auth/sign-up', {
     method: 'POST',
     body: JSON.stringify(input),
-  });
-  setAccessToken(response.accessToken);
-  return response;
+  }, { skipAuthRefresh: true });
 }
 
 export async function importAccountFromNode(input: NodeLinkImportRequest) {
-  const response = await apiRequest<AuthSuccessResponse>('/auth/node-link/import', {
+  return apiRequest<AuthSuccessResponse>('/auth/node-link/import', {
     method: 'POST',
     body: JSON.stringify(input),
-  });
-  setAccessToken(response.accessToken);
-  return response;
+  }, { skipAuthRefresh: true });
 }
 
 export async function refreshSession() {
   const response = await apiRequest<AuthSuccessResponse>('/auth/refresh', {
     method: 'POST',
-  });
-  setAccessToken(response.accessToken);
+  }, { skipAuthRefresh: true });
   return response;
 }
 

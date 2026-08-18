@@ -26,7 +26,9 @@ const actionForms: Record<string, Record<Gender, string>> = {
 
 const exactActivityLabels: Record<string, string> = {
   'board.appearance.updated': 'Оформление доски изменено',
+  'card.completed': 'Карточка изменена',
   'card.labels.updated': 'Метки карточки изменены',
+  'card.reopened': 'Карточка изменена',
 };
 
 const fieldLabels: Record<string, string> = {
@@ -38,7 +40,6 @@ const fieldLabels: Record<string, string> = {
   columnDensity: 'плотность колонок',
   color: 'цвет',
   colorToken: 'цвет колонки',
-  completedAt: 'дата завершения',
   customProperties: 'дополнительные свойства',
   description: 'описание',
   dueAt: 'срок',
@@ -54,7 +55,6 @@ const fieldLabels: Record<string, string> = {
   showCardDescription: 'показ описания',
   showChecklistProgress: 'прогресс чек-листа',
   startAt: 'дата начала',
-  status: 'статус',
   themePreset: 'тема',
   title: 'название',
   wallpaper: 'фон',
@@ -85,7 +85,9 @@ export function activityLabel(kind: string) {
 
 export function changedFieldsLabel(fieldMask: string[]) {
   return [...new Set(fieldMask)]
-    .filter((field) => !['*', '__lifecycle', 'updatedAt'].includes(field))
+    .filter((field) => ![
+      '*', '__lifecycle', 'updatedAt', 'status', 'completedAt',
+    ].includes(field))
     .map((field) => fieldLabels[field] || field)
     .join(', ');
 }

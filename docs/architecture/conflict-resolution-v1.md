@@ -153,7 +153,7 @@
 ## 5.1. `LWW per field`
 Используется для простых значений, где допустим выбор победителя по одному полю:
 - short text;
-- enum/status;
+- enum values;
 - optional scalar values;
 - boolean flags;
 - даты;
@@ -286,7 +286,6 @@
 Поля типа:
 - `title`
 - `description`
-- `status`
 - `priority`
 - `dueAt`
 - `startAt`
@@ -309,9 +308,10 @@
 - если проигравшая сторона меняла `title` или `description`, клиент сохраняет local losing payload в `conflict_stub` с возможностью copy/recreate later;
 - implicit undelete запрещен.
 
-### Complete/close vs text edit
-- `completedAt/status` и `description/title` считаются разными полями и могут merge'иться;
-- если бизнес-правило позже потребует stricter lifecycle, оно фиксируется отдельно, но v1 не запрещает такой merge.
+### Перемещение между состояниями vs text edit
+- состояние карточки — это structural tuple `columnId + position`, а не отдельное поле;
+- move и изменения `description/title/priority` могут merge'иться по своим полям;
+- фиксированный набор состояний и отдельный complete/close lifecycle отсутствуют.
 
 ## 7.5. BoardLabel / CardLabel
 

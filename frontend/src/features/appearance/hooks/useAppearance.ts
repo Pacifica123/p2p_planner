@@ -31,6 +31,8 @@ export function useBoardAppearanceQuery(boardId?: string) {
     queryKey: boardAppearanceQueryKey(boardId),
     queryFn: () => getBoardAppearance(boardId!),
     enabled: Boolean(boardId),
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
   });
 }
 

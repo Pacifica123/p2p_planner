@@ -25,7 +25,6 @@ describe('board bundle parser', () => {
     expect(preview.cards[1]).toMatchObject({
       id: 'card-child',
       parentCardId: 'card-parent',
-      status: 'completed',
       isArchived: true,
     });
     expect(preview.appearance).toMatchObject({
@@ -36,14 +35,15 @@ describe('board bundle parser', () => {
     expect(preview.warnings.some((warning) => warning.includes('текущего автора'))).toBe(true);
   });
 
-  it('normalizes legacy card statuses accepted by the backend', () => {
+  it('ignores legacy card statuses because the column is the status', () => {
     const bundle = cloneFixture();
     bundle.payload.cards[0].status = 'in_progress';
     bundle.payload.cards[1].status = 'done';
 
     const preview = parseBoardBundleText(JSON.stringify(bundle));
 
-    expect(preview.cards.map((card) => card.status)).toEqual(['active', 'completed']);
+    expect(preview.cards.map((card) => card.columnId)).toEqual(['column-todo', 'column-done']);
+    expect(preview.cards.every((card) => !('status' in card))).toBe(true);
   });
 
   it('keeps accent-driven and image wallpapers compatible with board backups', () => {

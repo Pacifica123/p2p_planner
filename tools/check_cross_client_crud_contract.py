@@ -21,26 +21,51 @@ def require(relative: str, *needles: str) -> None:
         raise SystemExit(f"FAIL: {relative} is missing: {', '.join(missing)}")
 
 
+def forbid(relative: str, *needles: str) -> None:
+    content = read(relative)
+    present = [needle for needle in needles if needle in content]
+    if present:
+        raise SystemExit(f"FAIL: {relative} still contains: {', '.join(present)}")
+
+
 def main() -> None:
     version = read("VERSION").strip()
     frontend = json.loads(read("frontend/package.json"))
     if not version.startswith("1.0.0-beta.") or frontend.get("version") != version:
         raise SystemExit("FAIL: beta versions are not aligned")
 
-    require(
-        "backend/src/modules/cards/service.rs",
-        "pub(crate) fn normalize_status",
-        '"todo" | "in_progress" | "blocked"',
-        '"done"',
-    )
+    forbid("backend/src/modules/cards/dto.rs", "pub status:", "pub completed_at:")
+    forbid("docs/api/openapi.yaml", "      - name: completed\n        in: query")
     require(
         "backend/src/transports/roaming.rs",
-        "normalized_card_status",
+        "tokio::join!(",
+        "tokio::task::JoinSet::new()",
+        "publish_pending_board_settings",
+        'operation: "board.appearance.put"',
         "insert into checklists",
         "insert into checklist_items",
-        "not (id = any($2::uuid[]))",
+        "Legacy v1 snapshots only fill missing rows",
         "insert into activity_entries",
         '"source": "roaming"',
+    )
+    require(
+        "backend/migrations/0016_column_is_card_status.sql",
+        "drop constraint if exists chk_cards_status",
+        "drop column status",
+        "drop column completed_at",
+        "Card state is represented only by board column membership",
+    )
+    forbid(
+        "backend/src/modules/cards/repo.rs",
+        "c.status",
+        "c.completed_at",
+        "status = case",
+        "completed_at = case",
+    )
+    require(
+        "backend/migrations/0017_roaming_board_appearance.sql",
+        "roaming_board_settings_outbox",
+        "board.appearance.updated",
     )
     require(
         "backend/migrations/0012_roaming_activity_echo_guard.sql",
@@ -52,6 +77,26 @@ def main() -> None:
         "frontend/src/features/cards/hooks/useCards.ts",
         "refetchInterval: 3_000",
         "refetchInterval: 4_000",
+    )
+    require(
+        "frontend/src/shared/api/client.ts",
+        "refreshInFlight",
+        "sessionRequestsBlocked",
+        "expireSession()",
+    )
+    require(
+        "frontend/src/features/cards/components/CardDetailsDrawer.tsx",
+        "getBoardThemeStyle",
+        "Колонка · это статус карточки",
+    )
+    forbid(
+        "frontend/src/features/cards/components/CardDetailsDrawer.tsx",
+        "setStatus(",
+        "STATUS_OPTIONS",
+    )
+    require(
+        "frontend/src/features/appearance/hooks/useAppearance.ts",
+        "refetchInterval: 5_000",
     )
     require(
         "frontend/src/features/checklists/hooks/useChecklists.ts",
@@ -78,7 +123,7 @@ def main() -> None:
         "full-local-release",
         "Вердикт: функционально близко, релизно ещё не готово",
     )
-    print("OK: roaming ingest, web refresh, release audit and integration concept are aligned")
+    print("OK: column-state cards, roaming convergence, auth recovery and appearance are aligned")
 
 
 if __name__ == "__main__":

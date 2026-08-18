@@ -55,7 +55,6 @@ describe('board copy importer', () => {
       'new-Write notes',
       expect.objectContaining({
         parentCardId: 'new-Prepare release',
-        completedAt: '2026-07-25T21:00:00.000Z',
         isArchived: true,
       }),
     );

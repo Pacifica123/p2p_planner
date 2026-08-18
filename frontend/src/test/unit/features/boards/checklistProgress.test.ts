@@ -8,7 +8,6 @@ function card(input: Partial<Card> = {}): Card {
     boardId: 'board-1',
     columnId: 'column-1',
     title: 'Карточка',
-    status: null,
     priority: null,
     position: 1000,
     isArchived: false,

@@ -1,7 +1,12 @@
 import type { PropsWithChildren } from 'react';
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { clearAccessToken } from '@/shared/api/client';
+import {
+  clearAccessToken,
+  getAccessToken,
+  setAccessToken,
+  setAuthLifecycleHandlers,
+} from '@/shared/api/client';
 import { importAccountFromNode, refreshSession, signIn, signOut, signOutAll, signUp } from '@/features/auth/api/auth';
 import type { AuthSuccessResponse, AuthUser, NodeLinkImportRequest, SignInRequest, SignUpRequest } from '@/shared/types/api';
 
@@ -37,22 +42,43 @@ export function AuthSessionProvider({ children }: PropsWithChildren) {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const authActionGenerationRef = useRef(0);
 
-  const clearLocalSession = () => {
+  const clearLocalSession = useCallback(() => {
     clearAccessToken();
     setStatus('anonymous');
     setUser(null);
     setSessionId(null);
     setDeviceId(null);
     queryClient.clear();
-  };
+  }, [queryClient]);
 
-  const applyAuthResponse = (response: AuthSuccessResponse) => {
+  const applyAuthResponse = useCallback((response: AuthSuccessResponse) => {
     const next = toUserState(response);
+    setAccessToken(response.accessToken);
     setStatus(next.status);
     setUser(next.user);
     setSessionId(next.sessionId);
     setDeviceId(next.deviceId);
-  };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setAuthLifecycleHandlers({
+      refresh: async () => {
+        const generation = authActionGenerationRef.current;
+        const response = await refreshSession();
+        if (!active || authActionGenerationRef.current !== generation) {
+          return getAccessToken();
+        }
+        applyAuthResponse(response);
+        return response.accessToken;
+      },
+      expired: clearLocalSession,
+    });
+    return () => {
+      active = false;
+      setAuthLifecycleHandlers({ refresh: null, expired: null });
+    };
+  }, [applyAuthResponse, clearLocalSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,9 +98,7 @@ export function AuthSessionProvider({ children }: PropsWithChildren) {
     return () => {
       cancelled = true;
     };
-    // queryClient intentionally omitted from bootstrap effect
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [applyAuthResponse, clearLocalSession]);
 
   const value = useMemo<AuthSessionContextValue>(
     () => ({
@@ -155,7 +179,7 @@ export function AuthSessionProvider({ children }: PropsWithChildren) {
         }
       },
     }),
-    [deviceId, sessionId, status, user],
+    [applyAuthResponse, clearLocalSession, deviceId, sessionId, status, user],
   );
 
   return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;

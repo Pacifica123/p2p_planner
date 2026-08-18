@@ -1,6 +1,6 @@
-import type { Board, BoardColumn, Card, CardPriority, CardStatus, Workspace } from '@/shared/types/api';
+import type { Board, BoardColumn, Card, CardPriority, Workspace } from '@/shared/types/api';
 
-export const LOCAL_FIRST_SCHEMA_VERSION = 1;
+export const LOCAL_FIRST_SCHEMA_VERSION = 2;
 
 export type LocalSyncStatus = 'synced' | 'pending' | 'failed';
 export type LocalEntityKind = 'workspace' | 'board' | 'column' | 'card';
@@ -34,14 +34,12 @@ export interface LocalCreateCardInput {
   title: string;
   description?: string | null;
   columnId: string;
-  status?: CardStatus;
   priority?: CardPriority;
 }
 
 export interface LocalUpdateCardInput {
   title?: string;
   description?: string | null;
-  status?: CardStatus;
   priority?: CardPriority;
   dueAt?: string | null;
 }

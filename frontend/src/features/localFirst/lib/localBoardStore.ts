@@ -105,9 +105,16 @@ function safeWriteJson<T>(key: string, value: T) {
 
 export function loadLocalBoardSnapshot(boardId?: string | null): LocalBoardSnapshot | null {
   if (!boardId) return null;
-  const snapshot = safeReadJson<LocalBoardSnapshot | null>(getLocalFirstBoardSnapshotKey(boardId), null);
-  if (!snapshot || snapshot.schemaVersion !== LOCAL_FIRST_SCHEMA_VERSION) return null;
-  return snapshot;
+  const snapshot = safeReadJson<(Omit<LocalBoardSnapshot, 'schemaVersion' | 'cards'> & {
+    schemaVersion: number;
+    cards: Array<Card & { status?: unknown; completedAt?: unknown }>;
+  }) | null>(getLocalFirstBoardSnapshotKey(boardId), null);
+  if (!snapshot || ![1, LOCAL_FIRST_SCHEMA_VERSION].includes(snapshot.schemaVersion)) return null;
+  return {
+    ...snapshot,
+    schemaVersion: LOCAL_FIRST_SCHEMA_VERSION,
+    cards: snapshot.cards.map(stripRemovedCardState),
+  };
 }
 
 export function saveLocalBoardSnapshot(snapshot: LocalBoardSnapshot) {
@@ -137,7 +144,12 @@ export function resolveLocalFirstCardId(cardId: string) {
 }
 
 export function loadLocalFirstOperations() {
-  return safeReadJson<LocalFirstOperation[]>(OPERATION_QUEUE_KEY, []).filter((operation) => operation.boardId && operation.id);
+  return safeReadJson<Array<LocalFirstOperation & { payload: Record<string, unknown> }>>(
+    OPERATION_QUEUE_KEY,
+    [],
+  )
+    .map(migrateOperation)
+    .filter((operation): operation is LocalFirstOperation => Boolean(operation?.boardId && operation.id));
 }
 
 export function saveLocalFirstOperations(operations: LocalFirstOperation[]) {
@@ -188,6 +200,44 @@ function nextCardPosition(cards: Card[], columnId: string) {
   return maxPosition + 1000;
 }
 
+function stripRemovedCardState(
+  value: Card & { status?: unknown; completedAt?: unknown },
+): Card {
+  const { status: _status, completedAt: _completedAt, ...card } = value;
+  return card;
+}
+
+function stripRemovedCardInput<T extends Record<string, unknown>>(value: T) {
+  const { status: _status, completedAt: _completedAt, ...input } = value;
+  return input;
+}
+
+function migrateOperation(
+  operation: LocalFirstOperation & { payload: Record<string, unknown> },
+): LocalFirstOperation | null {
+  if (operation.kind === 'card.create') {
+    const payload = operation.payload as unknown as LocalFirstOperation['payload'] & {
+      input: Record<string, unknown>;
+      tempCard: Card & { status?: unknown; completedAt?: unknown };
+    };
+    return {
+      ...operation,
+      payload: {
+        ...payload,
+        input: stripRemovedCardInput(payload.input),
+        tempCard: stripRemovedCardState(payload.tempCard),
+      },
+    } as LocalFirstOperation;
+  }
+  if (operation.kind === 'card.update') {
+    const payload = operation.payload as unknown as { input: Record<string, unknown> };
+    const input = stripRemovedCardInput(payload.input);
+    if (!Object.keys(input).length) return null;
+    return { ...operation, payload: { input } } as LocalFirstOperation;
+  }
+  return operation as LocalFirstOperation;
+}
+
 function createTempCard(boardId: string, input: LocalCreateCardInput, cards: Card[]) {
   const timestamp = nowIso();
   return {
@@ -197,12 +247,10 @@ function createTempCard(boardId: string, input: LocalCreateCardInput, cards: Car
     parentCardId: null,
     title: input.title,
     description: input.description || null,
-    status: input.status ?? null,
     priority: input.priority ?? null,
     position: nextCardPosition(cards, input.columnId),
     startAt: null,
     dueAt: null,
-    completedAt: null,
     isArchived: false,
     labelIds: [],
     checklistCount: 0,

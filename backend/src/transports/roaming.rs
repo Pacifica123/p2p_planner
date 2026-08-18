@@ -1,4 +1,4 @@
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use p2p_kanban_nostr_transport::{
     NostrTransport, NostrTransportConfig, RecoveredRoamingEvent, RoamingBoardEvent,
@@ -15,12 +15,10 @@ const CARD_FIELDS: &[&str] = &[
     "parentCardId",
     "title",
     "description",
-    "status",
     "priority",
     "position",
     "startAt",
     "dueAt",
-    "completedAt",
     "isArchived",
     "checklists",
 ];
@@ -142,8 +140,11 @@ pub async fn run(settings: std::sync::Arc<Settings>, db: PgPool) -> anyhow::Resu
     enqueue_backfill(&db).await?;
     let poll = Duration::from_millis(settings.transports.worker_poll_interval_ms.max(1_000));
     loop {
-        publish_pending(&db, &transport, settings.transports.batch_size).await;
-        ingest_remote(&db, &transport).await;
+        tokio::join!(
+            publish_pending(&db, &transport, settings.transports.batch_size),
+            publish_pending_board_settings(&db, &transport, settings.transports.batch_size),
+            ingest_remote(&db, &transport),
+        );
         tokio::time::sleep(poll).await;
     }
 }
@@ -208,12 +209,10 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             'parentCardId', c.parent_card_id::text,
             'title', c.title,
             'description', c.description,
-            'status', c.status,
             'priority', c.priority,
             'position', c.position::double precision,
             'startAt', case when c.start_at is null then null else to_char(c.start_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
             'dueAt', case when c.due_at is null then null else to_char(c.due_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
-            'completedAt', case when c.completed_at is null then null else to_char(c.completed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
             'isArchived', c.archived_at is not null,
             'labelIds', '[]'::jsonb,
             'checklistCount', (
@@ -436,6 +435,148 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
     }
 }
 
+async fn publish_pending_board_settings(
+    pool: &PgPool,
+    transport: &NostrTransport,
+    limit: i64,
+) {
+    let rows = match sqlx::query(
+        r#"
+        select
+          o.id,
+          o.event_seq,
+          o.workspace_id,
+          o.board_id,
+          n.replica_id as node_replica_id,
+          rbc.board_key_base64,
+          to_char(o.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as occurred_at,
+          (
+            floor(extract(epoch from o.created_at) * 1000)::bigint * 1000
+            + (o.event_seq % 1000)
+          ) as logical_clock,
+          jsonb_build_object(
+            'boardId', b.id::text,
+            'isCustomized', a.board_id is not null,
+            'themePreset', coalesce(a.theme_preset, 'system'),
+            'wallpaper', jsonb_build_object(
+              'kind', coalesce(a.wallpaper_kind, 'none'),
+              'value', a.wallpaper_value
+            ),
+            'columnDensity', coalesce(a.column_density, 'comfortable'),
+            'cardPreviewMode', coalesce(a.card_preview_mode, 'expanded'),
+            'showCardDescription', coalesce(a.show_card_description, true),
+            'showCardDates', coalesce(a.show_card_dates, true),
+            'showChecklistProgress', coalesce(a.show_checklist_progress, true),
+            'customProperties', coalesce(a.custom_properties_jsonb, '{}'::jsonb),
+            'createdAt', case when a.created_at is null then null else to_char(a.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
+            'updatedAt', case when a.updated_at is null then null else to_char(a.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end
+          ) as appearance
+        from roaming_board_settings_outbox o
+        join boards b on b.id = o.board_id and b.deleted_at is null
+        left join board_appearance_settings a on a.board_id = o.board_id
+        cross join local_node_identity n
+        left join roaming_board_capabilities rbc on rbc.board_id = o.board_id
+        where o.status in ('pending', 'retry')
+          and o.next_attempt_at <= now()
+        order by o.event_seq
+        limit $1
+        "#,
+    )
+    .bind(limit.clamp(1, 500))
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, "could not load roaming board settings outbox");
+            return;
+        }
+    };
+
+    for row in rows {
+        let outbox_id: Uuid = match row.try_get("id") {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let board_id: Uuid = match row.try_get("board_id") {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let logical_clock = row.try_get::<i64, _>("logical_clock").unwrap_or(1);
+        let event = RoamingBoardEvent {
+            protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
+            event_id: outbox_id.to_string(),
+            workspace_id: row
+                .try_get::<Uuid, _>("workspace_id")
+                .unwrap_or_default()
+                .to_string(),
+            board_id: board_id.to_string(),
+            replica_id: row
+                .try_get::<Uuid, _>("node_replica_id")
+                .unwrap_or_default()
+                .to_string(),
+            replica_seq: logical_clock,
+            logical_clock,
+            entity_type: "board".to_string(),
+            entity_id: board_id.to_string(),
+            operation: "board.appearance.put".to_string(),
+            field_mask: vec!["appearance".to_string()],
+            payload: json!({
+                "appearance": row
+                    .try_get::<Value, _>("appearance")
+                    .unwrap_or_else(|_| json!({})),
+            }),
+            occurred_at: row
+                .try_get("occurred_at")
+                .unwrap_or_else(|_| chrono_fallback_timestamp()),
+        };
+        let imported_board_key = row
+            .try_get::<Option<String>, _>("board_key_base64")
+            .ok()
+            .flatten();
+        let delivery = match imported_board_key.as_deref() {
+            Some(board_key) => {
+                transport
+                    .publish_roaming_with_board_key(&event, board_key)
+                    .await
+            }
+            None => transport.publish_roaming(&event).await,
+        };
+        match delivery {
+            Ok(receipt) => {
+                let _ = sqlx::query(
+                    "update roaming_board_settings_outbox set status = 'delivered', delivered_at = now(), nostr_event_id = $2, last_error = null where id = $1",
+                )
+                .bind(outbox_id)
+                .bind(receipt.nostr_event_id)
+                .execute(pool)
+                .await;
+            }
+            Err(error) => {
+                let _ = sqlx::query(
+                    r#"
+                    update roaming_board_settings_outbox
+                    set
+                      status = case when attempt_count + 1 >= 12 then 'dead_letter' else 'retry' end,
+                      attempt_count = attempt_count + 1,
+                      next_attempt_at = now() + make_interval(secs => least(300, (attempt_count + 1) * 5)),
+                      last_error = left($2, 1000)
+                    where id = $1
+                    "#,
+                )
+                .bind(outbox_id)
+                .bind(format!("{error:#}"))
+                .execute(pool)
+                .await;
+            }
+        }
+    }
+}
+
+fn chrono_fallback_timestamp() -> String {
+    "1970-01-01T00:00:00.000Z".to_string()
+}
+
 async fn ingest_remote(pool: &PgPool, transport: &NostrTransport) {
     let boards = match sqlx::query(
         r#"
@@ -457,6 +598,8 @@ async fn ingest_remote(pool: &PgPool, transport: &NostrTransport) {
         }
     };
 
+    let concurrency = Arc::new(tokio::sync::Semaphore::new(6));
+    let mut fetches = tokio::task::JoinSet::new();
     for board in boards {
         let board_id: Uuid = match board.try_get("board_id") {
             Ok(value) => value,
@@ -470,13 +613,25 @@ async fn ingest_remote(pool: &PgPool, transport: &NostrTransport) {
             .try_get::<Option<String>, _>("board_key_base64")
             .ok()
             .flatten();
-        let recovered = match imported_board_key.as_deref() {
-            Some(board_key) => {
-                transport
-                    .recover_roaming_with_board_key(&board_id.to_string(), board_key)
-                    .await
-            }
-            None => transport.recover_roaming(&board_id.to_string()).await,
+        let transport = transport.clone();
+        let concurrency = Arc::clone(&concurrency);
+        fetches.spawn(async move {
+            let _permit = concurrency.acquire_owned().await.ok();
+            let recovered = match imported_board_key.as_deref() {
+                Some(board_key) => {
+                    transport
+                        .recover_roaming_with_board_key(&board_id.to_string(), board_key)
+                        .await
+                }
+                None => transport.recover_roaming(&board_id.to_string()).await,
+            };
+            (board_id, workspace_id, recovered)
+        });
+    }
+
+    while let Some(result) = fetches.join_next().await {
+        let Ok((board_id, workspace_id, recovered)) = result else {
+            continue;
         };
         let events = match recovered {
             Ok(events) => events,
@@ -509,12 +664,6 @@ fn finite_number(value: &Value, field: &str, fallback: f64) -> anyhow::Result<f6
     Ok(number)
 }
 
-fn normalized_card_status(card: &Value) -> anyhow::Result<&'static str> {
-    let status = string_field(card, "status").unwrap_or("active");
-    crate::modules::cards::service::normalize_status(status)
-        .ok_or_else(|| anyhow::anyhow!("unsupported card status"))
-}
-
 fn normalized_card_priority(card: &Value) -> anyhow::Result<Option<&str>> {
     let priority = string_field(card, "priority");
     if priority.is_some_and(|value| !matches!(value, "low" | "medium" | "high" | "urgent")) {
@@ -534,12 +683,10 @@ async fn card_projection(
           'parentCardId', parent_card_id::text,
           'title', title,
           'description', description,
-          'status', status,
           'priority', priority,
           'position', position::double precision,
           'startAt', case when start_at is null then null else to_char(start_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
           'dueAt', case when due_at is null then null else to_char(due_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
-          'completedAt', case when completed_at is null then null else to_char(completed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
           'isArchived', archived_at is not null
         )
         from cards where id = $1
@@ -1431,6 +1578,292 @@ async fn apply_remote_card_delete(
     Ok(())
 }
 
+#[derive(Debug)]
+struct RoamingBoardAppearance {
+    theme_preset: String,
+    wallpaper_kind: String,
+    wallpaper_value: Option<String>,
+    column_density: String,
+    card_preview_mode: String,
+    show_card_description: bool,
+    show_card_dates: bool,
+    show_checklist_progress: bool,
+    custom_properties: Value,
+}
+
+fn required_bool(value: &Value, field: &str) -> anyhow::Result<bool> {
+    value
+        .get(field)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| anyhow::anyhow!("appearance.{field} must be boolean"))
+}
+
+fn parse_roaming_board_appearance(
+    event: &RoamingBoardEvent,
+) -> anyhow::Result<RoamingBoardAppearance> {
+    let value = event
+        .payload
+        .get("appearance")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("appearance payload is missing"))?;
+    if value.get("boardId").and_then(Value::as_str) != Some(event.board_id.as_str()) {
+        anyhow::bail!("appearance payload scope mismatch");
+    }
+
+    let theme_preset = value
+        .get("themePreset")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty() && candidate.len() <= 100)
+        .ok_or_else(|| anyhow::anyhow!("appearance.themePreset is invalid"))?
+        .to_string();
+    let wallpaper = value
+        .get("wallpaper")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("appearance.wallpaper is missing"))?;
+    let wallpaper_kind = wallpaper
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|kind| {
+            matches!(
+                *kind,
+                "none" | "accent" | "solid" | "gradient" | "preset" | "image"
+            )
+        })
+        .ok_or_else(|| anyhow::anyhow!("appearance.wallpaper.kind is invalid"))?
+        .to_string();
+    let raw_wallpaper_value = wallpaper
+        .get("value")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .map(str::to_string);
+    let wallpaper_value = match wallpaper_kind.as_str() {
+        "none" | "accent" => None,
+        "image" => {
+            let candidate = raw_wallpaper_value
+                .filter(|candidate| {
+                    candidate.len() <= 2_048
+                        && !candidate.contains('\r')
+                        && !candidate.contains('\n')
+                        && (candidate.starts_with("https://") || candidate.starts_with("http://"))
+                })
+                .ok_or_else(|| anyhow::anyhow!("appearance image URL is invalid"))?;
+            Some(candidate)
+        }
+        _ => Some(
+            raw_wallpaper_value
+                .filter(|candidate| candidate.len() <= 4_096)
+                .ok_or_else(|| anyhow::anyhow!("appearance wallpaper value is invalid"))?,
+        ),
+    };
+    let column_density = value
+        .get("columnDensity")
+        .and_then(Value::as_str)
+        .filter(|candidate| matches!(*candidate, "comfortable" | "compact"))
+        .ok_or_else(|| anyhow::anyhow!("appearance.columnDensity is invalid"))?
+        .to_string();
+    let card_preview_mode = value
+        .get("cardPreviewMode")
+        .and_then(Value::as_str)
+        .filter(|candidate| matches!(*candidate, "compact" | "expanded"))
+        .ok_or_else(|| anyhow::anyhow!("appearance.cardPreviewMode is invalid"))?
+        .to_string();
+    let custom_properties = value
+        .get("customProperties")
+        .filter(|candidate| candidate.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let Some(accent) = custom_properties
+        .get("accentColor")
+        .and_then(Value::as_str)
+    {
+        if accent.len() != 7
+            || !accent.starts_with('#')
+            || !accent[1..].chars().all(|character| character.is_ascii_hexdigit())
+        {
+            anyhow::bail!("appearance.customProperties.accentColor is invalid");
+        }
+    }
+
+    Ok(RoamingBoardAppearance {
+        theme_preset,
+        wallpaper_kind,
+        wallpaper_value,
+        column_density,
+        card_preview_mode,
+        show_card_description: required_bool(
+            &Value::Object(value.clone()),
+            "showCardDescription",
+        )?,
+        show_card_dates: required_bool(&Value::Object(value.clone()), "showCardDates")?,
+        show_checklist_progress: required_bool(
+            &Value::Object(value.clone()),
+            "showChecklistProgress",
+        )?,
+        custom_properties,
+    })
+}
+
+async fn appearance_projection(
+    tx: &mut Transaction<'_, Postgres>,
+    board_id: Uuid,
+) -> anyhow::Result<Value> {
+    Ok(sqlx::query_scalar::<_, Value>(
+        r#"
+        select jsonb_build_object(
+          'boardId', b.id::text,
+          'isCustomized', a.board_id is not null,
+          'themePreset', coalesce(a.theme_preset, 'system'),
+          'wallpaper', jsonb_build_object(
+            'kind', coalesce(a.wallpaper_kind, 'none'),
+            'value', a.wallpaper_value
+          ),
+          'columnDensity', coalesce(a.column_density, 'comfortable'),
+          'cardPreviewMode', coalesce(a.card_preview_mode, 'expanded'),
+          'showCardDescription', coalesce(a.show_card_description, true),
+          'showCardDates', coalesce(a.show_card_dates, true),
+          'showChecklistProgress', coalesce(a.show_checklist_progress, true),
+          'customProperties', coalesce(a.custom_properties_jsonb, '{}'::jsonb)
+        )
+        from boards b
+        left join board_appearance_settings a on a.board_id = b.id
+        where b.id = $1 and b.deleted_at is null
+        "#,
+    )
+    .bind(board_id)
+    .fetch_one(&mut **tx)
+    .await?)
+}
+
+async fn apply_remote_board_appearance(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    recovered: &RecoveredRoamingEvent,
+    event_id: Uuid,
+    board_id: Uuid,
+    replica_id: Uuid,
+) -> anyhow::Result<()> {
+    let event = &recovered.event;
+    let appearance = parse_roaming_board_appearance(event)?;
+    let owner_user_id =
+        sqlx::query_scalar::<_, Uuid>("select owner_user_id from workspaces where id = $1")
+            .bind(workspace_id)
+            .fetch_one(pool)
+            .await?;
+    let mut tx = pool.begin().await?;
+    let before = appearance_projection(&mut tx, board_id).await?;
+
+    sqlx::query(
+        r#"
+        insert into roaming_board_events (
+          event_id, nostr_event_id, author_public_key, workspace_id, board_id,
+          replica_id, replica_seq, logical_clock, entity_id, operation, status
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied')
+        "#,
+    )
+    .bind(event_id)
+    .bind(&recovered.nostr_event_id)
+    .bind(&recovered.author_public_key)
+    .bind(workspace_id)
+    .bind(board_id)
+    .bind(replica_id)
+    .bind(event.replica_seq)
+    .bind(event.logical_clock)
+    .bind(board_id)
+    .bind(&event.operation)
+    .execute(&mut *tx)
+    .await?;
+
+    if roaming_field_wins(
+        &mut tx,
+        workspace_id,
+        board_id,
+        "appearance",
+        event.logical_clock,
+        replica_id,
+        event_id,
+    )
+    .await?
+    {
+        sqlx::query(
+            r#"
+            insert into board_appearance_settings (
+              board_id, theme_preset, wallpaper_kind, wallpaper_value,
+              column_density, card_preview_mode, show_card_description,
+              show_card_dates, show_checklist_progress, custom_properties_jsonb
+            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            on conflict (board_id) do update set
+              theme_preset = excluded.theme_preset,
+              wallpaper_kind = excluded.wallpaper_kind,
+              wallpaper_value = excluded.wallpaper_value,
+              column_density = excluded.column_density,
+              card_preview_mode = excluded.card_preview_mode,
+              show_card_description = excluded.show_card_description,
+              show_card_dates = excluded.show_card_dates,
+              show_checklist_progress = excluded.show_checklist_progress,
+              custom_properties_jsonb = excluded.custom_properties_jsonb,
+              updated_at = now()
+            "#,
+        )
+        .bind(board_id)
+        .bind(&appearance.theme_preset)
+        .bind(&appearance.wallpaper_kind)
+        .bind(&appearance.wallpaper_value)
+        .bind(&appearance.column_density)
+        .bind(&appearance.card_preview_mode)
+        .bind(appearance.show_card_description)
+        .bind(appearance.show_card_dates)
+        .bind(appearance.show_checklist_progress)
+        .bind(&appearance.custom_properties)
+        .execute(&mut *tx)
+        .await?;
+        store_roaming_field_version(
+            &mut tx,
+            workspace_id,
+            board_id,
+            "appearance",
+            event.logical_clock,
+            replica_id,
+            event_id,
+        )
+        .await?;
+
+        let after = appearance_projection(&mut tx, board_id).await?;
+        if before != after {
+            sqlx::query(
+                r#"
+                insert into activity_entries (
+                  id, workspace_id, board_id, card_id, actor_user_id, kind,
+                  entity_type, entity_id, field_mask, payload_jsonb
+                ) values (
+                  gen_random_uuid(), $1, $2, null, $3, 'board.appearance.updated',
+                  'board', $2, array['appearance'], $4
+                )
+                "#,
+            )
+            .bind(workspace_id)
+            .bind(board_id)
+            .bind(owner_user_id)
+            .bind(json!({
+                "source": "roaming",
+                "eventId": event.event_id,
+                "replicaId": event.replica_id,
+                "changes": {"appearance": {"before": before, "after": after}},
+            }))
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    sqlx::query("update roaming_board_events set applied_at = now() where event_id = $1")
+        .bind(event_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 async fn apply_remote_event(
     pool: &PgPool,
     workspace_id: Uuid,
@@ -1440,10 +1873,7 @@ async fn apply_remote_event(
     if event.operation == "board.snapshot" {
         return Ok(());
     }
-    if event.workspace_id != workspace_id.to_string()
-        || event.entity_type != "card"
-        || !matches!(event.operation.as_str(), "card.put" | "card.delete")
-    {
+    if event.workspace_id != workspace_id.to_string() {
         anyhow::bail!("unsupported roaming event shape");
     }
     let event_id = Uuid::parse_str(&event.event_id)?;
@@ -1468,6 +1898,27 @@ async fn apply_remote_event(
     .await?;
     if !board_matches {
         anyhow::bail!("board does not belong to roaming workspace");
+    }
+
+    if event.operation == "board.appearance.put" {
+        if event.entity_type != "board" || entity_id != board_id {
+            anyhow::bail!("unsupported roaming board event shape");
+        }
+        return apply_remote_board_appearance(
+            pool,
+            workspace_id,
+            recovered,
+            event_id,
+            board_id,
+            replica_id,
+        )
+        .await;
+    }
+
+    if event.entity_type != "card"
+        || !matches!(event.operation.as_str(), "card.put" | "card.delete")
+    {
+        anyhow::bail!("unsupported roaming card event shape");
     }
 
     if event.operation == "card.delete" {
@@ -1553,14 +2004,8 @@ async fn apply_remote_event(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("card title is missing"))?;
-    let card_status = normalized_card_status(card)?;
     let card_priority = normalized_card_priority(card)?;
     let card_position = finite_number(card, "position", 1_000.0)?;
-    let completed_at = if card_status == "completed" {
-        string_field(card, "completedAt")
-    } else {
-        None
-    };
 
     let mut tx = pool.begin().await?;
     sqlx::query(
@@ -1638,11 +2083,11 @@ async fn apply_remote_event(
             r#"
             insert into cards (
               id, board_id, column_id, parent_card_id, title, description,
-              status, priority, position, start_at, due_at, completed_at,
+              priority, position, start_at, due_at,
               created_by_user_id, archived_at
             ) values (
-              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::timestamptz,$11::timestamptz,
-              $12::timestamptz,$13,case when $14 then now() else null end
+              $1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::timestamptz,
+              $11,case when $12 then now() else null end
             )
             "#,
         )
@@ -1656,12 +2101,10 @@ async fn apply_remote_event(
         )
         .bind(card_title)
         .bind(string_field(card, "description"))
-        .bind(card_status)
         .bind(card_priority)
         .bind(card_position)
         .bind(string_field(card, "startAt"))
         .bind(string_field(card, "dueAt"))
-        .bind(completed_at)
         .bind(owner_user_id)
         .bind(
             card.get("isArchived")
@@ -1679,23 +2122,17 @@ async fn apply_remote_event(
               parent_card_id = case when $4 then $5 else parent_card_id end,
               title = case when $6 then $7 else title end,
               description = case when $8 then $9 else description end,
-              status = case when $10 then $11 else status end,
-              priority = case when $12 then $13 else priority end,
-              position = case when $14 then $15 else position end,
-              start_at = case when $16 then $17::timestamptz else start_at end,
-              due_at = case when $18 then $19::timestamptz else due_at end,
-              completed_at = case
-                when $10 and $11 <> 'completed' then null
-                when $20 then $21::timestamptz
-                else completed_at
-              end,
+              priority = case when $10 then $11 else priority end,
+              position = case when $12 then $13 else position end,
+              start_at = case when $14 then $15::timestamptz else start_at end,
+              due_at = case when $16 then $17::timestamptz else due_at end,
               archived_at = case
-                when $22 and $23 then coalesce(archived_at, now())
-                when $22 then null
+                when $18 and $19 then coalesce(archived_at, now())
+                when $18 then null
                 else archived_at
               end,
               updated_at = now()
-            where id = $1 and board_id = $24 and deleted_at is null
+            where id = $1 and board_id = $20 and deleted_at is null
             "#,
         )
         .bind(entity_id)
@@ -1711,8 +2148,6 @@ async fn apply_remote_event(
         .bind(card_title)
         .bind(winning.contains("description"))
         .bind(string_field(card, "description"))
-        .bind(winning.contains("status"))
-        .bind(card_status)
         .bind(winning.contains("priority"))
         .bind(card_priority)
         .bind(winning.contains("position"))
@@ -1721,8 +2156,6 @@ async fn apply_remote_event(
         .bind(string_field(card, "startAt"))
         .bind(winning.contains("dueAt"))
         .bind(string_field(card, "dueAt"))
-        .bind(winning.contains("completedAt"))
-        .bind(completed_at)
         .bind(winning.contains("isArchived"))
         .bind(
             card.get("isArchived")
@@ -1761,16 +2194,6 @@ async fn apply_remote_event(
         ]
     };
     if !activity_fields.is_empty() {
-        let before_completed = before_card.as_ref().is_some_and(|value| {
-            value.get("status").and_then(Value::as_str) == Some("completed")
-                || value
-                    .get("completedAt")
-                    .is_some_and(|inner| !inner.is_null())
-        });
-        let after_completed = after_card.get("status").and_then(Value::as_str) == Some("completed")
-            || after_card
-                .get("completedAt")
-                .is_some_and(|inner| !inner.is_null());
         let activity_kind = if !card_exists {
             "card.created"
         } else if activity_fields.iter().any(|field| field == "columnId") {
@@ -1785,10 +2208,6 @@ async fn apply_remote_event(
             } else {
                 "card.restored"
             }
-        } else if !before_completed && after_completed {
-            "card.completed"
-        } else if before_completed && !after_completed {
-            "card.reopened"
         } else {
             "card.updated"
         };
@@ -1857,29 +2276,17 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        actual_card_changes, checklist_delta_from_activity, normalized_card_priority,
-        normalized_card_status,
+        actual_card_changes, checklist_delta_from_activity, normalized_card_priority, CARD_FIELDS,
     };
 
     #[test]
-    fn mobile_legacy_statuses_are_normalized_before_database_apply() {
-        assert_eq!(
-            normalized_card_status(&json!({"status": "todo"})).unwrap(),
-            "active"
-        );
-        assert_eq!(
-            normalized_card_status(&json!({"status": "in_progress"})).unwrap(),
-            "active"
-        );
-        assert_eq!(
-            normalized_card_status(&json!({"status": "done"})).unwrap(),
-            "completed"
-        );
+    fn fixed_card_state_is_not_part_of_the_roaming_contract() {
+        assert!(!CARD_FIELDS.contains(&"status"));
+        assert!(!CARD_FIELDS.contains(&"completedAt"));
     }
 
     #[test]
     fn roaming_card_rejects_invalid_database_values() {
-        assert!(normalized_card_status(&json!({"status": "unknown"})).is_err());
         assert!(normalized_card_priority(&json!({"priority": "maximum"})).is_err());
     }
 
