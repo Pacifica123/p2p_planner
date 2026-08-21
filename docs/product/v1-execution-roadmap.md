@@ -1,7 +1,7 @@
 # Текущее состояние и путь к v1
 
 - Актуально на: 2026-08-21
-- Текущая версия web/backend: `v1.0.0-beta.12`
+- Текущая версия web/backend: `v1.0.0-beta.13`
 - Следующий стабильный тег: `v1.0.0` после закрытия релизных доказательств
 
 Это основная таблица фактического состояния. Старые планы и release notes
@@ -34,6 +34,17 @@
 | Android | Частично | Mobile.9: CRUD, column-state, local-first карточки/чек-листы, локальные уведомления и оформление доски |
 | Iroh и edge coordinator | Эксперимент | Адаптеры и прототипы существуют, но не входят в обычный путь |
 | GitHub/devctl | Концепция | Определена provider-neutral модель проекта, manifests и receipts |
+
+## Что изменилось в beta.13
+
+- legacy Compose stack определяется по labels, gateway-порту, image tags и
+  двум named volumes без перезапуска контейнеров;
+- временный UserTestSpace source больше не остаётся controller root:
+  управление переносится в постоянный runtime-каталог вне Git checkout;
+- devctl/source bootstrap делегирует команды зарегистрированному runtime root,
+  а updater получает реальный Origin узла, включая порт `8082`;
+- усыновление отказывается работать при неоднозначных контейнерах, разных
+  backend/web tags, неизвестных volumes или неготовом gateway.
 
 ## Что изменилось в beta.12
 
@@ -156,7 +167,7 @@
 1. двух последовательных `full-local-release`;
 2. smoke распакованного release ZIP на Windows и Linux;
 3. stop/start, update/rollback и контролируемого restore с проверкой данных;
-4. cross-client матрицы web ↔ Android и web ↔ web после исправлений beta.12;
+4. cross-client матрицы web ↔ Android и web ↔ web после исправлений beta.13;
 5. решения о границе Android в обещании stable v1;
 6. выбранной лицензии или явного решения распространять код без публичной
    лицензии;

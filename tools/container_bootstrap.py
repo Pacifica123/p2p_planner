@@ -31,11 +31,14 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.3.0"
 STATE_VERSION = 2
 COMPOSE_PROJECT = "p2pkanban-bootstrap"
 COMPOSE_RELATIVE_PATH = Path("deploy/bootstrap/compose.yaml")
 STATE_RELATIVE_PATH = Path(".dev-bootstrap/container-stack.json")
+ADOPTION_RELATIVE_PATH = Path(".dev-bootstrap/adoption.json")
+DEPLOYMENT_REGISTRY_FILENAME = "p2pkanban-deployment.json"
+DEFAULT_RUNTIME_RELATIVE_PATH = Path("runtime/p2pkanban-node")
 BUILD_INFO_FILENAME = "BUILD_INFO.json"
 UPDATE_LOCK_RELATIVE_PATH = Path(".dev-bootstrap/update.lock")
 UPDATE_RELEASES_RELATIVE_PATH = Path(".dev-bootstrap/releases")
@@ -85,13 +88,18 @@ def load_state(project_root: Path) -> dict[str, Any]:
 
 
 def write_state(project_root: Path, state: dict[str, Any]) -> None:
-    path = project_root / STATE_RELATIVE_PATH
+    write_json_object(project_root / STATE_RELATIVE_PATH, state)
+
+
+def write_json_object(path: Path, value: dict[str, Any], *, private: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f"{path.name}.tmp")
     temporary.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    if private:
+        temporary.chmod(0o600)
     os.replace(temporary, path)
 
 
@@ -111,6 +119,32 @@ def read_json_object(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def deployment_registry_path(project_root: Path) -> Path:
+    return project_root.parent / ".devctl" / DEPLOYMENT_REGISTRY_FILENAME
+
+
+def registered_deployment_root(project_root: Path) -> Path | None:
+    registry = read_json_object(deployment_registry_path(project_root))
+    if registry.get("sourceProjectRoot") != str(project_root.resolve()):
+        return None
+    raw_root = registry.get("deploymentRoot")
+    if not isinstance(raw_root, str) or not raw_root.strip():
+        return None
+    candidate = Path(raw_root).expanduser().resolve()
+    workspace_root = project_root.parent.resolve()
+    try:
+        candidate.relative_to(workspace_root)
+    except ValueError:
+        return None
+    if candidate == project_root.resolve():
+        return None
+    if not (candidate / STATE_RELATIVE_PATH).is_file():
+        return None
+    if find_project_root(candidate) != candidate:
+        return None
+    return candidate
 
 
 def read_version(source_root: Path) -> str:
@@ -400,7 +434,13 @@ def copy_source_tree(source: Path, destination: Path) -> None:
     }
 
     def ignore(_directory: str, names: list[str]) -> set[str]:
-        return {name for name in names if name in ignored_names}
+        return {
+            name
+            for name in names
+            if name in ignored_names
+            or name == ".env"
+            or (name.startswith(".env.") and name != ".env.example")
+        }
 
     shutil.copytree(source, destination, ignore=ignore)
 
@@ -533,6 +573,220 @@ def discover_owned_web_port(project_root: Path) -> int | None:
         if 1 <= host_port <= 65535:
             return host_port
     return None
+
+
+def compose_service_container(
+    project_root: Path,
+    service: str,
+    *,
+    include_stopped: bool = False,
+) -> dict[str, Any]:
+    docker = docker_executable()
+    command = [docker, "ps"]
+    if include_stopped:
+        command.append("--all")
+    command.extend(
+        [
+            "--filter",
+            f"label=com.docker.compose.project={COMPOSE_PROJECT}",
+            "--filter",
+            f"label=com.docker.compose.service={service}",
+            "--format",
+            "{{.ID}}",
+        ]
+    )
+    listed = run_capture(
+        command,
+        cwd=project_root,
+        env=os.environ.copy(),
+        timeout=20,
+    )
+    identifiers = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+    if listed.returncode != 0:
+        raise BootstrapError(
+            f"Docker не смог найти контейнер Compose service {service}."
+        )
+    if len(identifiers) != 1:
+        raise BootstrapError(
+            f"Ожидался один контейнер Compose service {service}, найдено: "
+            f"{len(identifiers)}. Автоматическое усыновление остановлено."
+        )
+    inspected = run_capture(
+        [docker, "inspect", identifiers[0]],
+        cwd=project_root,
+        env=os.environ.copy(),
+        timeout=30,
+    )
+    if inspected.returncode != 0:
+        raise BootstrapError(f"Docker inspect не сработал для service {service}.")
+    try:
+        payload = json.loads(inspected.stdout)
+    except json.JSONDecodeError as exc:
+        raise BootstrapError(
+            f"Docker inspect вернул некорректный JSON для service {service}."
+        ) from exc
+    if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+        raise BootstrapError(f"Docker inspect неоднозначен для service {service}.")
+    return payload[0]
+
+
+def container_labels(container: dict[str, Any]) -> dict[str, str]:
+    config = container.get("Config") if isinstance(container.get("Config"), dict) else {}
+    raw = config.get("Labels") if isinstance(config.get("Labels"), dict) else {}
+    return {
+        str(key): str(value)
+        for key, value in raw.items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
+
+
+def container_image(container: dict[str, Any]) -> str:
+    config = container.get("Config") if isinstance(container.get("Config"), dict) else {}
+    value = config.get("Image")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def image_tag(image: str, expected_repository: str) -> str:
+    prefix = expected_repository + ":"
+    if not image.startswith(prefix):
+        raise BootstrapError(
+            f"Работающий image {image or '<unknown>'} не принадлежит {expected_repository}."
+        )
+    value = image[len(prefix) :]
+    if not value or any(character.isspace() for character in value):
+        raise BootstrapError(f"Некорректный Docker image tag: {image!r}.")
+    return value
+
+
+def image_version_and_revision(tag: str) -> tuple[str, str]:
+    matched = re.fullmatch(r"(?P<version>.+)-(?P<revision>[0-9a-f]{7,40})", tag)
+    if not matched:
+        raise BootstrapError(
+            "Работающие backend/web images не содержат revision в tag; "
+            "автоматическое усыновление остановлено."
+        )
+    version = matched.group("version")
+    revision = matched.group("revision")
+    if not version or any(character.isspace() for character in version):
+        raise BootstrapError("Не удалось определить версию работающего image.")
+    return version, revision
+
+
+def gateway_binding(container: dict[str, Any]) -> tuple[int, str]:
+    network = (
+        container.get("NetworkSettings")
+        if isinstance(container.get("NetworkSettings"), dict)
+        else {}
+    )
+    ports = network.get("Ports") if isinstance(network.get("Ports"), dict) else {}
+    bindings = ports.get("8080/tcp")
+    if not isinstance(bindings, list) or len(bindings) != 1 or not isinstance(bindings[0], dict):
+        raise BootstrapError(
+            "Gateway не имеет однозначного published port для 8080/tcp."
+        )
+    try:
+        port = int(bindings[0].get("HostPort"))
+    except (TypeError, ValueError) as exc:
+        raise BootstrapError("Gateway вернул некорректный host port.") from exc
+    host_ip = str(bindings[0].get("HostIp") or "127.0.0.1")
+    if not 1 <= port <= 65535:
+        raise BootstrapError("Published port gateway находится вне допустимого диапазона.")
+    bind_address = "0.0.0.0" if host_ip in {"0.0.0.0", "::"} else "127.0.0.1"
+    return port, bind_address
+
+
+def named_volume_names(container: dict[str, Any]) -> set[str]:
+    mounts = container.get("Mounts") if isinstance(container.get("Mounts"), list) else []
+    return {
+        str(mount.get("Name"))
+        for mount in mounts
+        if isinstance(mount, dict)
+        and mount.get("Type") == "volume"
+        and isinstance(mount.get("Name"), str)
+    }
+
+
+def compose_working_project_root(container: dict[str, Any]) -> Path:
+    labels = container_labels(container)
+    config_files = labels.get("com.docker.compose.project.config_files", "")
+    candidates = [Path(item.strip()) for item in config_files.split(",") if item.strip()]
+    working_dir = labels.get("com.docker.compose.project.working_dir")
+    if working_dir:
+        candidates.append(Path(working_dir))
+    for candidate in candidates:
+        start = candidate.parent if candidate.is_file() or candidate.suffix else candidate
+        root = find_project_root(start)
+        if root:
+            return root
+    raise BootstrapError(
+        "Compose labels указывают на недоступный или неполный исходный каталог."
+    )
+
+
+def discover_running_deployment(project_root: Path) -> dict[str, Any]:
+    gateway = compose_service_container(project_root, "gateway")
+    backend = compose_service_container(project_root, "backend")
+    web = compose_service_container(project_root, "web")
+    postgres = compose_service_container(project_root, "postgres")
+
+    for service, container in (
+        ("gateway", gateway),
+        ("backend", backend),
+        ("web", web),
+        ("postgres", postgres),
+    ):
+        labels = container_labels(container)
+        if labels.get("com.docker.compose.project") != COMPOSE_PROJECT:
+            raise BootstrapError(f"Service {service} принадлежит другому Compose project.")
+
+    legacy_root = compose_working_project_root(gateway)
+    legacy_state = load_state(legacy_root)
+    if not legacy_state:
+        raise BootstrapError(
+            f"У работающего deployment не найден {STATE_RELATIVE_PATH}: {legacy_root}"
+        )
+
+    port, bind_address = gateway_binding(gateway)
+    backend_tag = image_tag(container_image(backend), "p2pkanban/backend")
+    web_tag = image_tag(container_image(web), "p2pkanban/web")
+    if backend_tag != web_tag:
+        raise BootstrapError("Backend и web запущены с разными image tags.")
+    version, short_revision = image_version_and_revision(web_tag)
+
+    state_version = legacy_state.get("appVersion")
+    if isinstance(state_version, str) and state_version and state_version != version:
+        raise BootstrapError(
+            f"State сообщает версию {state_version}, images сообщают {version}."
+        )
+    state_revision = legacy_state.get("activeRevision")
+    if isinstance(state_revision, str) and re.fullmatch(r"[0-9a-f]{7,40}", state_revision):
+        if not state_revision.startswith(short_revision) and not short_revision.startswith(state_revision):
+            raise BootstrapError("Revision в state не совпадает с работающими images.")
+        active_revision = state_revision
+    else:
+        active_revision = short_revision
+
+    expected_postgres = f"{COMPOSE_PROJECT}_postgres_data"
+    expected_secrets = f"{COMPOSE_PROJECT}_bootstrap_secrets"
+    postgres_volumes = named_volume_names(postgres)
+    backend_volumes = named_volume_names(backend)
+    if expected_postgres not in postgres_volumes:
+        raise BootstrapError("Работающий PostgreSQL не использует ожидаемый data volume.")
+    if expected_secrets not in backend_volumes:
+        raise BootstrapError("Работающий backend не использует ожидаемый secrets volume.")
+    if not http_ready(f"http://127.0.0.1:{port}/healthz"):
+        raise BootstrapError(f"Работающий gateway на порту {port} не прошёл healthz.")
+
+    return {
+        "legacyRoot": legacy_root,
+        "legacyState": legacy_state,
+        "webPort": port,
+        "bindAddress": bind_address,
+        "appVersion": version,
+        "activeRevision": active_revision,
+        "imageTag": web_tag,
+        "volumes": [expected_postgres, expected_secrets],
+    }
 
 
 def choose_web_port(
@@ -720,7 +974,7 @@ def wait_until_ready(url: str, timeout_seconds: int) -> bool:
     return False
 
 
-def update_control_health(project_root: Path) -> dict[str, Any]:
+def any_update_control_health() -> dict[str, Any]:
     request = urllib.request.Request(
         f"http://127.0.0.1:{DEFAULT_UPDATE_CONTROL_PORT}/health",
         headers={"User-Agent": f"p2pKanban-bootstrap/{TOOL_VERSION}"},
@@ -730,7 +984,12 @@ def update_control_health(project_root: Path) -> dict[str, Any]:
             value = json.loads(response.read().decode("utf-8"))
     except (OSError, urllib.error.URLError, json.JSONDecodeError):
         return {}
-    if not isinstance(value, dict) or value.get("projectRoot") != str(project_root.resolve()):
+    return value if isinstance(value, dict) else {}
+
+
+def update_control_health(project_root: Path) -> dict[str, Any]:
+    value = any_update_control_health()
+    if value.get("projectRoot") != str(project_root.resolve()):
         return {}
     return value
 
@@ -817,6 +1076,186 @@ def stop_update_control_plane(project_root: Path) -> None:
         pass
 
 
+def stop_any_p2p_update_control() -> None:
+    health = any_update_control_health()
+    raw_root = health.get("projectRoot")
+    if not isinstance(raw_root, str) or not raw_root:
+        if is_port_available(DEFAULT_UPDATE_CONTROL_PORT):
+            return
+        raise BootstrapError(
+            f"Порт {DEFAULT_UPDATE_CONTROL_PORT} занят нераспознанным процессом."
+        )
+    owner_root = Path(raw_root).resolve()
+    token_state = read_json_object(owner_root / UPDATE_CONTROL_STATE_RELATIVE_PATH)
+    token = token_state.get("sessionToken")
+    if not isinstance(token, str) or not token:
+        raise BootstrapError(
+            f"Updater на порту {DEFAULT_UPDATE_CONTROL_PORT} не имеет доступного token: "
+            f"{owner_root}"
+        )
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{DEFAULT_UPDATE_CONTROL_PORT}/internal/shutdown",
+        method="POST",
+        headers={
+            "X-P2PKanban-Control": token,
+            "User-Agent": f"p2pKanban-bootstrap/{TOOL_VERSION}",
+        },
+    )
+    try:
+        urllib.request.urlopen(request, timeout=2).close()
+    except (OSError, urllib.error.URLError) as exc:
+        raise BootstrapError(f"Не удалось остановить прежний updater: {exc}") from exc
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if is_port_available(DEFAULT_UPDATE_CONTROL_PORT):
+            return
+        time.sleep(0.1)
+    raise BootstrapError("Прежний updater не освободил control port.")
+
+
+def adoption_runtime_root(project_root: Path, explicit: str | None) -> Path:
+    workspace_root = project_root.parent.resolve()
+    candidate = (
+        Path(explicit).expanduser().resolve()
+        if explicit
+        else (workspace_root / DEFAULT_RUNTIME_RELATIVE_PATH).resolve()
+    )
+    try:
+        candidate.relative_to(workspace_root)
+    except ValueError as exc:
+        raise BootstrapError(
+            "Runtime root должен находиться внутри devctl workspace."
+        ) from exc
+    if candidate == project_root.resolve() or project_root.resolve() in candidate.parents:
+        raise BootstrapError("Runtime root не должен находиться внутри source checkout.")
+    if candidate == workspace_root:
+        raise BootstrapError("Корень devctl workspace нельзя использовать как runtime root.")
+    return candidate
+
+
+def provision_runtime_source(project_root: Path, runtime_root: Path) -> None:
+    if runtime_root.exists():
+        adoption = read_json_object(runtime_root / ADOPTION_RELATIVE_PATH)
+        if (
+            adoption.get("sourceProjectRoot") == str(project_root.resolve())
+            and (runtime_root / STATE_RELATIVE_PATH).is_file()
+            and find_project_root(runtime_root) == runtime_root
+        ):
+            return
+        raise BootstrapError(
+            f"Runtime root уже существует и не принадлежит этому deployment: {runtime_root}"
+        )
+
+    runtime_root.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=f".{runtime_root.name}-incoming-",
+            dir=runtime_root.parent,
+        )
+    )
+    try:
+        shutil.rmtree(staging)
+        copy_source_tree(project_root, staging)
+        validate_update_source(staging)
+        os.replace(staging, runtime_root)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
+def adopted_stack_state(discovered: dict[str, Any]) -> dict[str, Any]:
+    legacy = discovered.get("legacyState")
+    legacy_state = legacy if isinstance(legacy, dict) else {}
+    state = stack_state(
+        web_port=int(discovered["webPort"]),
+        bind_address=str(discovered["bindAddress"]),
+        status="running",
+        previous=None,
+    )
+    created_at = legacy_state.get("createdAt")
+    if isinstance(created_at, str) and created_at:
+        state["createdAt"] = created_at
+    state.update(
+        {
+            "appVersion": str(discovered["appVersion"]),
+            "activeRevision": str(discovered["activeRevision"]),
+            "imageTag": str(discovered["imageTag"]),
+            "updateRepository": (
+                legacy_state.get("updateRepository")
+                if isinstance(legacy_state.get("updateRepository"), str)
+                else DEFAULT_UPDATE_REPOSITORY
+            ),
+            "updateBranch": (
+                legacy_state.get("updateBranch")
+                if isinstance(legacy_state.get("updateBranch"), str)
+                else DEFAULT_UPDATE_BRANCH
+            ),
+            "releaseHistory": [],
+            "adoptedAt": iso_now(),
+            "adoptedFrom": {
+                "projectRoot": str(Path(discovered["legacyRoot"]).resolve()),
+                "composeProject": COMPOSE_PROJECT,
+                "volumes": list(discovered["volumes"]),
+            },
+        }
+    )
+    return state
+
+
+def write_deployment_registry(project_root: Path, runtime_root: Path) -> None:
+    write_json_object(
+        deployment_registry_path(project_root),
+        {
+            "schemaVersion": 1,
+            "sourceProjectRoot": str(project_root.resolve()),
+            "deploymentRoot": str(runtime_root.resolve()),
+            "composeProject": COMPOSE_PROJECT,
+            "registeredAt": iso_now(),
+        },
+        private=True,
+    )
+
+
+def command_adopt_running(args: argparse.Namespace, project_root: Path) -> int:
+    runtime_root = adoption_runtime_root(project_root, args.runtime_root)
+    ensure_docker_ready(project_root, os.environ.copy())
+    discovered = discover_running_deployment(project_root)
+    state = adopted_stack_state(discovered)
+
+    print("Найден работающий p2pKanban deployment:")
+    print(f"- Compose source: {discovered['legacyRoot']}")
+    print(f"- Web: http://127.0.0.1:{discovered['webPort']}")
+    print(f"- Версия: {discovered['appVersion']} ({discovered['activeRevision']})")
+    print(f"- Runtime root: {runtime_root}")
+    print("- PostgreSQL data и bootstrap secrets volumes остаются без изменений.")
+    if args.dry_run:
+        print("Dry-run: файлы, процессы и контейнеры не изменены.")
+        return 0
+
+    provision_runtime_source(project_root, runtime_root)
+    write_state(runtime_root, state)
+    write_json_object(
+        runtime_root / ADOPTION_RELATIVE_PATH,
+        {
+            "schemaVersion": 1,
+            "sourceProjectRoot": str(project_root.resolve()),
+            "legacyProjectRoot": str(Path(discovered["legacyRoot"]).resolve()),
+            "composeProject": COMPOSE_PROJECT,
+            "adoptedAt": iso_now(),
+        },
+    )
+    write_deployment_registry(project_root, runtime_root)
+    stop_any_p2p_update_control()
+    ensure_update_control_plane(runtime_root)
+    print("Deployment усыновлён без перезапуска Docker-контейнеров.")
+    print(
+        "Updater перепривязан к "
+        f"http://127.0.0.1:{DEFAULT_UPDATE_CONTROL_PORT}; разрешён web-порт "
+        f"{discovered['webPort']}."
+    )
+    return 0
+
+
 def command_watch_updates(args: argparse.Namespace, project_root: Path) -> int:
     if args.dry_run:
         print(
@@ -827,7 +1266,7 @@ def command_watch_updates(args: argparse.Namespace, project_root: Path) -> int:
     ensure_update_control_plane(project_root)
     print(
         "Проверка commit и UI-установщик доступны на loopback "
-        f"порту {DEFAULT_UPDATE_CONTROL_PORT}."
+        f"порту {DEFAULT_UPDATE_CONTROL_PORT}. Runtime: {project_root}"
     )
     return 0
 
@@ -2093,6 +2532,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     start.set_defaults(func=command_start)
 
+    adopt = subparsers.add_parser(
+        "adopt-running",
+        help="Привязать работающий legacy Compose stack к постоянному runtime root.",
+    )
+    adopt.add_argument(
+        "--runtime-root",
+        help="Постоянный runtime root внутри devctl workspace.",
+    )
+    adopt.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Проверить deployment и показать план без изменений.",
+    )
+    adopt.set_defaults(func=command_adopt_running)
+
     status = subparsers.add_parser("status", help="Показать контейнеры и доступность web.")
     status.set_defaults(func=command_status)
 
@@ -2205,6 +2659,11 @@ def main(
             file=sys.stderr,
         )
         return 2
+
+    if args.command != "adopt-running" and not (root / STATE_RELATIVE_PATH).is_file():
+        registered = registered_deployment_root(root)
+        if registered:
+            root = registered
 
     try:
         return int(args.func(args, root))

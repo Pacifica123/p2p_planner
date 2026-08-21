@@ -118,7 +118,7 @@ read-only проверка работает после перезапуска к
 
 ### Второй независимый web-узел
 
-Email уникален только внутри одного deployment. На чистом втором узле beta.12
+Email уникален только внутри одного deployment. На чистом втором узле beta.13
 выберите `Подключить с другого узла`; ненужную локальную копию после проверки
 можно удалить командой `python bootstrap.py reset --yes`. Полный порядок:
 [`docs/architecture/web-node-link-v1.md`](docs/architecture/web-node-link-v1.md).

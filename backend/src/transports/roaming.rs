@@ -435,11 +435,7 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
     }
 }
 
-async fn publish_pending_board_settings(
-    pool: &PgPool,
-    transport: &NostrTransport,
-    limit: i64,
-) {
+async fn publish_pending_board_settings(pool: &PgPool, transport: &NostrTransport, limit: i64) {
     let rows = match sqlx::query(
         r#"
         select
@@ -1674,13 +1670,12 @@ fn parse_roaming_board_appearance(
         .filter(|candidate| candidate.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
-    if let Some(accent) = custom_properties
-        .get("accentColor")
-        .and_then(Value::as_str)
-    {
+    if let Some(accent) = custom_properties.get("accentColor").and_then(Value::as_str) {
         if accent.len() != 7
             || !accent.starts_with('#')
-            || !accent[1..].chars().all(|character| character.is_ascii_hexdigit())
+            || !accent[1..]
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
         {
             anyhow::bail!("appearance.customProperties.accentColor is invalid");
         }
@@ -1692,10 +1687,7 @@ fn parse_roaming_board_appearance(
         wallpaper_value,
         column_density,
         card_preview_mode,
-        show_card_description: required_bool(
-            &Value::Object(value.clone()),
-            "showCardDescription",
-        )?,
+        show_card_description: required_bool(&Value::Object(value.clone()), "showCardDescription")?,
         show_card_dates: required_bool(&Value::Object(value.clone()), "showCardDates")?,
         show_checklist_progress: required_bool(
             &Value::Object(value.clone()),

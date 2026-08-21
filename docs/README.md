@@ -18,7 +18,7 @@
 - [`deployment/application-update-strategy-v1.md`](deployment/application-update-strategy-v1.md) — рабочее обновление и rollback;
 - [`deployment/postgresql-backup-restore-v1.md`](deployment/postgresql-backup-restore-v1.md) — ручной backup и проверяемый restore;
 - [`product/v1-known-limitations.md`](product/v1-known-limitations.md) — честные ограничения;
-- [`product/v1.0.0-beta.12-release-notes.md`](product/v1.0.0-beta.12-release-notes.md) — текст текущего релиза.
+- [`product/v1.0.0-beta.13-release-notes.md`](product/v1.0.0-beta.13-release-notes.md) — текст текущего релиза.
 
 Разработчику:
 
@@ -54,7 +54,7 @@
 
 | Область | Фактическое решение |
 |---|---|
-| Версия | `v1.0.0-beta.12` |
+| Версия | `v1.0.0-beta.13` |
 | Основной запуск | `python bootstrap.py`, весь runtime в Docker |
 | Обновление | Web-плашка или CLI, commit SHA + backup + versioned images + rollback |
 | Канонический путь | React/Vite → Nginx → Rust/Axum → PostgreSQL |

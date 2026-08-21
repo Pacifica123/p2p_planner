@@ -93,6 +93,18 @@ GitHub API. Devctl будит установщик после push; вручну
 python bootstrap.py watch-updates
 ```
 
+Legacy stack, запущенный из временной post/UserTestSpace-копии, сначала
+привязывается к постоянному runtime root без рестарта контейнеров:
+
+```bash
+python bootstrap.py adopt-running
+```
+
+Команда проверяет работающие images, gateway `healthz` и оба named volume,
+создаёт `<devctl-workspace>/runtime/p2pkanban-node` и регистрирует его вне Git
+checkout. После этого `status`, `update`, `rollback`, `stop` и
+`watch-updates`, вызванные из source checkout, делегируются runtime root.
+
 Bootstrap собирает новые backend/web images рядом с работающими, создаёт
 `pg_dump`, переключает их на прежние volumes и автоматически возвращает старые
 images при ошибке readiness. Подробности:

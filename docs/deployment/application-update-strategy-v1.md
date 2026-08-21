@@ -1,6 +1,6 @@
 # Обновление server-client без потери данных
 
-- Статус: UI + CLI реализация beta.12
+- Статус: UI + CLI реализация beta.13
 - Команда: `python bootstrap.py update`
 - Только возобновить loopback UI-установщик: `python bootstrap.py watch-updates`
 - Канал по умолчанию: GitHub-ветка `main`
@@ -81,6 +81,23 @@ Updater:
 | Локальный control token | `.dev-bootstrap/update-control.json` (`0600` на Unix) |
 
 Каталог `.dev-bootstrap` не входит в Git и Docker build context.
+
+## Усыновление legacy deployment
+
+Если Compose stack исторически запущен из временной post/UserTestSpace-копии,
+beta.13 может перенести только управление в постоянный runtime root:
+
+```bash
+python bootstrap.py adopt-running
+```
+
+Команда сверяет Compose labels, опубликованный gateway-порт, одинаковый tag
+backend/web, healthz и точные имена обоих named volumes. Затем она копирует
+launcher/source без `.git`, `.env` и build-каталогов в
+`<devctl-workspace>/runtime/p2pkanban-node`, переносит несекретное состояние и
+перепривязывает updater. Контейнеры не перезапускаются, volumes не перемещаются
+и не переименовываются. Source checkout остаётся Git-чистым; дальнейшие
+bootstrap-команды делегируются зарегистрированному runtime root.
 
 ## Отказ до переключения
 

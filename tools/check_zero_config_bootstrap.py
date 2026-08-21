@@ -110,6 +110,16 @@ def check_python() -> None:
     )
     require(control_tests.returncode == 0, control_tests.stdout)
 
+    adoption_tests = subprocess.run(
+        [sys.executable, "-B", "tools/test_runtime_adoption.py"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    require(adoption_tests.returncode == 0, adoption_tests.stdout)
+
 
 def check_compose_contract() -> None:
     compose_path = ROOT / "deploy/bootstrap/compose.yaml"
@@ -233,6 +243,9 @@ def check_update_control_contract() -> None:
     require("secrets.compare_digest" in control, "mutating update calls must verify a random token")
     require("origin in self.app.allowed_origins()" in control, "control plane must enforce exact web origins")
     require("Git HEAD is therefore not evidence" in control, "update identity must describe the running image")
+    require('"adopt-running"' in bootstrap, "legacy Compose adoption command is missing")
+    require("registered_deployment_root" in bootstrap, "source/runtime delegation is missing")
+    require("postgres_data" in bootstrap and "bootstrap_secrets" in bootstrap, "adoption must pin both data volumes")
     update_api = (
         ROOT / "frontend/src/features/system/api/updateControl.ts"
     ).read_text(encoding="utf-8")

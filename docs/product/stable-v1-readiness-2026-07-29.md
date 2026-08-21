@@ -1,7 +1,7 @@
 # Оценка готовности stable v1
 
-- Дата оценки: 2026-07-29; обновлено: 2026-08-18
-- Проверяемая линия: `v1.0.0-beta.12`
+- Дата оценки: 2026-07-29; обновлено: 2026-08-21
+- Проверяемая линия: `v1.0.0-beta.13`
 - Вердикт: функционально близко, релизно ещё не готово
 
 ## Что изменилось в оценке
@@ -22,12 +22,12 @@ coordinator-free режима больше не требуется.
 | Web CRUD | unit/build и длительное полевое использование | сильный сигнал | итоговый artifact smoke |
 | Сохранение данных | владелец успешно использует продукт с beta.3 | полезный полевой сигнал | scripted stop/start/update/rollback |
 | PostgreSQL backup | updater создаёт custom `pg_dump` и manifest | реализация есть | restore drill на копии данных |
-| Web → Android | mobile.9 прошёл typecheck, Jest и Android export | частично подтверждено | повторить на реальных узлах beta.12/mobile.9, включая reminder isolation, appearance, checklist delta и delete |
+| Web → Android | mobile.9 прошёл typecheck, Jest и Android export | частично подтверждено | повторить на реальных узлах beta.13/mobile.9, включая reminder isolation, appearance, checklist delta и delete |
 | Android → web | причина найдена и исправлена в обоих клиентах/backend | кодовый сигнал | ручная cross-client матрица |
 | Android CRUD | TypeScript/unit/Metro проверки патча | кодовый сигнал | APK acceptance на реальном устройстве |
 | Web ↔ web | причина deployment-local auth найдена; link и общая board capability реализованы | кодовый сигнал | реальный Manjaro ↔ Windows прогон |
-| Windows bundle | старые прогоны не покрывают beta.12 | недостаточно | чистая Windows |
-| Linux bundle | старые прогоны не покрывают beta.12 | недостаточно | чистый Linux |
+| Windows bundle | старые прогоны не покрывают beta.13 | недостаточно | чистая Windows |
+| Linux bundle | старые прогоны не покрывают beta.13 | недостаточно | чистый Linux |
 | Import-as-copy | автоматические проверки контракта | частично | smoke итогового ZIP |
 | Лицензия | файл лицензии отсутствует | блокер решения | выбрать лицензию или явно не публиковать |
 | Секреты в ZIP | builder исключает типовые пути | хороший статический сигнал | финальный scan собранного файла |
