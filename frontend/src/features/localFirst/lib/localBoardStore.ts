@@ -227,13 +227,13 @@ function migrateOperation(
         input: stripRemovedCardInput(payload.input),
         tempCard: stripRemovedCardState(payload.tempCard),
       },
-    } as LocalFirstOperation;
+    } as unknown as LocalFirstOperation;
   }
   if (operation.kind === 'card.update') {
     const payload = operation.payload as unknown as { input: Record<string, unknown> };
     const input = stripRemovedCardInput(payload.input);
     if (!Object.keys(input).length) return null;
-    return { ...operation, payload: { input } } as LocalFirstOperation;
+    return { ...operation, payload: { input } } as unknown as LocalFirstOperation;
   }
   return operation as LocalFirstOperation;
 }

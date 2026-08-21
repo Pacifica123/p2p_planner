@@ -2797,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "p2p-planner-backend"
-version = "1.0.0-beta.11"
+version = "1.0.0-beta.12"
 dependencies = [
  "anyhow",
  "argon2",

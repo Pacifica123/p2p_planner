@@ -1,7 +1,9 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
-fn deserialize_present_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+fn deserialize_present_option<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<Option<T>>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,

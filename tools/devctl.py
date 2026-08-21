@@ -1206,6 +1206,32 @@ def commit_and_push(ctx: RunContext) -> None:
         ctx.status = "push_failed"
         raise DevctlError("PUSH_FAILED: " + ctx.push_result)
     ctx.push_result = push_result.stdout.strip() or "push ok"
+    wake_update_control(ctx)
+
+
+def wake_update_control(ctx: RunContext) -> None:
+    bootstrap = ctx.workspace.project_root / "bootstrap.py"
+    if not bootstrap.is_file():
+        return
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-B", str(bootstrap), "watch-updates"],
+            cwd=str(ctx.workspace.project_root),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        ctx.warnings.append(f"Could not wake the web update surface after push: {exc}")
+        return
+    if completed.returncode != 0:
+        details = completed.stdout.strip()
+        ctx.warnings.append(
+            "Could not wake the web update surface after push"
+            + (f": {details}" if details else ".")
+        )
 
 
 # ---------------------------------------------------------------------------

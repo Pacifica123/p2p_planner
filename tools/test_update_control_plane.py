@@ -16,6 +16,7 @@ from update_control_plane import (
     ControlApplication,
     ControlHandler,
     ThreadingHTTPServer,
+    installed_revision,
 )
 
 
@@ -122,6 +123,20 @@ class UpdateControlPlaneTest(unittest.TestCase):
             token=token,
         )
         self.assertEqual(status, 404)
+
+    def test_running_image_identity_does_not_follow_checkout_head(self) -> None:
+        state_path = self.project_root / ".dev-bootstrap/container-stack.json"
+        write_json(
+            state_path,
+            {
+                "webPort": 18080,
+                "imageTag": "1.0.0-beta.10-0123456789ab",
+            },
+        )
+        self.assertEqual(installed_revision(self.project_root), "0123456789ab")
+
+        write_json(state_path, {"webPort": 18080})
+        self.assertIsNone(installed_revision(self.project_root))
 
     @unittest.skipIf(os.name == "nt", "POSIX permission bits are not portable to Windows")
     def test_control_state_is_private(self) -> None:

@@ -41,6 +41,7 @@ def service_block(compose_text: str, service_name: str) -> str:
 def check_python() -> None:
     for relative in (
         "bootstrap.py",
+        "tools/check_production_images.py",
         "tools/container_bootstrap.py",
         "tools/update_control_plane.py",
     ):
@@ -67,6 +68,17 @@ def check_python() -> None:
     require(result.returncode == 0, result.stdout)
     require("http://127.0.0.1:18088" in result.stdout, result.stdout)
     require("POSTGRES" not in result.stdout or "внутри Docker" in result.stdout, result.stdout)
+
+    update_watch = subprocess.run(
+        [sys.executable, "-B", "bootstrap.py", "watch-updates", "--dry-run"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    require(update_watch.returncode == 0, update_watch.stdout)
+    require("8765" in update_watch.stdout, update_watch.stdout)
 
     update_plan = subprocess.run(
         [
@@ -131,6 +143,10 @@ def check_compose_contract() -> None:
         "gateway must keep a stable image identity across app switches",
     )
     require("VITE_API_BASE_URL: /api/v1" in web, "frontend API must be same-origin")
+    require(
+        "VITE_SOURCE_REVISION: ${P2PKANBAN_SOURCE_REVISION:-unknown}" in web,
+        "frontend image must embed the running source revision",
+    )
     require("change-me" not in text.lower(), "compose contains a placeholder secret")
     require("POSTGRES_PASSWORD:" not in text, "compose must not embed a DB password")
     require("AUTH__JWT_SECRET:" not in text, "compose must not embed a JWT secret")
@@ -216,6 +232,18 @@ def check_update_control_contract() -> None:
     require("ThreadingHTTPServer((\"127.0.0.1\", port)" in control, "control plane must bind loopback only")
     require("secrets.compare_digest" in control, "mutating update calls must verify a random token")
     require("origin in self.app.allowed_origins()" in control, "control plane must enforce exact web origins")
+    require("Git HEAD is therefore not evidence" in control, "update identity must describe the running image")
+    update_api = (
+        ROOT / "frontend/src/features/system/api/updateControl.ts"
+    ).read_text(encoding="utf-8")
+    require("api.github.com/repos/Pacifica123/p2p_planner/commits/main" in update_api, "web update fallback is missing")
+    require("VITE_SOURCE_REVISION" in update_api, "web update fallback lacks running revision identity")
+    update_surface = (
+        ROOT / "frontend/src/features/system/components/SourceUpdateSurface.tsx"
+    ).read_text(encoding="utf-8")
+    require("python bootstrap.py watch-updates" in update_surface, "web fallback must not restart containers")
+    devctl = (ROOT / "tools/devctl.py").read_text(encoding="utf-8")
+    require('"watch-updates"' in devctl, "devctl push must wake the web update surface")
     require("userId: string" in reminders, "web reminders must be scoped by authenticated user")
     require("item.userId === userId" in reminders, "web reminder reads are not user-isolated")
 

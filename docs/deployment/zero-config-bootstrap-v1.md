@@ -84,6 +84,15 @@ labels. Если закреплённый порт занят чужим про�
 python bootstrap.py update
 ```
 
+После перезапуска компьютера Docker может поднять контейнеры раньше host
+control plane. Web всё равно обнаруживает новый commit напрямую через read-only
+GitHub API. Devctl будит установщик после push; вручную это можно сделать без
+рестарта stack:
+
+```bash
+python bootstrap.py watch-updates
+```
+
 Bootstrap собирает новые backend/web images рядом с работающими, создаёт
 `pg_dump`, переключает их на прежние volumes и автоматически возвращает старые
 images при ошибке readiness. Подробности:

@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 
-CONTROL_VERSION = "1.0.0"
+CONTROL_VERSION = "1.1.0"
 DEFAULT_PORT = 8765
 DEFAULT_REPOSITORY = "https://github.com/Pacifica123/p2p_planner"
 DEFAULT_BRANCH = "main"
@@ -127,14 +128,21 @@ def git_output(project_root: Path, *arguments: str) -> str | None:
 def installed_revision(project_root: Path) -> str | None:
     stack = read_object(project_root / STACK_STATE)
     revision = stack.get("activeRevision")
-    if isinstance(revision, str) and len(revision) == 40:
+    if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision):
         return revision
     build_info = read_object(project_root / "BUILD_INFO.json")
     commit = build_info.get("gitCommit")
-    if isinstance(commit, str) and len(commit) == 40:
+    if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit):
         return commit
-    head = git_output(project_root, "rev-parse", "HEAD")
-    return head if head and len(head) == 40 else None
+    image_tag = stack.get("imageTag")
+    if isinstance(image_tag, str):
+        match = re.search(r"(?:^|[-_.])([0-9a-f]{12,40})$", image_tag)
+        if match:
+            return match.group(1)
+    # The checkout may already contain a devctl commit while the running image
+    # still contains the previous source. Git HEAD is therefore not evidence of
+    # the installed web revision.
+    return None
 
 
 def empty_job() -> dict[str, Any]:

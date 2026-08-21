@@ -577,6 +577,8 @@ def compose_environment(
     web_port: int,
     bind_address: str,
     image_tag: str = "local",
+    *,
+    source_revision: str | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
     env.update(
@@ -584,9 +586,31 @@ def compose_environment(
             "P2PKANBAN_WEB_PORT": str(web_port),
             "P2PKANBAN_BIND_ADDRESS": bind_address,
             "P2PKANBAN_IMAGE_TAG": safe_identifier(image_tag, fallback="local"),
+            "P2PKANBAN_SOURCE_REVISION": (
+                source_revision
+                if isinstance(source_revision, str)
+                and re.fullmatch(r"[0-9a-f]{40}", source_revision)
+                else "unknown"
+            ),
         }
     )
     return env
+
+
+def source_revision(source_root: Path) -> str | None:
+    build_info = read_json_object(source_root / BUILD_INFO_FILENAME)
+    revision = build_info.get("gitCommit")
+    if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision):
+        return revision
+    head = git_output(source_root, "rev-parse", "HEAD")
+    if head and re.fullmatch(r"[0-9a-f]{40}", head):
+        return head
+    return None
+
+
+def source_image_tag(source_root: Path, revision: str | None) -> str:
+    identity = revision or source_fingerprint(source_root)
+    return safe_identifier(f"{read_version(source_root)}-{identity[:12]}")
 
 
 def docker_executable(*, allow_missing: bool = False) -> str:
@@ -791,6 +815,21 @@ def stop_update_control_plane(project_root: Path) -> None:
         urllib.request.urlopen(request, timeout=2).close()
     except (OSError, urllib.error.URLError):
         pass
+
+
+def command_watch_updates(args: argparse.Namespace, project_root: Path) -> int:
+    if args.dry_run:
+        print(
+            "Будет запущен loopback UI-установщик обновлений на "
+            f"http://127.0.0.1:{DEFAULT_UPDATE_CONTROL_PORT}."
+        )
+        return 0
+    ensure_update_control_plane(project_root)
+    print(
+        "Проверка commit и UI-установщик доступны на loopback "
+        f"порту {DEFAULT_UPDATE_CONTROL_PORT}."
+    )
+    return 0
 
 
 def print_compose_diagnostics(
@@ -1212,10 +1251,28 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
     bind_address = listen_to_bind_address(listen)
     public_url = f"http://127.0.0.1:{web_port}"
     health_url = f"{public_url}/healthz"
+    previous_revision = (
+        str(previous.get("activeRevision"))
+        if isinstance(previous.get("activeRevision"), str)
+        else None
+    )
+    detected_revision = source_revision(source_root)
+    build_revision = (
+        previous_revision
+        if args.no_build
+        else detected_revision
+        or (previous_revision if source_root != project_root else None)
+    )
+    image_tag = (
+        configured_image_tag(previous)
+        if args.no_build
+        else source_image_tag(source_root, build_revision)
+    )
     env = compose_environment(
         web_port,
         bind_address,
-        configured_image_tag(previous),
+        image_tag,
+        source_revision=build_revision,
     )
     up_arguments = ["up", "--detach", "--remove-orphans"]
     if not args.no_build:
@@ -1269,6 +1326,14 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
         ),
     )
 
+    try:
+        ensure_update_control_plane(project_root)
+    except BootstrapError as exc:
+        print(
+            f"Предупреждение: UI-установщик обновлений недоступен: {exc}",
+            file=sys.stderr,
+        )
+
     print("Запускаю p2pKanban. Первый запуск может занять несколько минут.")
     completed = subprocess.run(
         command,
@@ -1309,23 +1374,24 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
         print_compose_diagnostics(source_root, env)
         raise BootstrapError(message)
 
-    write_state(
-        project_root,
-        stack_state(
-            web_port=web_port,
-            bind_address=bind_address,
-            status="running",
-            previous=previous,
-        ),
+    running_state = stack_state(
+        web_port=web_port,
+        bind_address=bind_address,
+        status="running",
+        previous=previous,
     )
-
-    try:
-        ensure_update_control_plane(project_root)
-    except BootstrapError as exc:
-        print(
-            f"Предупреждение: UI-обновления недоступны: {exc}",
-            file=sys.stderr,
+    if not args.no_build:
+        running_state.update(
+            {
+                "appVersion": read_version(source_root),
+                "imageTag": image_tag,
+            }
         )
+        if build_revision:
+            running_state["activeRevision"] = build_revision
+        else:
+            running_state.pop("activeRevision", None)
+    write_state(project_root, running_state)
 
     print("\np2pKanban запущен.")
     print(f"Открыть: {public_url}")
@@ -1480,6 +1546,11 @@ def command_update(args: argparse.Namespace, project_root: Path) -> int:
         web_port,
         bind_address,
         configured_image_tag(state),
+        source_revision=(
+            str(state.get("activeRevision"))
+            if isinstance(state.get("activeRevision"), str)
+            else None
+        ),
     )
 
     releases_root = project_root / UPDATE_RELEASES_RELATIVE_PATH
@@ -1541,6 +1612,7 @@ def command_update(args: argparse.Namespace, project_root: Path) -> int:
                 web_port,
                 bind_address,
                 target_image_tag,
+                source_revision=target_revision,
             )
 
             if args.dry_run:
@@ -2023,6 +2095,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Показать контейнеры и доступность web.")
     status.set_defaults(func=command_status)
+
+    watch_updates = subparsers.add_parser(
+        "watch-updates",
+        help="Запустить локальный UI-установщик без перезапуска контейнеров.",
+    )
+    watch_updates.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Показать действие без запуска процесса.",
+    )
+    watch_updates.set_defaults(func=command_watch_updates)
 
     logs = subparsers.add_parser("logs", help="Показать логи контейнеров.")
     logs.add_argument("--tail", type=int, default=150, help="Количество последних строк.")

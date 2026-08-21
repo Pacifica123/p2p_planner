@@ -1,7 +1,8 @@
 # Обновление server-client без потери данных
 
-- Статус: UI + CLI реализация beta.10
+- Статус: UI + CLI реализация beta.12
 - Команда: `python bootstrap.py update`
+- Только возобновить loopback UI-установщик: `python bootstrap.py watch-updates`
 - Канал по умолчанию: GitHub-ветка `main`
 - Область: zero-config Docker bootstrap
 

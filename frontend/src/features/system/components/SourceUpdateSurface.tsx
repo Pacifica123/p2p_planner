@@ -4,6 +4,7 @@ import {
   getUpdateControlState,
   isLocalUpdateSurface,
   startSourceUpdate,
+  revisionsMatch,
   type UpdateControlState,
 } from '@/features/system/api/updateControl';
 import { Button } from '@/shared/ui/Button';
@@ -34,7 +35,7 @@ export function SourceUpdateSurface() {
     checkingRef.current = true;
     try {
       const current = await getUpdateControlState();
-      const next = checkRemote
+      const next = checkRemote && current.available && current.sessionToken
         ? await checkForSourceUpdate(current.sessionToken)
         : current;
       setState(next);
@@ -72,7 +73,7 @@ export function SourceUpdateSurface() {
   const latest = state.latest;
   const updateAvailable = Boolean(
     latest
-    && latest.sha !== state.installedRevision
+    && !revisionsMatch(latest.sha, state.installedRevision)
     && latest.sha !== dismissedSha,
   );
   const jobFinished = state.job.status === 'succeeded' || state.job.status === 'failed';
@@ -81,8 +82,14 @@ export function SourceUpdateSurface() {
   async function startUpdate() {
     if (!latest) return;
     setActionError(null);
+    if (!state?.available || !state.sessionToken) {
+      setActionError(
+        'Commit найден напрямую в GitHub, но локальный установщик после перезапуска компьютера не запущен. Выполните `python bootstrap.py watch-updates`; контейнеры и данные затронуты не будут.',
+      );
+      return;
+    }
     try {
-      const next = await startSourceUpdate(state!.sessionToken, latest.sha);
+      const next = await startSourceUpdate(state.sessionToken, latest.sha);
       setState(next);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Не удалось запустить обновление.');

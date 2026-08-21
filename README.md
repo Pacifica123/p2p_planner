@@ -43,6 +43,7 @@ SQL не нужно. Первый build может занять нескольк
 |---|---|
 | Запустить stack | `python bootstrap.py` |
 | Обновить из `main` | плашка в web либо `python bootstrap.py update` |
+| Запустить UI-установщик без рестарта stack | `python bootstrap.py watch-updates` |
 | Вернуть прошлую версию кода | `python bootstrap.py rollback` |
 | Посмотреть состояние | `python bootstrap.py status` |
 | Посмотреть последние логи | `python bootstrap.py logs` |
@@ -56,16 +57,15 @@ SQL не нужно. Первый build может занять нескольк
 ```bash
 python bootstrap.py reset --yes
 ```
-
 Если Docker установлен, но закрыт, bootstrap остановится сразу и попросит
 запустить Docker Desktop. Он не будет пытаться использовать или перенастраивать
 случайный PostgreSQL с компьютера.
 
 Подробности: [`docs/deployment/zero-config-bootstrap-v1.md`](docs/deployment/zero-config-bootstrap-v1.md).
-
-Web на loopback сам проверяет новый commit в `main` и показывает его сообщение.
-Принятое обновление собирает images отдельно, создаёт PostgreSQL backup и лишь
-затем переключает backend/web за стабильным gateway на прежние volumes. CLI
+Web на loopback сам проверяет новый commit в `main` и показывает его сообщение;
+read-only проверка работает после перезапуска компьютера, а devctl после push автоматически будит локальный установщик.
+Принятое обновление собирает images отдельно, создаёт PostgreSQL backup, затем
+переключает backend/web за стабильным gateway на прежние volumes. CLI
 `python bootstrap.py update` остаётся равноправным аварийным путём.
 
 ## Что уже работает
@@ -118,7 +118,7 @@ Web на loopback сам проверяет новый commit в `main` и по�
 
 ### Второй независимый web-узел
 
-Email уникален только внутри одного deployment. На чистом втором узле beta.11
+Email уникален только внутри одного deployment. На чистом втором узле beta.12
 выберите `Подключить с другого узла`; ненужную локальную копию после проверки
 можно удалить командой `python bootstrap.py reset --yes`. Полный порядок:
 [`docs/architecture/web-node-link-v1.md`](docs/architecture/web-node-link-v1.md).

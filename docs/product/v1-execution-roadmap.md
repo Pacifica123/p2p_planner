@@ -1,7 +1,7 @@
 # Текущее состояние и путь к v1
 
-- Актуально на: 2026-08-18
-- Текущая версия web/backend: `v1.0.0-beta.11`
+- Актуально на: 2026-08-21
+- Текущая версия web/backend: `v1.0.0-beta.12`
 - Следующий стабильный тег: `v1.0.0` после закрытия релизных доказательств
 
 Это основная таблица фактического состояния. Старые планы и release notes
@@ -34,6 +34,16 @@
 | Android | Частично | Mobile.9: CRUD, column-state, local-first карточки/чек-листы, локальные уведомления и оформление доски |
 | Iroh и edge coordinator | Эксперимент | Адаптеры и прототипы существуют, но не входят в обычный путь |
 | GitHub/devctl | Концепция | Определена provider-neutral модель проекта, manifests и receipts |
+
+## Что изменилось в beta.12
+
+- устранены оба compile blocker beta.11 в production web/backend build;
+- браузер получил read-only GitHub fallback и видит новый commit после reboot,
+  даже если host control plane ещё не запущен;
+- running revision больше не подменяется текущим Git HEAD после devctl push;
+- bootstrap встраивает source revision в web image и фиксирует её в stack state;
+- Android mobile.9 повторно прошёл typecheck, CRUD contract, Jest и Android
+  export без дополнительных изменений.
 
 ## Что изменилось в beta.11
 
@@ -146,7 +156,7 @@
 1. двух последовательных `full-local-release`;
 2. smoke распакованного release ZIP на Windows и Linux;
 3. stop/start, update/rollback и контролируемого restore с проверкой данных;
-4. cross-client матрицы web ↔ Android и web ↔ web после исправлений beta.11;
+4. cross-client матрицы web ↔ Android и web ↔ web после исправлений beta.12;
 5. решения о границе Android в обещании stable v1;
 6. выбранной лицензии или явного решения распространять код без публичной
    лицензии;

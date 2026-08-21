@@ -91,6 +91,7 @@ services:
       dockerfile: deploy/bootstrap/frontend.Dockerfile
       args:
         VITE_API_BASE_URL: /api/v1
+        VITE_SOURCE_REVISION: ${P2PKANBAN_SOURCE_REVISION:-unknown}
     restart: unless-stopped
     depends_on:
       backend:
