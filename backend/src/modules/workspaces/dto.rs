@@ -42,6 +42,13 @@ pub struct UpdateWorkspaceMemberRequest {
     pub role: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceInvitationRequest {
+    pub role: String,
+    pub expires_in_hours: Option<i64>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PageInfo {
@@ -63,6 +70,13 @@ pub struct WorkspaceMembersListResponse {
     pub page_info: PageInfo,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceInvitationsListResponse {
+    pub items: Vec<WorkspaceInvitationResponse>,
+    pub page_info: PageInfo,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceResponse {
@@ -73,6 +87,8 @@ pub struct WorkspaceResponse {
     pub visibility: String,
     pub owner_user_id: String,
     pub member_count: i64,
+    pub current_user_role: Option<String>,
+    pub access_epoch: i64,
     pub is_archived: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -84,7 +100,6 @@ pub struct WorkspaceResponse {
 pub struct WorkspaceWithMembersResponse {
     #[serde(flatten)]
     pub workspace: WorkspaceResponse,
-    pub current_user_role: Option<String>,
     pub members: Vec<WorkspaceMemberResponse>,
 }
 
@@ -94,10 +109,44 @@ pub struct WorkspaceMemberResponse {
     pub id: String,
     pub workspace_id: String,
     pub user_id: String,
+    pub display_name: String,
+    pub email: String,
     pub role: String,
     pub status: String,
     pub invited_by_user_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub removed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceInvitationResponse {
+    pub id: String,
+    pub workspace_id: String,
+    pub role: String,
+    pub status: String,
+    pub created_by_user_id: String,
+    pub expires_at: String,
+    pub created_at: String,
+    pub revoked_at: Option<String>,
+    pub accepted_at: Option<String>,
+    pub accepted_by_user_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedWorkspaceInvitationResponse {
+    pub invitation: WorkspaceInvitationResponse,
+    pub token: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceInvitationPreviewResponse {
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub role: String,
+    pub status: String,
+    pub expires_at: String,
 }

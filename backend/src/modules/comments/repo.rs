@@ -9,7 +9,7 @@ use crate::{
         audit::repo::{record_audit, NewAuditLogEntry},
         common::{
             card_board_and_workspace_id, normalize_limit, require_workspace_access,
-            require_workspace_admin,
+            require_workspace_write,
         },
     },
 };
@@ -145,7 +145,7 @@ pub async fn create_comment(
     payload: CreateCommentRequest,
 ) -> AppResult<CommentResponse> {
     let (board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let comment_id = Uuid::now_v7();
 
     sqlx::query(
@@ -184,7 +184,7 @@ pub async fn update_comment(
     payload: UpdateCommentRequest,
 ) -> AppResult<CommentResponse> {
     let (card_id, board_id, workspace_id) = comment_context(pool, comment_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let before = fetch_comment(pool, comment_id).await?;
 
     sqlx::query(
@@ -219,7 +219,7 @@ pub async fn delete_comment(
     comment_id: Uuid,
 ) -> AppResult<CommentResponse> {
     let (card_id, board_id, workspace_id) = comment_context(pool, comment_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let comment = fetch_comment(pool, comment_id).await?;
 
     sqlx::query("update comments set deleted_at = now() where id = $1 and deleted_at is null")

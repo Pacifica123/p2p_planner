@@ -3,7 +3,10 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    modules::common::{board_workspace_id, require_workspace_admin, AuthContext},
+    modules::common::{
+        board_workspace_id, require_workspace_access, require_workspace_write,
+        workspace_access_epoch, AuthContext,
+    },
     state::AppState,
 };
 
@@ -41,10 +44,28 @@ pub async fn create_roaming_capability(
         }
 
         let workspace_id = board_workspace_id(&state.db, payload.board_id).await?;
-        require_workspace_admin(&state.db, workspace_id, auth.user_id).await?;
-        let imported = sqlx::query_as::<_, (String, String)>(
+        let role = require_workspace_access(&state.db, workspace_id, auth.user_id)
+            .await?
+            .ok_or_else(|| AppError::forbidden("Workspace membership is required"))?;
+        let can_write = matches!(role.as_str(), "owner" | "member");
+        let author_public_key = payload.author_public_key.map(|value| value.trim().to_lowercase());
+        if author_public_key.as_ref().is_some_and(|value| {
+            value.len() != 64 || !value.chars().all(|character| character.is_ascii_hexdigit())
+        }) {
+            return Err(AppError::bad_request(
+                "authorPublicKey must be a 64-character hexadecimal Nostr key",
+            ));
+        }
+        if role == "guest" && author_public_key.is_none() {
+            return Err(AppError::bad_request(
+                "Guest roaming capability requires a bound device public key",
+            ));
+        }
+
+        let access_epoch = workspace_access_epoch(&state.db, workspace_id).await?;
+        let imported = sqlx::query_as::<_, (String, String, i64)>(
             r#"
-            select board_tag, board_key_base64
+            select board_tag, board_key_base64, capability_epoch
             from roaming_board_capabilities
             where board_id = $1
             "#,
@@ -52,7 +73,9 @@ pub async fn create_roaming_capability(
         .bind(payload.board_id)
         .fetch_optional(&state.db)
         .await?;
-        let material = if let Some((board_tag, board_key)) = imported {
+        let material = if let Some((board_tag, board_key, _capability_epoch)) = imported
+            .filter(|(_, _, capability_epoch)| *capability_epoch == access_epoch)
+        {
             let material =
                 p2p_kanban_nostr_transport::NostrCodec::roaming_capability_from_board_key(
                     &payload.board_id.to_string(),
@@ -64,13 +87,81 @@ pub async fn create_roaming_capability(
             }
             material
         } else {
-            let master_key = nostr.master_key().map_err(|_| AppError::internal())?;
-            let codec = p2p_kanban_nostr_transport::NostrCodec::new(master_key)
+            let material =
+                p2p_kanban_nostr_transport::NostrCodec::random_roaming_capability(
+                    &payload.board_id.to_string(),
+                )
                 .map_err(|_| AppError::internal())?;
-            codec
-                .roaming_capability(&payload.board_id.to_string())
-                .map_err(|_| AppError::internal())?
+            sqlx::query(
+                r#"
+                insert into roaming_board_capabilities (
+                  board_id, board_tag, board_key_base64, source_kind, capability_epoch
+                ) values ($1, $2, $3, 'linked_node', $4)
+                on conflict (board_id) do update set
+                  board_tag = excluded.board_tag,
+                  board_key_base64 = excluded.board_key_base64,
+                  capability_epoch = excluded.capability_epoch,
+                  updated_at = now()
+                "#,
+            )
+            .bind(payload.board_id)
+            .bind(&material.board_tag)
+            .bind(&material.board_key)
+            .bind(access_epoch)
+            .execute(&state.db)
+            .await?;
+            material
         };
+
+        if let Some(author_public_key) = &author_public_key {
+            sqlx::query(
+                r#"
+                insert into roaming_board_authorizations (
+                  id, workspace_id, board_id, user_id, device_id,
+                  author_public_key, role, capability_epoch
+                ) values ($1, $2, $3, $4, $5, $6, $7, $8)
+                on conflict (board_id, author_public_key) where revoked_at is null
+                do update set
+                  user_id = excluded.user_id,
+                  device_id = excluded.device_id,
+                  role = excluded.role,
+                  capability_epoch = excluded.capability_epoch
+                "#,
+            )
+            .bind(Uuid::now_v7())
+            .bind(workspace_id)
+            .bind(payload.board_id)
+            .bind(auth.user_id)
+            .bind((auth.device_id != Uuid::nil()).then_some(auth.device_id))
+            .bind(author_public_key)
+            .bind(&role)
+            .bind(access_epoch)
+            .execute(&state.db)
+            .await?;
+        }
+
+        let writer_public_keys = sqlx::query_scalar::<_, String>(
+            r#"
+            select distinct a.author_public_key
+            from roaming_board_authorizations a
+            join workspaces w on w.id = a.workspace_id and w.deleted_at is null
+            left join workspace_members wm
+              on wm.workspace_id = a.workspace_id
+             and wm.user_id = a.user_id
+             and wm.deactivated_at is null
+             and wm.deleted_at is null
+            where a.board_id = $1
+              and a.capability_epoch = $2
+              and a.revoked_at is null
+              and a.role in ('owner', 'member')
+              and (w.owner_user_id = a.user_id or wm.role = 'member')
+            order by a.author_public_key
+            "#,
+        )
+        .bind(payload.board_id)
+        .bind(access_epoch)
+        .fetch_all(&state.db)
+        .await?;
         let provisioned_at = sqlx::query_scalar::<_, String>(
             r#"select to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')"#,
         )
@@ -84,6 +175,9 @@ pub async fn create_roaming_capability(
             board_id: payload.board_id.to_string(),
             board_tag: material.board_tag,
             board_key: material.board_key,
+            capability_epoch: access_epoch,
+            can_write,
+            writer_public_keys,
             relays: nostr.relays.clone(),
             event_kind: nostr
                 .event_kind
@@ -193,6 +287,15 @@ pub async fn push_changes(
         .as_deref()
         .map(|id| parse_uuid(id, "workspaceId"))
         .transpose()?;
+    if let Some(workspace_id) = workspace_id {
+        require_workspace_write(&state.db, workspace_id, auth.user_id).await?;
+        let current_epoch = workspace_access_epoch(&state.db, workspace_id).await?;
+        if payload.access_epoch != Some(current_epoch) {
+            return Err(AppError::forbidden(
+                "Sync event belongs to a stale workspace access generation",
+            ));
+        }
+    }
     if payload.events.is_empty() {
         return Err(AppError::bad_request("At least one sync event is required"));
     }

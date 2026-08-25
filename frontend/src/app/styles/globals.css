@@ -132,6 +132,68 @@ body {
   gap: var(--layout-gap);
 }
 
+.access-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.access-row,
+.invite-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--surface-border);
+}
+
+.access-row__identity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.access-row__actions {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+.field--compact {
+  min-width: 145px;
+}
+
+.access-invite-form {
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 1fr) auto;
+  align-items: end;
+  margin-top: 14px;
+}
+
+.invite-link code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+}
+
+@media (max-width: 720px) {
+  .access-row,
+  .invite-link {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .access-row__actions {
+    justify-content: start;
+  }
+
+  .access-invite-form {
+    grid-template-columns: 1fr;
+  }
+}
+
 .toolbar {
   display: flex;
   gap: 8px;
@@ -567,9 +629,19 @@ body {
 
 .badge--done,
 .badge--low,
-.badge--comfortable {
+.badge--comfortable,
+.badge--owner,
+.badge--member,
+.badge--active,
+.badge--accepted {
   color: #bbf7d0;
   border-color: rgba(34, 197, 94, 0.35);
+}
+
+.badge--guest,
+.badge--expired,
+.badge--revoked {
+  color: var(--text-soft);
 }
 
 .badge--compact,

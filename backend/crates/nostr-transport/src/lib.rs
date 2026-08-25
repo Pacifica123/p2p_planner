@@ -24,6 +24,10 @@ const BOARD_TAG_DOMAIN: &[u8] = b"p2p-kanban:board-tag:v1";
 pub const ROAMING_PROTOCOL_VERSION: &str = "p2p-kanban-roaming/1";
 pub const ROAMING_EVENT_KIND_OFFSET: u16 = 1;
 
+fn default_capability_epoch() -> i64 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoamingCapabilityMaterial {
@@ -39,6 +43,8 @@ pub struct RoamingBoardEvent {
     pub event_id: String,
     pub workspace_id: String,
     pub board_id: String,
+    #[serde(default = "default_capability_epoch")]
+    pub capability_epoch: i64,
     pub replica_id: String,
     pub replica_seq: i64,
     pub logical_clock: i64,
@@ -143,6 +149,16 @@ impl NostrCodec {
             protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
             board_tag: self.roaming_board_tag(board_id)?,
             board_key: URL_SAFE_NO_PAD.encode(self.roaming_board_key(board_id)?),
+        })
+    }
+
+    pub fn random_roaming_capability(board_id: &str) -> Result<RoamingCapabilityMaterial> {
+        let mut board_key = [0u8; 32];
+        OsRng.fill_bytes(&mut board_key);
+        Ok(RoamingCapabilityMaterial {
+            protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
+            board_tag: roaming_board_tag_from_key(&board_key, board_id)?,
+            board_key: URL_SAFE_NO_PAD.encode(board_key),
         })
     }
 
@@ -347,6 +363,10 @@ impl NostrTransport {
             codec: NostrCodec::new(config.master_key.clone())?,
             config,
         })
+    }
+
+    pub fn author_public_key(&self) -> String {
+        self.keys.public_key().to_string()
     }
 
     pub async fn publish(&self, envelope: SyncEnvelope) -> Result<NostrDeliveryReceipt> {
@@ -608,6 +628,7 @@ mod tests {
             event_id: "018f22e2-1d58-7f08-9a36-1f96bd9854b1".to_string(),
             workspace_id: "018f22e2-355a-7ba2-8ef0-d7bc788ceec8".to_string(),
             board_id: "018f22e2-355a-7ba2-8ef0-d7bc788ceec9".to_string(),
+            capability_epoch: 1,
             replica_id: "018f22e2-29cc-7ad6-aa57-b61d74a14e52".to_string(),
             replica_seq: 1,
             logical_clock: 7,

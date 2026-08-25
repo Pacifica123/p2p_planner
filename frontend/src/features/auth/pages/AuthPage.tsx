@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/shared/api/errors';
 import { useAuthSession } from '@/app/providers/AuthSessionProvider';
 import { Panel } from '@/shared/ui/Panel';
@@ -13,6 +13,7 @@ function errorMessage(error: unknown) {
 }
 
 export function AuthPage() {
+  const [searchParams] = useSearchParams();
   const { status, signInWithPassword, signUpWithPassword, signInFromAnotherNode } = useAuthSession();
   const [mode, setMode] = useState<'sign_in' | 'node_link' | 'sign_up'>('sign_in');
   const [sourceUrl, setSourceUrl] = useState('');
@@ -29,7 +30,9 @@ export function AuthPage() {
   }, [mode]);
 
   if (status === 'authenticated') {
-    return <Navigate to="/" replace />;
+    const next = searchParams.get('next');
+    const safeNext = next?.startsWith('/') && !next.startsWith('//') ? next : '/';
+    return <Navigate to={safeNext} replace />;
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {

@@ -74,9 +74,11 @@ const PRIORITY_OPTIONS = [
 export function CardDetailsDrawer({
   boardAppearance,
   resolvedTheme,
+  readOnly = false,
 }: {
   boardAppearance?: BoardAppearanceSettings;
   resolvedTheme: ResolvedThemeMode;
+  readOnly?: boolean;
 }) {
   const navigate = useNavigate();
   const { boardId, workspaceId } = useParams();
@@ -425,17 +427,20 @@ export function CardDetailsDrawer({
 
         {card ? (
           <>
+            {readOnly ? (
+              <div className="inline-banner"><strong>Режим чтения.</strong><span>Изменения карточки недоступны для гостя; локальное напоминание остаётся доступно.</span></div>
+            ) : null}
             <div className="grid" style={{ gap: 14 }}>
-              <TextField label="Название" value={title} onChange={(event) => setTitle(event.target.value)} />
-              <TextAreaField label="Описание" value={description} onChange={(event) => setDescription(event.target.value)} />
-              <SelectField label="Приоритет" value={priority ?? ''} onChange={(event) => setPriority(event.target.value ? (event.target.value as CardPriority) : null)}>
+              <TextField label="Название" value={title} disabled={readOnly} onChange={(event) => setTitle(event.target.value)} />
+              <TextAreaField label="Описание" value={description} disabled={readOnly} onChange={(event) => setDescription(event.target.value)} />
+              <SelectField label="Приоритет" value={priority ?? ''} disabled={readOnly} onChange={(event) => setPriority(event.target.value ? (event.target.value as CardPriority) : null)}>
                 {PRIORITY_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>
                 ))}
               </SelectField>
-              <SelectField label="Колонка · это статус карточки" value={columnId} onChange={(event) => setColumnId(event.target.value)}>
+              <SelectField label="Колонка · это статус карточки" value={columnId} disabled={readOnly} onChange={(event) => setColumnId(event.target.value)}>
                 {columnOptions.map((column) => (
                   <option key={column.id} value={column.id}>
                     {column.name}
@@ -488,16 +493,16 @@ export function CardDetailsDrawer({
             </div>
 
             <div className="inline-actions">
-              <Button variant="primary" iconOnly onClick={() => void handleSave()} disabled={updateCardMutation.isPending || moveCardMutation.isPending} title="Сохранить карточку" aria-label="Сохранить карточку">
+              <Button variant="primary" iconOnly onClick={() => void handleSave()} disabled={readOnly || updateCardMutation.isPending || moveCardMutation.isPending} title="Сохранить карточку" aria-label="Сохранить карточку">
                 {updateCardMutation.isPending || moveCardMutation.isPending ? '…' : <Icon name="save" />}
               </Button>
-              <Button iconOnly onClick={() => void handleArchiveToggle()} disabled={archiveCardMutation.isPending || unarchiveCardMutation.isPending || isLocalPendingCard} title={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'} aria-label={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'}>
+              <Button iconOnly onClick={() => void handleArchiveToggle()} disabled={readOnly || archiveCardMutation.isPending || unarchiveCardMutation.isPending || isLocalPendingCard} title={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'} aria-label={card.isArchived ? 'Разархивировать карточку' : 'Архивировать карточку'}>
                 {archiveCardMutation.isPending || unarchiveCardMutation.isPending ? '…' : <Icon name="archive" />}
               </Button>
-              <Button onClick={() => void handleHideLocally()} disabled={hideCardLocallyMutation.isPending || isLocalPendingCard || cardSyncStatus !== 'synced'} title="Скрыть карточку только на этом узле">
+              <Button onClick={() => void handleHideLocally()} disabled={readOnly || hideCardLocallyMutation.isPending || isLocalPendingCard || cardSyncStatus !== 'synced'} title="Скрыть карточку только на этом узле">
                 {hideCardLocallyMutation.isPending ? 'Скрываем…' : 'Скрыть здесь'}
               </Button>
-              <Button variant="danger" onClick={() => void handleDeleteEverywhere()} disabled={deleteCardMutation.isPending || isLocalPendingCard || cardSyncStatus !== 'synced'} title="Распространить tombstone на все устройства">
+              <Button variant="danger" onClick={() => void handleDeleteEverywhere()} disabled={readOnly || deleteCardMutation.isPending || isLocalPendingCard || cardSyncStatus !== 'synced'} title="Распространить tombstone на все устройства">
                 {deleteCardMutation.isPending ? 'Удаляем…' : 'Удалить везде'}
               </Button>
             </div>
@@ -524,9 +529,9 @@ export function CardDetailsDrawer({
                 </div>
               </div>
               <form className="inline-form__row inline-form__row--tight" onSubmit={handleCreateLabel}>
-                <TextField label="Метка" value={newLabelName} onChange={(event) => setNewLabelName(event.target.value)} placeholder="Например, Ошибка" />
-                <TextField label="Цвет" value={newLabelColor} onChange={(event) => setNewLabelColor(event.target.value)} placeholder="#60a5fa" />
-                <Button type="submit" variant="primary" iconOnly disabled={createLabelMutation.isPending} title="Добавить метку" aria-label="Добавить метку"><Icon name="plus" size={16} /></Button>
+                <TextField label="Метка" value={newLabelName} disabled={readOnly} onChange={(event) => setNewLabelName(event.target.value)} placeholder="Например, Ошибка" />
+                <TextField label="Цвет" value={newLabelColor} disabled={readOnly} onChange={(event) => setNewLabelColor(event.target.value)} placeholder="#60a5fa" />
+                <Button type="submit" variant="primary" iconOnly disabled={readOnly || createLabelMutation.isPending} title="Добавить метку" aria-label="Добавить метку"><Icon name="plus" size={16} /></Button>
               </form>
               {labelsQuery.isLoading ? <LoadingState label="Загружаем метки…" compact /> : null}
               {labelsQuery.isError ? <ErrorState title="Не удалось загрузить метки" compact /> : null}
@@ -541,15 +546,15 @@ export function CardDetailsDrawer({
                             type="checkbox"
                             checked={isChecked}
                             onChange={() => void handleToggleLabel(label.id)}
-                            disabled={replaceCardLabelsMutation.isPending}
+                            disabled={readOnly || replaceCardLabelsMutation.isPending}
                           />
                           <span className="badge" style={{ borderColor: label.color }}>
                             {label.name}
                           </span>
                         </label>
                         <div className="row-actions">
-                          <Button iconOnly onClick={() => void handleRenameLabel(label)} disabled={updateLabelMutation.isPending} title="Переименовать метку" aria-label="Переименовать метку"><Icon name="edit" size={16} /></Button>
-                          <Button variant="danger" iconOnly onClick={() => void handleDeleteLabel(label)} disabled={deleteLabelMutation.isPending} title="Удалить метку" aria-label="Удалить метку"><Icon name="trash" size={16} /></Button>
+                          <Button iconOnly onClick={() => void handleRenameLabel(label)} disabled={readOnly || updateLabelMutation.isPending} title="Переименовать метку" aria-label="Переименовать метку"><Icon name="edit" size={16} /></Button>
+                          <Button variant="danger" iconOnly onClick={() => void handleDeleteLabel(label)} disabled={readOnly || deleteLabelMutation.isPending} title="Удалить метку" aria-label="Удалить метку"><Icon name="trash" size={16} /></Button>
                         </div>
                       </div>
                     );
@@ -567,8 +572,8 @@ export function CardDetailsDrawer({
                 </div>
               </div>
               <form className="inline-form__row inline-form__row--tight" onSubmit={handleCreateChecklist}>
-                <TextField label="Новый чек-лист" value={newChecklistTitle} onChange={(event) => setNewChecklistTitle(event.target.value)} placeholder="Критерии готовности" />
-                <Button type="submit" variant="primary" iconOnly disabled={createChecklistMutation.isPending} title="Добавить чек-лист" aria-label="Добавить чек-лист"><Icon name="plus" size={16} /></Button>
+                <TextField label="Новый чек-лист" value={newChecklistTitle} disabled={readOnly} onChange={(event) => setNewChecklistTitle(event.target.value)} placeholder="Критерии готовности" />
+                <Button type="submit" variant="primary" iconOnly disabled={readOnly || createChecklistMutation.isPending} title="Добавить чек-лист" aria-label="Добавить чек-лист"><Icon name="plus" size={16} /></Button>
               </form>
               {checklistsQuery.isLoading ? <LoadingState label="Загружаем чек-листы…" compact /> : null}
               {checklistsQuery.isError ? <ErrorState title="Не удалось загрузить чек-листы" compact /> : null}
@@ -582,8 +587,8 @@ export function CardDetailsDrawer({
                           <p className="muted">Выполнено: {checklist.items.filter((item) => item.isDone).length} из {checklist.items.length}</p>
                         </div>
                         <div className="row-actions">
-                          <Button iconOnly onClick={() => void handleRenameChecklist(checklist)} disabled={updateChecklistMutation.isPending} title="Переименовать чек-лист" aria-label="Переименовать чек-лист"><Icon name="edit" size={16} /></Button>
-                          <Button variant="danger" iconOnly onClick={() => void handleDeleteChecklist(checklist)} disabled={deleteChecklistMutation.isPending} title="Удалить чек-лист" aria-label="Удалить чек-лист"><Icon name="trash" size={16} /></Button>
+                          <Button iconOnly onClick={() => void handleRenameChecklist(checklist)} disabled={readOnly || updateChecklistMutation.isPending} title="Переименовать чек-лист" aria-label="Переименовать чек-лист"><Icon name="edit" size={16} /></Button>
+                          <Button variant="danger" iconOnly onClick={() => void handleDeleteChecklist(checklist)} disabled={readOnly || deleteChecklistMutation.isPending} title="Удалить чек-лист" aria-label="Удалить чек-лист"><Icon name="trash" size={16} /></Button>
                         </div>
                       </div>
                       <div className="grid" style={{ gap: 8 }}>
@@ -594,13 +599,13 @@ export function CardDetailsDrawer({
                                 type="checkbox"
                                 checked={item.isDone}
                                 onChange={() => void handleToggleChecklistItem(item)}
-                                disabled={updateChecklistItemMutation.isPending}
+                                disabled={readOnly || updateChecklistItemMutation.isPending}
                               />
                               <span style={{ textDecoration: item.isDone ? 'line-through' : undefined }}>{item.title}</span>
                             </label>
                             <div className="row-actions">
-                              <Button iconOnly onClick={() => void handleRenameChecklistItem(item)} disabled={updateChecklistItemMutation.isPending} title="Переименовать пункт" aria-label="Переименовать пункт"><Icon name="edit" size={16} /></Button>
-                              <Button variant="danger" iconOnly onClick={() => void handleDeleteChecklistItem(item)} disabled={deleteChecklistItemMutation.isPending} title="Удалить пункт" aria-label="Удалить пункт"><Icon name="trash" size={16} /></Button>
+                              <Button iconOnly onClick={() => void handleRenameChecklistItem(item)} disabled={readOnly || updateChecklistItemMutation.isPending} title="Переименовать пункт" aria-label="Переименовать пункт"><Icon name="edit" size={16} /></Button>
+                              <Button variant="danger" iconOnly onClick={() => void handleDeleteChecklistItem(item)} disabled={readOnly || deleteChecklistItemMutation.isPending} title="Удалить пункт" aria-label="Удалить пункт"><Icon name="trash" size={16} /></Button>
                             </div>
                           </div>
                         ))}
@@ -608,12 +613,13 @@ export function CardDetailsDrawer({
                           <TextField
                             label="Новый пункт"
                             value={newItemByChecklist[checklist.id] || ''}
+                            disabled={readOnly}
                             onChange={(event) => setNewItemByChecklist((current) => ({ ...current, [checklist.id]: event.target.value }))}
                             onKeyDown={(event) => handleChecklistItemKeyDown(checklist.id, event)}
                             placeholder="Сделать smoke"
                             title={checklistSubmitHint(checklistItemSubmitMode)}
                           />
-                          <Button type="button" variant="primary" iconOnly onClick={() => void handleCreateChecklistItem(checklist.id)} disabled={createChecklistItemMutation.isPending} title="Добавить пункт" aria-label="Добавить пункт"><Icon name="plus" size={16} /></Button>
+                          <Button type="button" variant="primary" iconOnly onClick={() => void handleCreateChecklistItem(checklist.id)} disabled={readOnly || createChecklistItemMutation.isPending} title="Добавить пункт" aria-label="Добавить пункт"><Icon name="plus" size={16} /></Button>
                         </div>
                       </div>
                     </div>
@@ -631,8 +637,8 @@ export function CardDetailsDrawer({
                 </div>
               </div>
               <form className="grid" style={{ gap: 10 }} onSubmit={handleCreateComment}>
-                <TextAreaField label="Новый комментарий" value={newCommentBody} onChange={(event) => setNewCommentBody(event.target.value)} placeholder="Оставить заметку по карточке…" />
-                <Button type="submit" variant="primary" disabled={createCommentMutation.isPending}><Icon name="plus" size={16} /> Добавить</Button>
+                <TextAreaField label="Новый комментарий" value={newCommentBody} disabled={readOnly} onChange={(event) => setNewCommentBody(event.target.value)} placeholder="Оставить заметку по карточке…" />
+                <Button type="submit" variant="primary" disabled={readOnly || createCommentMutation.isPending}><Icon name="plus" size={16} /> Добавить</Button>
               </form>
               {commentsQuery.isLoading ? <LoadingState label="Загружаем комментарии…" compact /> : null}
               {commentsQuery.isError ? <ErrorState title="Не удалось загрузить комментарии" compact /> : null}
@@ -646,8 +652,8 @@ export function CardDetailsDrawer({
                           <p className="muted">{formatDateTime(comment.createdAt)}{comment.editedAt ? ` · изменён ${formatDateTime(comment.editedAt)}` : ''}</p>
                         </div>
                         <div className="row-actions">
-                          <Button iconOnly onClick={() => void handleEditComment(comment)} disabled={updateCommentMutation.isPending} title="Редактировать комментарий" aria-label="Редактировать комментарий"><Icon name="edit" size={16} /></Button>
-                          <Button variant="danger" iconOnly onClick={() => void handleDeleteComment(comment)} disabled={deleteCommentMutation.isPending} title="Удалить комментарий" aria-label="Удалить комментарий"><Icon name="trash" size={16} /></Button>
+                          <Button iconOnly onClick={() => void handleEditComment(comment)} disabled={readOnly || updateCommentMutation.isPending} title="Редактировать комментарий" aria-label="Редактировать комментарий"><Icon name="edit" size={16} /></Button>
+                          <Button variant="danger" iconOnly onClick={() => void handleDeleteComment(comment)} disabled={readOnly || deleteCommentMutation.isPending} title="Удалить комментарий" aria-label="Удалить комментарий"><Icon name="trash" size={16} /></Button>
                         </div>
                       </div>
                       <p>{comment.body}</p>

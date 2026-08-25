@@ -9,7 +9,7 @@ use crate::{
         audit::repo::{record_audit, NewAuditLogEntry},
         common::{
             board_workspace_id, ensure_user_exists, require_workspace_access,
-            require_workspace_admin,
+            require_workspace_write,
         },
     },
 };
@@ -198,7 +198,7 @@ pub async fn upsert_board_appearance(
     custom_properties: Option<Value>,
 ) -> AppResult<BoardAppearanceResponse> {
     let workspace_id = board_workspace_id(pool, board_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let before = get_board_appearance(pool, actor_user_id, board_id).await?;
 
     let row = sqlx::query(

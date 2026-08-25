@@ -169,18 +169,18 @@ pub async fn require_workspace_access(
     Ok(role)
 }
 
-pub async fn require_workspace_admin(
+pub async fn require_workspace_write(
     pool: &PgPool,
     workspace_id: Uuid,
     user_id: Uuid,
 ) -> AppResult<String> {
     let role = require_workspace_access(pool, workspace_id, user_id)
         .await?
-        .ok_or_else(|| AppError::forbidden("Workspace admin access is required"))?;
+        .ok_or_else(|| AppError::forbidden("Workspace write access is required"))?;
 
     match role.as_str() {
-        "owner" | "admin" => Ok(role),
-        _ => Err(AppError::forbidden("Workspace admin access is required")),
+        "owner" | "member" => Ok(role),
+        _ => Err(AppError::forbidden("Workspace write access is required")),
     }
 }
 
@@ -198,6 +198,16 @@ pub async fn require_workspace_owner(
     } else {
         Err(AppError::forbidden("Workspace owner access is required"))
     }
+}
+
+pub async fn workspace_access_epoch(pool: &PgPool, workspace_id: Uuid) -> AppResult<i64> {
+    sqlx::query_scalar::<_, i64>(
+        "select access_epoch from workspaces where id = $1 and deleted_at is null",
+    )
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::not_found("Workspace not found"))
 }
 
 pub async fn board_workspace_id(pool: &PgPool, board_id: Uuid) -> AppResult<Uuid> {

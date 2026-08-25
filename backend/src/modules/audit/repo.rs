@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    modules::common::require_workspace_admin,
+    modules::common::require_workspace_owner,
 };
 
 use super::dto::{AuditLogEntryResponse, AuditLogListResponse, ListAuditLogQuery};
@@ -165,7 +165,7 @@ pub async fn list_workspace_audit_log(
     workspace_id: Uuid,
     query: ListAuditLogQuery,
 ) -> AppResult<AuditLogListResponse> {
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_owner(pool, workspace_id, actor_user_id).await?;
 
     let limit = query.limit.unwrap_or(100).clamp(1, 200);
     let (cursor_created_at, cursor_id) = decode_cursor(query.cursor.as_deref())?;

@@ -91,6 +91,7 @@ pub struct SyncScopeResponse {
 pub struct PushChangesRequest {
     pub replica_id: String,
     pub workspace_id: Option<String>,
+    pub access_epoch: Option<i64>,
     pub events: Vec<ClientChangeEvent>,
 }
 
@@ -155,6 +156,7 @@ pub struct TransportStatusResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CreateRoamingCapabilityRequest {
     pub board_id: Uuid,
+    pub author_public_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,6 +168,9 @@ pub struct RoamingCapabilityResponse {
     pub board_id: String,
     pub board_tag: String,
     pub board_key: String,
+    pub capability_epoch: i64,
+    pub can_write: bool,
+    pub writer_public_keys: Vec<String>,
     pub relays: Vec<String>,
     pub event_kind: u16,
     pub minimum_relay_acks: usize,

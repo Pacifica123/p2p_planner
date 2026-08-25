@@ -10,7 +10,7 @@ use crate::{
         common::{
             board_workspace_id, column_board_and_workspace_id, ensure_user_exists,
             next_position_for_column, normalize_limit, require_workspace_access,
-            require_workspace_admin, trim_to_option,
+            require_workspace_write, trim_to_option,
         },
     },
 };
@@ -234,7 +234,7 @@ pub async fn create_board(
     payload: CreateBoardRequest,
 ) -> AppResult<BoardResponse> {
     ensure_user_exists(pool, actor_user_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let board_id = Uuid::now_v7();
 
@@ -319,7 +319,7 @@ pub async fn update_board(
     payload: UpdateBoardRequest,
 ) -> AppResult<BoardResponse> {
     let workspace_id = board_workspace_id(pool, board_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let before = fetch_board(pool, board_id).await?;
     let name = payload.name.map(|v| v.trim().to_string());
@@ -408,7 +408,7 @@ pub async fn archive_board(
     board_id: Uuid,
 ) -> AppResult<BoardResponse> {
     let workspace_id = board_workspace_id(pool, board_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let before = fetch_board(pool, board_id).await?;
 
     let res = sqlx::query(
@@ -470,7 +470,7 @@ pub async fn delete_board(
     board_id: Uuid,
 ) -> AppResult<BoardResponse> {
     let workspace_id = board_workspace_id(pool, board_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let board = fetch_board(pool, board_id).await?;
 
     let mut tx = pool.begin().await?;
@@ -542,7 +542,7 @@ pub async fn create_column(
     payload: CreateColumnRequest,
 ) -> AppResult<ColumnResponse> {
     let workspace_id = board_workspace_id(pool, board_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let column_id = Uuid::now_v7();
     let position = match payload.position {
@@ -628,7 +628,7 @@ pub async fn update_column(
     payload: UpdateColumnRequest,
 ) -> AppResult<ColumnResponse> {
     let (_board_id, workspace_id) = column_board_and_workspace_id(pool, column_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let before = fetch_column(pool, column_id).await?;
     let name = payload.name.map(|v| v.trim().to_string());
@@ -767,7 +767,7 @@ pub async fn delete_column(
     column_id: Uuid,
 ) -> AppResult<ColumnResponse> {
     let (board_id, workspace_id) = column_board_and_workspace_id(pool, column_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let card_count = sqlx::query_scalar::<_, i64>(
         "select count(*)::bigint from cards where column_id = $1 and deleted_at is null",

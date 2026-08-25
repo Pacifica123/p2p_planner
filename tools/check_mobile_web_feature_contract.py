@@ -70,10 +70,35 @@ def main() -> None:
         "updateCard",
     )
     require(
+        "backend/migrations/0018_workspace_invitations_and_capability_epochs.sql",
+        "workspace_invitations",
+        "access_epoch",
+        "roaming_board_authorizations",
+        "capability_epoch",
+    )
+    require(
+        "backend/src/modules/workspaces/repo.rs",
+        "advance_workspace_access_epoch",
+        "create_invitation",
+        "accept_invitation",
+        "revoke_invitation",
+    )
+    require(
+        "frontend/src/features/workspaces/pages/WorkspaceAccessPage.tsx",
+        "Новая пригласительная ссылка",
+        "Срок жизни",
+        "Отозвать",
+    )
+    require(
         "docs/api/openapi.yaml",
         "/boards/{boardId}/productivity:",
         "checklistItemCount:",
         "- image",
+        "/workspaces/{workspaceId}/invitations:",
+        "/invitations/{token}/accept:",
+        "accessEpoch:",
+        "authorPublicKey:",
+        "writerPublicKeys:",
     )
     print("OK: mobile/web features, migration, roaming payload and OpenAPI are aligned")
 

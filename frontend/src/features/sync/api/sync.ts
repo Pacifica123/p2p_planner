@@ -102,7 +102,12 @@ export function getSyncStatus(replicaId?: string | null) {
   return apiRequest<SyncStatusResponse>(path);
 }
 
-export function pushChanges(input: { replicaId: string; workspaceId?: string | null; events: ClientChangeEvent[] }) {
+export function pushChanges(input: {
+  replicaId: string;
+  workspaceId?: string | null;
+  accessEpoch?: number | null;
+  events: ClientChangeEvent[];
+}) {
   return apiRequest<PushChangesResponse>('/sync/push', {
     method: 'POST',
     body: JSON.stringify(input),

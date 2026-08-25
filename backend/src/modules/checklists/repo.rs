@@ -8,7 +8,7 @@ use crate::{
         activity::repo::{record_activity, NewActivityEntry},
         audit::repo::{record_audit, NewAuditLogEntry},
         common::{
-            card_board_and_workspace_id, require_workspace_access, require_workspace_admin,
+            card_board_and_workspace_id, require_workspace_access, require_workspace_write,
             POSITION_GAP,
         },
     },
@@ -235,7 +235,7 @@ pub async fn create_checklist(
     payload: CreateChecklistRequest,
 ) -> AppResult<ChecklistResponse> {
     let (board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let checklist_id = Uuid::now_v7();
     let position = match payload.position {
@@ -279,7 +279,7 @@ pub async fn update_checklist(
     payload: UpdateChecklistRequest,
 ) -> AppResult<ChecklistResponse> {
     let (card_id, board_id, workspace_id) = checklist_context(pool, checklist_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let before = fetch_checklist(pool, checklist_id).await?;
 
     sqlx::query(
@@ -335,7 +335,7 @@ pub async fn delete_checklist(
     checklist_id: Uuid,
 ) -> AppResult<ChecklistResponse> {
     let (card_id, board_id, workspace_id) = checklist_context(pool, checklist_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let checklist = fetch_checklist(pool, checklist_id).await?;
 
     sqlx::query("update checklist_items set deleted_at = now() where checklist_id = $1 and deleted_at is null")
@@ -368,7 +368,7 @@ pub async fn create_item(
     payload: CreateChecklistItemRequest,
 ) -> AppResult<ChecklistItemResponse> {
     let (card_id, board_id, workspace_id) = checklist_context(pool, checklist_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let item_id = Uuid::now_v7();
     let position = match payload.position {
         Some(position) => position,
@@ -411,7 +411,7 @@ pub async fn update_item(
     payload: UpdateChecklistItemRequest,
 ) -> AppResult<ChecklistItemResponse> {
     let (_checklist_id, card_id, board_id, workspace_id) = item_context(pool, item_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let before = fetch_item(pool, item_id).await?;
 
     sqlx::query(
@@ -493,7 +493,7 @@ pub async fn delete_item(
     item_id: Uuid,
 ) -> AppResult<ChecklistItemResponse> {
     let (checklist_id, card_id, board_id, workspace_id) = item_context(pool, item_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let item = fetch_item(pool, item_id).await?;
 
     sqlx::query(

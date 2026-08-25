@@ -12,6 +12,7 @@ interface BoardColumnSectionProps {
   cardsWithoutDragged: Card[];
   isDropTarget: boolean;
   isMutating: boolean;
+  readOnly?: boolean;
   onRename: (column: BoardColumn) => void;
   onDelete: (column: BoardColumn) => void;
   onColumnDragOver: (columnId: string, itemCount: number, event: DragEvent<HTMLElement>) => void;
@@ -26,6 +27,7 @@ export function BoardColumnSection({
   cardsWithoutDragged,
   isDropTarget,
   isMutating,
+  readOnly = false,
   onRename,
   onDelete,
   onColumnDragOver,
@@ -36,27 +38,27 @@ export function BoardColumnSection({
     <section
       className={`column-card ${isDropTarget ? 'column-card--drop-target' : ''}`}
       data-testid="board-column"
-      onDragOver={(event) => onColumnDragOver(column.id, cardsWithoutDragged.length, event)}
-      onDrop={onDrop}
+      onDragOver={readOnly ? undefined : (event) => onColumnDragOver(column.id, cardsWithoutDragged.length, event)}
+      onDrop={readOnly ? undefined : onDrop}
     >
       <div className="column-card__header">
         <div>
           <h3>{column.name}</h3>
           <p className="muted">{formatCountRu(cards.length, 'карточка', 'карточки', 'карточек')}</p>
         </div>
-        <div className="row-actions">
+        {!readOnly ? <div className="row-actions">
           <Button iconOnly onClick={() => onRename(column)} disabled={isMutating} title="Переименовать колонку" aria-label="Переименовать колонку">
             <Icon name="edit" size={16} />
           </Button>
           <Button iconOnly variant="danger" onClick={() => onDelete(column)} disabled={isMutating} title="Удалить колонку" aria-label="Удалить колонку">
             <Icon name="trash" size={16} />
           </Button>
-        </div>
+        </div> : null}
       </div>
 
-      <div className="column-card__composer">
+      {!readOnly ? <div className="column-card__composer">
         <CreateCardInlineForm columnId={column.id} boardId={boardId} />
-      </div>
+      </div> : null}
       {cardsContent}
     </section>
   );

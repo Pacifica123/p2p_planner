@@ -13,10 +13,64 @@ export interface Workspace {
   visibility: 'private' | 'shared';
   ownerUserId: string;
   memberCount?: number;
+  currentUserRole?: WorkspaceRole | null;
+  accessEpoch?: number;
   isArchived: boolean;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
+}
+
+export type WorkspaceRole = 'owner' | 'member' | 'guest';
+
+export interface WorkspaceMember {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  displayName: string;
+  email: string;
+  role: WorkspaceRole;
+  status: 'active' | 'removed';
+  invitedByUserId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  removedAt?: string | null;
+}
+
+export interface WorkspaceMembersListResponse {
+  items: WorkspaceMember[];
+  pageInfo: PageInfo;
+}
+
+export interface WorkspaceInvitation {
+  id: string;
+  workspaceId: string;
+  role: Exclude<WorkspaceRole, 'owner'>;
+  status: 'active' | 'accepted' | 'revoked' | 'expired';
+  createdByUserId: string;
+  expiresAt: string;
+  createdAt: string;
+  revokedAt?: string | null;
+  acceptedAt?: string | null;
+  acceptedByUserId?: string | null;
+}
+
+export interface WorkspaceInvitationsListResponse {
+  items: WorkspaceInvitation[];
+  pageInfo: PageInfo;
+}
+
+export interface CreatedWorkspaceInvitationResponse {
+  invitation: WorkspaceInvitation;
+  token: string;
+}
+
+export interface WorkspaceInvitationPreview {
+  workspaceId: string;
+  workspaceName: string;
+  role: Exclude<WorkspaceRole, 'owner'>;
+  status: WorkspaceInvitation['status'];
+  expiresAt: string;
 }
 
 export interface WorkspaceListResponse {

@@ -736,6 +736,7 @@ components:
       - name
       - visibility
       - ownerUserId
+      - accessEpoch
       - createdAt
       - updatedAt
       - isArchived
@@ -764,6 +765,19 @@ components:
         memberCount:
           type: integer
           minimum: 0
+        currentUserRole:
+          type:
+          - string
+          - 'null'
+          enum:
+          - owner
+          - member
+          - guest
+          - null
+        accessEpoch:
+          type: integer
+          format: int64
+          minimum: 1
         isArchived:
           type: boolean
         createdAt:
@@ -783,6 +797,8 @@ components:
       - id
       - workspaceId
       - userId
+      - displayName
+      - email
       - role
       - status
       - createdAt
@@ -797,12 +813,17 @@ components:
         userId:
           type: string
           format: uuid
+        displayName:
+          type: string
+        email:
+          type: string
+          format: email
         role:
           type: string
           enum:
           - owner
-          - admin
           - member
+          - guest
         status:
           type: string
           enum:
@@ -829,15 +850,6 @@ components:
       - $ref: '#/components/schemas/Workspace'
       - type: object
         properties:
-          currentUserRole:
-            type:
-            - string
-            - 'null'
-            enum:
-            - owner
-            - admin
-            - member
-            - null
           members:
             type: array
             items:
@@ -925,8 +937,8 @@ components:
         role:
           type: string
           enum:
-          - admin
           - member
+          - guest
     UpdateWorkspaceMemberRequest:
       type: object
       additionalProperties: false
@@ -936,9 +948,100 @@ components:
           - string
           - 'null'
           enum:
-          - admin
           - member
+          - guest
           - null
+    WorkspaceInvitation:
+      type: object
+      required:
+      - id
+      - workspaceId
+      - role
+      - status
+      - createdByUserId
+      - expiresAt
+      - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [member, guest]
+        status:
+          type: string
+          enum: [active, accepted, revoked, expired]
+        createdByUserId:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: [string, 'null']
+          format: date-time
+        acceptedAt:
+          type: [string, 'null']
+          format: date-time
+        acceptedByUserId:
+          type: [string, 'null']
+          format: uuid
+    WorkspaceInvitationsListResponse:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceInvitation'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+    CreateWorkspaceInvitationRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [member, guest]
+        expiresInHours:
+          type: integer
+          minimum: 1
+          maximum: 720
+          default: 24
+    CreatedWorkspaceInvitationResponse:
+      type: object
+      required: [invitation, token]
+      properties:
+        invitation:
+          $ref: '#/components/schemas/WorkspaceInvitation'
+        token:
+          type: string
+          minLength: 32
+          writeOnly: true
+    WorkspaceInvitationPreview:
+      type: object
+      required: [workspaceId, workspaceName, role, status, expiresAt]
+      properties:
+        workspaceId:
+          type: string
+          format: uuid
+        workspaceName:
+          type: string
+        role:
+          type: string
+          enum: [member, guest]
+        status:
+          type: string
+          enum: [active, accepted, revoked, expired]
+        expiresAt:
+          type: string
+          format: date-time
     Board:
       type: object
       required:
@@ -1910,6 +2013,13 @@ components:
           - string
           - 'null'
           format: uuid
+        accessEpoch:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 1
+          description: Required for workspace-scoped writes; stale generations are rejected.
         events:
           type: array
           minItems: 1
@@ -1998,6 +2108,12 @@ components:
         boardId:
           type: string
           format: uuid
+        authorPublicKey:
+          type:
+          - string
+          - 'null'
+          pattern: '^[0-9a-fA-F]{64}$'
+          description: Device Nostr public key bound to the authenticated workspace role.
     RoamingCapabilityResponse:
       type: object
       required:
@@ -2007,6 +2123,9 @@ components:
       - boardId
       - boardTag
       - boardKey
+      - capabilityEpoch
+      - canWrite
+      - writerPublicKeys
       - relays
       - eventKind
       - minimumRelayAcks
@@ -2031,6 +2150,19 @@ components:
         boardKey:
           type: string
           description: Per-board secret capability. Clients must store it as sensitive data.
+        capabilityEpoch:
+          type: integer
+          format: int64
+          minimum: 1
+        canWrite:
+          type: boolean
+          description: True only for active owner/member access.
+        writerPublicKeys:
+          type: array
+          description: Active Nostr authors whose events may be applied in this epoch.
+          items:
+            type: string
+            pattern: '^[0-9a-f]{64}$'
         relays:
           type: array
           minItems: 1
@@ -4032,8 +4164,12 @@ paths:
       - $ref: '#/components/parameters/WorkspaceId'
       - $ref: '#/components/parameters/MemberId'
       responses:
-        '204':
-          description: Member removed
+        '200':
+          description: Removed member snapshot and advanced access epoch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceMember'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4043,6 +4179,127 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
       x-v1Status: real_v1
+  /workspaces/{workspaceId}/invitations:
+    get:
+      tags: [workspaces]
+      summary: List workspace invitations
+      description: Owner-only. Raw invitation tokens are never returned by this list.
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Invitation list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceInvitationsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [workspaces]
+      summary: Create a one-time workspace invitation
+      description: Owner-only. The raw token is returned once; only its hash is stored.
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceInvitationRequest'
+      responses:
+        '201':
+          description: Invitation and one-time token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedWorkspaceInvitationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/invitations/{invitationId}:
+    delete:
+      tags: [workspaces]
+      summary: Revoke an active invitation
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - name: invitationId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Revoked invitation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceInvitation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /invitations/{token}:
+    get:
+      tags: [workspaces]
+      summary: Preview a workspace invitation
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 32
+      responses:
+        '200':
+          description: Invitation preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceInvitationPreview'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /invitations/{token}/accept:
+    post:
+      tags: [workspaces]
+      summary: Accept a one-time workspace invitation
+      description: Accepting advances the workspace access epoch and rotates board capabilities.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 32
+      responses:
+        '200':
+          description: Joined workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /workspaces/{workspaceId}/boards:
     get:
       tags:

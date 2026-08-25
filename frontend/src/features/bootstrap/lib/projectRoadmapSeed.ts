@@ -63,17 +63,19 @@ const V1_COMPLETED_TITLES = [
 ] as const;
 
 export const ROADMAP_CARDS: Record<string, readonly RoadmapCardSeed[]> = {
-  'Готово': V1_COMPLETED_TITLES.map((title) => ({
-    title,
-    priority: null,
-    description: `Этап «${title}» завершён в v1 и служит опорой для следующей продуктовой сессии.`,
-  })),
-  'Сейчас': [
+  'Готово': [
+    ...V1_COMPLETED_TITLES.map((title) => ({
+      title,
+      priority: null,
+      description: `Этап «${title}» завершён в v1 и служит опорой для следующей продуктовой сессии.`,
+    })),
     {
       title: 'v2: Пригласительные ссылки и права доступа',
-      priority: 'urgent',
-      description: 'Спроектировать owner/member/guest роли, срок жизни приглашения, отзыв доступа и ротацию capability после изменения состава пространства.',
+      priority: null,
+      description: 'Готово: owner/member/guest, одноразовые ссылки со сроком жизни, отзыв приглашений и участников, серверная проверка роли и ротация access epoch/capability после каждого изменения состава пространства.',
     },
+  ],
+  'Сейчас': [
     {
       title: 'v2: Rich text в карточках',
       priority: 'high',

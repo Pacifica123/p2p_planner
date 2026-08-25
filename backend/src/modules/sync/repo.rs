@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    modules::common::{require_workspace_access, AuthContext},
+    modules::common::{require_workspace_access, require_workspace_write, AuthContext},
 };
 
 use super::dto::{
@@ -446,7 +446,7 @@ pub async fn push_changes(
 ) -> AppResult<PushChangesResponse> {
     let _replica = fetch_replica_for_user(pool, replica_id, &auth).await?;
     if let Some(workspace_id) = workspace_id {
-        require_workspace_access(pool, workspace_id, auth.user_id).await?;
+        require_workspace_write(pool, workspace_id, auth.user_id).await?;
     }
 
     sqlx::query("update replicas set last_seen_at = now() where id = $1")

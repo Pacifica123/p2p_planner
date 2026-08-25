@@ -138,8 +138,13 @@ pub async fn run(settings: std::sync::Arc<Settings>, db: PgPool) -> anyhow::Resu
     .await?;
 
     enqueue_backfill(&db).await?;
+    let node_author_public_key = transport.author_public_key();
+    ensure_node_authorizations(&db, &node_author_public_key).await?;
     let poll = Duration::from_millis(settings.transports.worker_poll_interval_ms.max(1_000));
     loop {
+        if let Err(error) = ensure_node_authorizations(&db, &node_author_public_key).await {
+            tracing::warn!(%error, "could not refresh local node roaming authorization");
+        }
         tokio::join!(
             publish_pending(&db, &transport, settings.transports.batch_size),
             publish_pending_board_settings(&db, &transport, settings.transports.batch_size),
@@ -147,6 +152,32 @@ pub async fn run(settings: std::sync::Arc<Settings>, db: PgPool) -> anyhow::Resu
         );
         tokio::time::sleep(poll).await;
     }
+}
+
+async fn ensure_node_authorizations(pool: &PgPool, author_public_key: &str) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        insert into roaming_board_authorizations (
+          id, workspace_id, board_id, user_id, device_id,
+          author_public_key, role, capability_epoch
+        )
+        select
+          gen_random_uuid(), w.id, b.id, w.owner_user_id, null,
+          $1, 'owner', w.access_epoch
+        from workspaces w
+        join boards b on b.workspace_id = w.id and b.deleted_at is null
+        where w.deleted_at is null
+        on conflict (board_id, author_public_key) where revoked_at is null
+        do update set
+          user_id = excluded.user_id,
+          role = 'owner',
+          capability_epoch = excluded.capability_epoch
+        "#,
+    )
+    .bind(author_public_key)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 async fn enqueue_backfill(pool: &PgPool) -> anyhow::Result<()> {
@@ -190,6 +221,7 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
           ae.field_mask as source_field_mask,
           n.replica_id as node_replica_id,
           rbc.board_key_base64,
+          coalesce(rbc.capability_epoch, w.access_epoch) as capability_epoch,
           case
             when c.deleted_at is not null or t.entity_id is not null then 'card.delete'
             else 'card.put'
@@ -275,6 +307,7 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
           ), '[]'::jsonb) as checklists
         from roaming_board_outbox o
         join cards c on c.id = o.card_id
+        join workspaces w on w.id = o.workspace_id and w.deleted_at is null
         left join activity_entries ae on ae.id = o.source_activity_id
         cross join local_node_identity n
         left join roaming_board_capabilities rbc on rbc.board_id = o.board_id
@@ -379,6 +412,7 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             event_id: outbox_id.to_string(),
             workspace_id: row.try_get::<Uuid, _>("workspace_id").unwrap().to_string(),
             board_id: row.try_get::<Uuid, _>("board_id").unwrap().to_string(),
+            capability_epoch: row.try_get("capability_epoch").unwrap_or(1),
             replica_id: row
                 .try_get::<Uuid, _>("node_replica_id")
                 .unwrap()
@@ -445,6 +479,7 @@ async fn publish_pending_board_settings(pool: &PgPool, transport: &NostrTranspor
           o.board_id,
           n.replica_id as node_replica_id,
           rbc.board_key_base64,
+          coalesce(rbc.capability_epoch, w.access_epoch) as capability_epoch,
           to_char(o.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as occurred_at,
           (
             floor(extract(epoch from o.created_at) * 1000)::bigint * 1000
@@ -469,6 +504,7 @@ async fn publish_pending_board_settings(pool: &PgPool, transport: &NostrTranspor
           ) as appearance
         from roaming_board_settings_outbox o
         join boards b on b.id = o.board_id and b.deleted_at is null
+        join workspaces w on w.id = b.workspace_id and w.deleted_at is null
         left join board_appearance_settings a on a.board_id = o.board_id
         cross join local_node_identity n
         left join roaming_board_capabilities rbc on rbc.board_id = o.board_id
@@ -507,6 +543,7 @@ async fn publish_pending_board_settings(pool: &PgPool, transport: &NostrTranspor
                 .unwrap_or_default()
                 .to_string(),
             board_id: board_id.to_string(),
+            capability_epoch: row.try_get("capability_epoch").unwrap_or(1),
             replica_id: row
                 .try_get::<Uuid, _>("node_replica_id")
                 .unwrap_or_default()
@@ -929,6 +966,7 @@ async fn apply_remote_checklist_delta(
     card_id: Uuid,
     replica_id: Uuid,
     delta: &Value,
+    actor_user_id: Uuid,
 ) -> anyhow::Result<()> {
     let event = &recovered.event;
     let delta_card_id = Uuid::parse_str(
@@ -953,18 +991,14 @@ async fn apply_remote_checklist_delta(
         anyhow::bail!("checklist delta card is missing");
     }
 
-    let owner_user_id =
-        sqlx::query_scalar::<_, Uuid>("select owner_user_id from workspaces where id = $1")
-            .bind(workspace_id)
-            .fetch_one(pool)
-            .await?;
     let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         insert into roaming_board_events (
           event_id, nostr_event_id, author_public_key, workspace_id, board_id,
-          replica_id, replica_seq, logical_clock, entity_id, operation, status
-        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied')
+          replica_id, replica_seq, logical_clock, entity_id, operation, status,
+          capability_epoch, actor_user_id
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied',$11,$12)
         "#,
     )
     .bind(event_id)
@@ -977,6 +1011,8 @@ async fn apply_remote_checklist_delta(
     .bind(event.logical_clock)
     .bind(card_id)
     .bind(&event.operation)
+    .bind(event.capability_epoch)
+    .bind(actor_user_id)
     .execute(&mut *tx)
     .await?;
 
@@ -1401,7 +1437,7 @@ async fn apply_remote_checklist_delta(
             workspace_id,
             board_id,
             card_id,
-            owner_user_id,
+            actor_user_id,
             activity_kind,
             activity_entity_type,
             activity_entity_id,
@@ -1426,6 +1462,7 @@ async fn apply_remote_card_delete(
     board_id: Uuid,
     entity_id: Uuid,
     replica_id: Uuid,
+    actor_user_id: Uuid,
 ) -> anyhow::Result<()> {
     let event = &recovered.event;
     let existing_board_id =
@@ -1442,19 +1479,14 @@ async fn apply_remote_card_delete(
         .get("deletedAt")
         .and_then(Value::as_str)
         .unwrap_or(event.occurred_at.as_str());
-    let owner_user_id =
-        sqlx::query_scalar::<_, Uuid>("select owner_user_id from workspaces where id = $1")
-            .bind(workspace_id)
-            .fetch_one(pool)
-            .await?;
-
     let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         insert into roaming_board_events (
           event_id, nostr_event_id, author_public_key, workspace_id, board_id,
-          replica_id, replica_seq, logical_clock, entity_id, operation, status
-        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied')
+          replica_id, replica_seq, logical_clock, entity_id, operation, status,
+          capability_epoch, actor_user_id
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied',$11,$12)
         "#,
     )
     .bind(event_id)
@@ -1467,6 +1499,8 @@ async fn apply_remote_card_delete(
     .bind(event.logical_clock)
     .bind(entity_id)
     .bind(&event.operation)
+    .bind(event.capability_epoch)
+    .bind(actor_user_id)
     .execute(&mut *tx)
     .await?;
 
@@ -1555,7 +1589,7 @@ async fn apply_remote_card_delete(
     .bind(workspace_id)
     .bind(board_id)
     .bind(existing_board_id.map(|_| entity_id))
-    .bind(owner_user_id)
+    .bind(actor_user_id)
     .bind(entity_id)
     .bind(json!({
         "source": "roaming",
@@ -1735,14 +1769,10 @@ async fn apply_remote_board_appearance(
     event_id: Uuid,
     board_id: Uuid,
     replica_id: Uuid,
+    actor_user_id: Uuid,
 ) -> anyhow::Result<()> {
     let event = &recovered.event;
     let appearance = parse_roaming_board_appearance(event)?;
-    let owner_user_id =
-        sqlx::query_scalar::<_, Uuid>("select owner_user_id from workspaces where id = $1")
-            .bind(workspace_id)
-            .fetch_one(pool)
-            .await?;
     let mut tx = pool.begin().await?;
     let before = appearance_projection(&mut tx, board_id).await?;
 
@@ -1750,8 +1780,9 @@ async fn apply_remote_board_appearance(
         r#"
         insert into roaming_board_events (
           event_id, nostr_event_id, author_public_key, workspace_id, board_id,
-          replica_id, replica_seq, logical_clock, entity_id, operation, status
-        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied')
+          replica_id, replica_seq, logical_clock, entity_id, operation, status,
+          capability_epoch, actor_user_id
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied',$11,$12)
         "#,
     )
     .bind(event_id)
@@ -1764,6 +1795,8 @@ async fn apply_remote_board_appearance(
     .bind(event.logical_clock)
     .bind(board_id)
     .bind(&event.operation)
+    .bind(event.capability_epoch)
+    .bind(actor_user_id)
     .execute(&mut *tx)
     .await?;
 
@@ -1836,7 +1869,7 @@ async fn apply_remote_board_appearance(
             )
             .bind(workspace_id)
             .bind(board_id)
-            .bind(owner_user_id)
+            .bind(actor_user_id)
             .bind(json!({
                 "source": "roaming",
                 "eventId": event.event_id,
@@ -1853,6 +1886,114 @@ async fn apply_remote_board_appearance(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    Ok(())
+}
+
+async fn roaming_event_actor(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    board_id: Uuid,
+    recovered: &RecoveredRoamingEvent,
+) -> anyhow::Result<Uuid> {
+    let event = &recovered.event;
+    let current_epoch = sqlx::query_scalar::<_, i64>(
+        r#"
+        select coalesce(rbc.capability_epoch, w.access_epoch)
+        from boards b
+        join workspaces w on w.id = b.workspace_id and w.deleted_at is null
+        left join roaming_board_capabilities rbc on rbc.board_id = b.id
+        where b.id = $1 and b.workspace_id = $2 and b.deleted_at is null
+        "#,
+    )
+    .bind(board_id)
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("roaming board is not active"))?;
+    if event.capability_epoch != current_epoch {
+        anyhow::bail!("stale capability epoch");
+    }
+
+    let actor = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        select a.user_id
+        from roaming_board_authorizations a
+        join workspaces w on w.id = a.workspace_id and w.deleted_at is null
+        left join workspace_members wm
+          on wm.workspace_id = a.workspace_id
+         and wm.user_id = a.user_id
+         and wm.deactivated_at is null
+         and wm.deleted_at is null
+        where a.workspace_id = $1
+          and a.board_id = $2
+          and a.author_public_key = $3
+          and a.capability_epoch = $4
+          and a.revoked_at is null
+          and a.role in ('owner', 'member')
+          and (w.owner_user_id = a.user_id or wm.role = 'member')
+        limit 1
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(board_id)
+    .bind(&recovered.author_public_key)
+    .bind(current_epoch)
+    .fetch_optional(pool)
+    .await?;
+    if let Some(actor) = actor {
+        return Ok(actor);
+    }
+
+    // Compatibility for capabilities issued before authorization binding
+    // existed. Epoch 1 keys were only provisioned to legacy owner/admin
+    // clients; every membership mutation moves the workspace past this path.
+    if current_epoch == 1 {
+        return sqlx::query_scalar::<_, Uuid>(
+            "select owner_user_id from workspaces where id = $1 and deleted_at is null",
+        )
+        .bind(workspace_id)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into);
+    }
+
+    anyhow::bail!("roaming author is not an active writer")
+}
+
+async fn record_rejected_roaming_event(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    board_id: Uuid,
+    entity_id: Uuid,
+    replica_id: Uuid,
+    recovered: &RecoveredRoamingEvent,
+    error: &str,
+) -> anyhow::Result<()> {
+    let event = &recovered.event;
+    sqlx::query(
+        r#"
+        insert into roaming_board_events (
+          event_id, nostr_event_id, author_public_key, workspace_id, board_id,
+          replica_id, replica_seq, logical_clock, entity_id, operation,
+          status, error, capability_epoch
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'rejected',$11,$12)
+        on conflict (event_id) do nothing
+        "#,
+    )
+    .bind(Uuid::parse_str(&event.event_id)?)
+    .bind(&recovered.nostr_event_id)
+    .bind(&recovered.author_public_key)
+    .bind(workspace_id)
+    .bind(board_id)
+    .bind(replica_id)
+    .bind(event.replica_seq)
+    .bind(event.logical_clock)
+    .bind(entity_id)
+    .bind(&event.operation)
+    .bind(error)
+    .bind(event.capability_epoch.max(1))
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -1891,6 +2032,22 @@ async fn apply_remote_event(
     if !board_matches {
         anyhow::bail!("board does not belong to roaming workspace");
     }
+    let actor_user_id = match roaming_event_actor(pool, workspace_id, board_id, recovered).await {
+        Ok(actor_user_id) => actor_user_id,
+        Err(error) => {
+            record_rejected_roaming_event(
+                pool,
+                workspace_id,
+                board_id,
+                entity_id,
+                replica_id,
+                recovered,
+                &error.to_string(),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
 
     if event.operation == "board.appearance.put" {
         if event.entity_type != "board" || entity_id != board_id {
@@ -1903,6 +2060,7 @@ async fn apply_remote_event(
             event_id,
             board_id,
             replica_id,
+            actor_user_id,
         )
         .await;
     }
@@ -1922,6 +2080,7 @@ async fn apply_remote_event(
             board_id,
             entity_id,
             replica_id,
+            actor_user_id,
         )
         .await;
     }
@@ -1937,8 +2096,9 @@ async fn apply_remote_event(
             r#"
             insert into roaming_board_events (
               event_id, nostr_event_id, author_public_key, workspace_id, board_id,
-              replica_id, replica_seq, logical_clock, entity_id, operation, status, error
-            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'rejected','tombstone_wins')
+              replica_id, replica_seq, logical_clock, entity_id, operation, status, error,
+              capability_epoch, actor_user_id
+            ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'rejected','tombstone_wins',$11,$12)
             "#,
         )
         .bind(event_id)
@@ -1951,6 +2111,8 @@ async fn apply_remote_event(
         .bind(event.logical_clock)
         .bind(entity_id)
         .bind(&event.operation)
+        .bind(event.capability_epoch)
+        .bind(actor_user_id)
         .execute(pool)
         .await?;
         return Ok(());
@@ -1966,6 +2128,7 @@ async fn apply_remote_event(
             entity_id,
             replica_id,
             delta,
+            actor_user_id,
         )
         .await;
     }
@@ -2004,8 +2167,9 @@ async fn apply_remote_event(
         r#"
         insert into roaming_board_events (
           event_id, nostr_event_id, author_public_key, workspace_id, board_id,
-          replica_id, replica_seq, logical_clock, entity_id, operation, status
-        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied')
+          replica_id, replica_seq, logical_clock, entity_id, operation, status,
+          capability_epoch, actor_user_id
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'applied',$11,$12)
         "#,
     )
     .bind(event_id)
@@ -2018,6 +2182,8 @@ async fn apply_remote_event(
     .bind(event.logical_clock)
     .bind(entity_id)
     .bind(&event.operation)
+    .bind(event.capability_epoch)
+    .bind(actor_user_id)
     .execute(&mut *tx)
     .await?;
 
@@ -2051,11 +2217,6 @@ async fn apply_remote_event(
         }
     }
 
-    let owner_user_id =
-        sqlx::query_scalar::<_, Uuid>("select owner_user_id from workspaces where id = $1")
-            .bind(workspace_id)
-            .fetch_one(&mut *tx)
-            .await?;
     let existing_card_board_id =
         sqlx::query_scalar::<_, Uuid>("select board_id from cards where id = $1")
             .bind(entity_id)
@@ -2097,7 +2258,7 @@ async fn apply_remote_event(
         .bind(card_position)
         .bind(string_field(card, "startAt"))
         .bind(string_field(card, "dueAt"))
-        .bind(owner_user_id)
+        .bind(actor_user_id)
         .bind(
             card.get("isArchived")
                 .and_then(Value::as_bool)
@@ -2217,7 +2378,7 @@ async fn apply_remote_event(
         .bind(workspace_id)
         .bind(board_id)
         .bind(entity_id)
-        .bind(owner_user_id)
+        .bind(actor_user_id)
         .bind(activity_kind)
         .bind(&activity_fields)
         .bind(json!({

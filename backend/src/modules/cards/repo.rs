@@ -10,7 +10,7 @@ use crate::{
         common::{
             board_workspace_id, card_board_and_workspace_id, column_board_and_workspace_id,
             ensure_user_exists, next_position_for_card, normalize_limit, require_workspace_access,
-            require_workspace_admin, trim_to_option,
+            require_workspace_write, trim_to_option,
         },
     },
 };
@@ -259,7 +259,7 @@ pub async fn create_card(
 ) -> AppResult<CardResponse> {
     ensure_user_exists(pool, actor_user_id).await?;
     let workspace_id = board_workspace_id(pool, board_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let card_id = Uuid::now_v7();
     let position = match payload.position {
@@ -426,7 +426,7 @@ pub async fn update_card(
     payload: UpdateCardRequest,
 ) -> AppResult<CardResponse> {
     let (_board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let before = fetch_card(pool, card_id).await?;
     let title = payload.title.map(|v| v.trim().to_string());
@@ -596,7 +596,7 @@ pub async fn delete_card(
     card_id: Uuid,
 ) -> AppResult<CardResponse> {
     let (_board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let card = fetch_card(pool, card_id).await?;
 
     let mut tx = pool.begin().await?;
@@ -688,7 +688,7 @@ pub async fn move_card(
     payload: MoveCardRequest,
 ) -> AppResult<CardResponse> {
     let (board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let before = fetch_card(pool, card_id).await?;
     let position = match payload.position {
@@ -833,7 +833,7 @@ pub async fn reorder_column_cards(
     payload: ReorderColumnCardsRequest,
 ) -> AppResult<CardListResponse> {
     let (board_id, workspace_id) = column_board_and_workspace_id(pool, column_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let card_ids = payload
         .items
@@ -953,7 +953,7 @@ pub async fn archive_card(
     card_id: Uuid,
 ) -> AppResult<CardResponse> {
     let (_board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     sqlx::query("update cards set archived_at = now(), updated_at = now() where id = $1 and deleted_at is null")
         .bind(card_id)
@@ -1003,7 +1003,7 @@ pub async fn unarchive_card(
     card_id: Uuid,
 ) -> AppResult<CardResponse> {
     let (_board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     sqlx::query("update cards set archived_at = null, updated_at = now() where id = $1 and deleted_at is null")
         .bind(card_id)

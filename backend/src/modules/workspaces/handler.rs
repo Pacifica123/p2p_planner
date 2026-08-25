@@ -12,8 +12,8 @@ use crate::{
 
 use super::{
     dto::{
-        AddWorkspaceMemberRequest, CreateWorkspaceRequest, ListWorkspacesQuery,
-        UpdateWorkspaceMemberRequest, UpdateWorkspaceRequest,
+        AddWorkspaceMemberRequest, CreateWorkspaceInvitationRequest, CreateWorkspaceRequest,
+        ListWorkspacesQuery, UpdateWorkspaceMemberRequest, UpdateWorkspaceRequest,
     },
     service,
 };
@@ -119,4 +119,61 @@ pub async fn remove_member(
     let actor = actor_user_id(&state, &headers).await?;
     let member = service::remove_member(&state, actor, workspace_id, member_id).await?;
     Ok(ok(member))
+}
+
+pub async fn create_invitation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<Uuid>,
+    Json(payload): Json<CreateWorkspaceInvitationRequest>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let invitation = service::create_invitation(&state, actor, workspace_id, payload).await?;
+    Ok((StatusCode::CREATED, ok(invitation)))
+}
+
+pub async fn list_invitations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<Uuid>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let invitations = service::list_invitations(&state, actor, workspace_id).await?;
+    Ok(ok(invitations))
+}
+
+pub async fn preview_invitation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> AppResult<impl IntoResponse> {
+    let _actor = actor_user_id(&state, &headers).await?;
+    let invitation = service::preview_invitation(&state, &token).await?;
+    Ok(ok(invitation))
+}
+
+pub async fn accept_invitation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let workspace = service::accept_invitation(&state, actor, &token).await?;
+    Ok(ok(workspace))
+}
+
+pub async fn revoke_invitation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, invitation_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<impl IntoResponse> {
+    let actor = actor_user_id(&state, &headers).await?;
+    let invitation = service::revoke_invitation(
+        &state,
+        actor,
+        workspace_id,
+        invitation_id,
+    )
+    .await?;
+    Ok(ok(invitation))
 }

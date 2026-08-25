@@ -43,4 +43,21 @@ pub fn router() -> Router<AppState> {
             "/workspaces/{workspaceId}/members/{memberId}",
             delete(handler::remove_member),
         )
+        .route(
+            "/workspaces/{workspaceId}/invitations",
+            get(handler::list_invitations),
+        )
+        .route(
+            "/workspaces/{workspaceId}/invitations",
+            post(handler::create_invitation),
+        )
+        .route(
+            "/workspaces/{workspaceId}/invitations/{invitationId}",
+            delete(handler::revoke_invitation),
+        )
+        .route("/invitations/{token}", get(handler::preview_invitation))
+        .route(
+            "/invitations/{token}/accept",
+            post(handler::accept_invitation),
+        )
 }

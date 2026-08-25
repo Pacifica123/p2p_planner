@@ -90,8 +90,8 @@ describe('project roadmap seed v2', () => {
     }));
     expect(createCard).toHaveBeenCalledWith('board-roadmap', expect.objectContaining({
       title: 'v2: Пригласительные ссылки и права доступа',
-      columnId: 'column-1',
-      priority: 'urgent',
+      columnId: 'column-0',
+      priority: null,
     }));
     expect(createCard).toHaveBeenCalledWith('board-roadmap', expect.objectContaining({
       title: 'v2: Интеграция с Obsidian',

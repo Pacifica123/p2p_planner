@@ -12,7 +12,7 @@ use crate::{
         cards::{dto::CardResponse, repo::fetch_card},
         common::{
             board_workspace_id, card_board_and_workspace_id, require_workspace_access,
-            require_workspace_admin, trim_to_option,
+            require_workspace_write, trim_to_option,
         },
     },
 };
@@ -115,7 +115,7 @@ pub async fn create_label(
     payload: CreateLabelRequest,
 ) -> AppResult<LabelResponse> {
     let workspace_id = board_workspace_id(pool, board_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let label_id = Uuid::now_v7();
     let label_name = payload.name.trim().to_string();
@@ -180,7 +180,7 @@ pub async fn update_label(
     payload: UpdateLabelRequest,
 ) -> AppResult<LabelResponse> {
     let (board_id, workspace_id) = label_board_and_workspace_id(pool, label_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let before = fetch_label(pool, label_id).await?;
     let description_changed = payload.description.is_some();
@@ -265,7 +265,7 @@ pub async fn delete_label(
     label_id: Uuid,
 ) -> AppResult<LabelResponse> {
     let (board_id, workspace_id) = label_board_and_workspace_id(pool, label_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
     let label = fetch_label(pool, label_id).await?;
 
     let mut tx = pool.begin().await?;
@@ -324,7 +324,7 @@ pub async fn replace_card_labels(
     payload: ReplaceCardLabelsRequest,
 ) -> AppResult<CardResponse> {
     let (board_id, workspace_id) = card_board_and_workspace_id(pool, card_id).await?;
-    require_workspace_admin(pool, workspace_id, actor_user_id).await?;
+    require_workspace_write(pool, workspace_id, actor_user_id).await?;
 
     let before_label_ids = sqlx::query_scalar::<_, Vec<Uuid>>(
         r#"

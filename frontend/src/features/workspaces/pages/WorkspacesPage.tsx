@@ -12,6 +12,12 @@ import { formatDateTime } from '@/shared/lib/date';
 import { ApiError } from '@/shared/api/errors';
 import { Icon } from '@/shared/ui/Icon';
 
+const workspaceRoleLabel = {
+  owner: 'владелец',
+  member: 'участник',
+  guest: 'гость',
+} as const;
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
@@ -118,6 +124,9 @@ export function WorkspacesPage() {
                   </div>
                   <div className="row-actions">
                     <Badge tone={workspace.visibility}>{workspace.visibility === 'shared' ? 'общее' : 'личное'}</Badge>
+                    {workspace.currentUserRole ? (
+                      <Badge tone={workspace.currentUserRole}>{workspaceRoleLabel[workspace.currentUserRole]}</Badge>
+                    ) : null}
                     {workspace.isArchived ? <Badge tone="warning">в архиве</Badge> : null}
                   </div>
                 </div>
@@ -131,16 +140,21 @@ export function WorkspacesPage() {
                   <Button data-testid="workspace-open-boards" variant="primary" onClick={() => navigate(paths.workspaceBoards(workspace.id))}>
                     Открыть доски
                   </Button>
-                  <Button
-                    iconOnly
-                    onClick={() => void handleRename(workspace.id, workspace.name)}
-                    disabled={updateWorkspaceMutation.isPending}
-                    title="Переименовать пространство"
-                    aria-label="Переименовать пространство"
-                  >
-                    <Icon name="edit" size={16} />
+                  <Button onClick={() => navigate(paths.workspaceAccess(workspace.id))}>
+                    Доступ
                   </Button>
-                  {!workspace.isArchived ? (
+                  {workspace.currentUserRole === 'owner' ? (
+                    <Button
+                      iconOnly
+                      onClick={() => void handleRename(workspace.id, workspace.name)}
+                      disabled={updateWorkspaceMutation.isPending}
+                      title="Переименовать пространство"
+                      aria-label="Переименовать пространство"
+                    >
+                      <Icon name="edit" size={16} />
+                    </Button>
+                  ) : null}
+                  {workspace.currentUserRole === 'owner' && !workspace.isArchived ? (
                     <Button
                       iconOnly
                       variant="danger"

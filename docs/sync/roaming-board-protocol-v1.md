@@ -9,12 +9,13 @@
 Запрос:
 
 ```json
-{ "boardId": "uuid" }
+{ "boardId": "uuid", "authorPublicKey": "hex Nostr public key" }
 ```
 
-Ответ содержит `workspaceId`, `boardId`, `boardTag`, `boardKey`, минимум три
-relay URL, сохраняемый Nostr kind и минимальное число подтверждений.
-Capability выдаётся только администратору workspace.
+Ответ содержит `workspaceId`, `boardId`, `boardTag`, `boardKey`,
+`capabilityEpoch`, `canWrite`, список активных writer public keys, минимум три
+relay URL, Nostr kind и минимальное число подтверждений. Owner/member получает
+write authorization для своего ключа, guest — capability только для чтения.
 
 `boardKey` выводится отдельно для каждой доски:
 
@@ -52,7 +53,8 @@ Nostr kind `1979`, tags:
 ```
 
 Открытый event body после расшифрования содержит стабильные UUID,
-`replicaSeq`, `logicalClock`, `fieldMask`, полную карточку и `occurredAt`.
+`replicaSeq`, `logicalClock`, `capabilityEpoch`, `fieldMask`, полную карточку и
+`occurredAt`. Backend принимает его только от активного writer key текущей эпохи.
 
 ## Операции v1
 
@@ -73,9 +75,10 @@ Nostr event ID и protocol event ID, затем применяет событи�
 
 ## Доставка
 
-Публикация успешна после `minimumRelayAcks`. Неуспешная операция остаётся в
-локальной очереди и повторяется. Backend использует durable outbox и backoff;
-Android сохраняет очередь вместе с локальным snapshot.
+Публикация в relay успешна после `minimumRelayAcks`, но это ещё не подтверждение
+каноническим узлом. Android сохраняет такую операцию как `relay_pending`, явно
+показывает долг пользователю и удаляет её только после успешного coordinator
+CRUD. Backend использует durable outbox и backoff.
 
 Полный журнал запрашивается повторно, а локальные event ID дедуплицируются. Это
 не даёт временно недоступному реле создать необратимую дыру в cursor.
@@ -85,6 +88,8 @@ Android сохраняет очередь вместе с локальным sna
 - relay видит время, размер, Nostr pubkey и непрозрачный тег;
 - relay не видит данные доски;
 - подмена ciphertext обнаруживается AEAD;
-- владение board key является capability;
+- board key открывает payload, но право записи дополнительно требует активный
+  author public key и совпадающую `capabilityEpoch`;
 - утрата ключа не восстанавливается из relay;
-- отзыв участника требует ротации ключа и membership epoch в следующей версии.
+- изменение состава атомарно отзывает authorizations, повышает epoch и ротирует
+  board key/tag; запоздалый офлайн replay прежней эпохи отклоняется.

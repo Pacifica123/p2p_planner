@@ -36,6 +36,7 @@ import { Button } from '@/shared/ui/Button';
 import { ErrorState } from '@/shared/ui/ErrorState';
 import { Icon } from '@/shared/ui/Icon';
 import { LoadingState } from '@/shared/ui/LoadingState';
+import { useWorkspacesQuery } from '@/features/workspaces/hooks/useWorkspaces';
 
 const priorityTone: Record<string, string> = {
   low: 'low',
@@ -63,6 +64,9 @@ export function BoardPage() {
 
   const { resolvedTheme } = useAppearance();
   const boardQuery = useBoardQuery(boardId);
+  const workspacesQuery = useWorkspacesQuery();
+  const workspace = workspacesQuery.data?.items.find((item) => item.id === workspaceId);
+  const canEdit = workspace?.currentUserRole === 'owner' || workspace?.currentUserRole === 'member';
   const columnsQuery = useColumnsQuery(boardId);
   const cardsQuery = useCardsQuery(boardId);
   const hiddenCardsQuery = useCardsQuery(boardId, 'hidden');
@@ -131,7 +135,7 @@ export function BoardPage() {
 
   function handleCreateColumn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!newColumnName.trim()) return;
+    if (!canEdit || !newColumnName.trim()) return;
     createColumnMutation.mutate(
       { name: newColumnName.trim() },
       {
@@ -194,7 +198,7 @@ export function BoardPage() {
   }
 
   function handleCardDragStart(card: Card, cardsInColumn: Card[], event: DragEvent<HTMLElement>) {
-    if (hasPendingCardMove) return;
+    if (!canEdit || hasPendingCardMove) return;
     const sourceIndex = cardsInColumn.findIndex((item) => item.id === card.id);
     if (sourceIndex === -1) return;
 
@@ -267,6 +271,7 @@ export function BoardPage() {
   async function handleCardDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
     event.stopPropagation();
+    if (!canEdit) return;
     dropHandledRef.current = true;
 
     const session = dragSession;
@@ -329,7 +334,7 @@ export function BoardPage() {
       rows.push(
         <div key={card.id} className="card-slot">
           <article
-            draggable={!hasPendingCardMove}
+            draggable={Boolean(canEdit && !hasPendingCardMove)}
             className={`card-tile ${boardAppearance?.cardPreviewMode === 'compact' ? 'card-tile--compact' : ''} ${isDraggedCard ? 'card-tile--ghosted' : ''}`}
             data-testid="card-tile"
             onDragStart={(event) => handleCardDragStart(card, cards, event)}
@@ -418,15 +423,15 @@ export function BoardPage() {
             <Button variant="ghost" onClick={() => setHiddenCardsOpen((current) => !current)} title="Карточки, скрытые только на этом узле">
               Скрытые здесь{hiddenCardsQuery.data?.items.length ? ` (${hiddenCardsQuery.data.items.length})` : ''}
             </Button>
-            <Button iconOnly variant="ghost" onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))} title="Оформление доски" aria-label="Оформление доски">
+            {canEdit ? <Button iconOnly variant="ghost" onClick={() => navigate(paths.boardAppearance(workspaceId, boardId))} title="Оформление доски" aria-label="Оформление доски">
               <Icon name="palette" />
-            </Button>
+            </Button> : null}
             <Button iconOnly variant="ghost" onClick={() => void handleExportBoardBackup()} disabled={isExporting} title="Скачать резервную копию JSON" aria-label="Скачать резервную копию JSON">
               <Icon name="download" />
             </Button>
-            <Button iconOnly variant="ghost" onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data} title="Переименовать доску" aria-label="Переименовать доску">
+            {canEdit ? <Button iconOnly variant="ghost" onClick={() => void handleRenameBoard()} disabled={updateBoardMutation.isPending || !boardQuery.data} title="Переименовать доску" aria-label="Переименовать доску">
               <Icon name="edit" />
-            </Button>
+            </Button> : null}
             <Button iconOnly variant="ghost" onClick={() => void Promise.all([boardQuery.refetch(), columnsQuery.refetch(), cardsQuery.refetch(), boardActivityQuery.refetch(), boardAppearanceQuery.refetch(), localFirst.flushPendingOperations(), syncBaseline.pullWorkspace(), syncBaseline.refreshStatus()])} title="Обновить данные доски" aria-label="Обновить данные доски">
               <Icon name="refresh" />
             </Button>
@@ -435,6 +440,9 @@ export function BoardPage() {
 
         <LocalFirstStatusBanner runtime={localFirst} />
         <SyncBaselineStatus runtime={syncBaseline} />
+        {workspace?.currentUserRole === 'guest' ? (
+          <div className="inline-banner"><strong>Режим чтения.</strong><span>Гость не может изменять доску.</span></div>
+        ) : null}
 
         {isHiddenCardsOpen ? (
           <section className="panel" data-testid="locally-hidden-cards">
@@ -515,6 +523,7 @@ export function BoardPage() {
                         cardsWithoutDragged={cardsWithoutDragged}
                         isDropTarget={dragSession?.overColumnId === column.id}
                         isMutating={updateColumnMutation.isPending || deleteColumnMutation.isPending}
+                        readOnly={!canEdit}
                         onRename={(item) => void handleRenameColumn(item)}
                         onDelete={(item) => void handleDeleteColumn(item)}
                         onColumnDragOver={handleColumnDragOver}
@@ -524,7 +533,7 @@ export function BoardPage() {
                     );
                   })}
 
-                  <section className={`add-column-card ${isColumnComposerOpen ? 'is-open' : ''}`}>
+                  {canEdit ? <section className={`add-column-card ${isColumnComposerOpen ? 'is-open' : ''}`}>
                     {isColumnComposerOpen ? (
                       <form className="add-column-card__form" data-testid="column-create-form" onSubmit={handleCreateColumn}>
                         <label htmlFor="new-column-name">Новая колонка</label>
@@ -555,18 +564,18 @@ export function BoardPage() {
                         Добавить колонку
                       </button>
                     )}
-                  </section>
+                  </section> : null}
                 </div>
               ) : (
                 <section className="first-column-state">
                   <Icon name="board" size={28} />
                   <strong>На доске пока нет колонок</strong>
-                  <span className="muted">Создайте первую, чтобы добавить карточки.</span>
-                  <Button variant="primary" data-testid="open-column-composer" onClick={() => setColumnComposerOpen(true)}>
+                  <span className="muted">{canEdit ? 'Создайте первую, чтобы добавить карточки.' : 'В этой доске пока нет колонок.'}</span>
+                  {canEdit ? <Button variant="primary" data-testid="open-column-composer" onClick={() => setColumnComposerOpen(true)}>
                     <Icon name="plus" size={16} />
                     Создать колонку
-                  </Button>
-                  {isColumnComposerOpen ? (
+                  </Button> : null}
+                  {canEdit && isColumnComposerOpen ? (
                     <form className="add-column-card__form add-column-card__form--first" data-testid="column-create-form" onSubmit={handleCreateColumn}>
                       <input
                         autoFocus
@@ -609,7 +618,7 @@ export function BoardPage() {
           </div>
         ) : null}
 
-        <CardDetailsDrawer boardAppearance={boardAppearance} resolvedTheme={resolvedTheme} />
+        <CardDetailsDrawer boardAppearance={boardAppearance} resolvedTheme={resolvedTheme} readOnly={!canEdit} />
       </div>
     </LocalFirstBoardProvider>
   );

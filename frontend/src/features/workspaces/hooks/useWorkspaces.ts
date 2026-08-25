@@ -1,5 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { archiveWorkspace, createWorkspace, getWorkspaces, updateWorkspace } from '@/features/workspaces/api/workspaces';
+import {
+  archiveWorkspace,
+  createWorkspace,
+  createWorkspaceInvitation,
+  getWorkspace,
+  getWorkspaceInvitations,
+  getWorkspaceMembers,
+  getWorkspaces,
+  removeWorkspaceMember,
+  revokeWorkspaceInvitation,
+  updateWorkspace,
+  updateWorkspaceMember,
+} from '@/features/workspaces/api/workspaces';
 
 export const workspacesQueryKey = ['workspaces'];
 
@@ -41,4 +53,56 @@ export function useArchiveWorkspaceMutation() {
       void queryClient.invalidateQueries({ queryKey: workspacesQueryKey });
     },
   });
+}
+
+export function useWorkspaceQuery(workspaceId?: string) {
+  return useQuery({
+    queryKey: ['workspace', workspaceId],
+    queryFn: () => getWorkspace(workspaceId!),
+    enabled: Boolean(workspaceId),
+  });
+}
+
+export function useWorkspaceAccessQueries(workspaceId?: string, isOwner = false) {
+  const members = useQuery({
+    queryKey: ['workspace-members', workspaceId],
+    queryFn: () => getWorkspaceMembers(workspaceId!),
+    enabled: Boolean(workspaceId),
+  });
+  const invitations = useQuery({
+    queryKey: ['workspace-invitations', workspaceId],
+    queryFn: () => getWorkspaceInvitations(workspaceId!),
+    enabled: Boolean(workspaceId && isOwner),
+  });
+  return { members, invitations };
+}
+
+export function useWorkspaceAccessMutations(workspaceId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] }),
+    queryClient.invalidateQueries({ queryKey: ['workspace-members', workspaceId] }),
+    queryClient.invalidateQueries({ queryKey: ['workspace-invitations', workspaceId] }),
+    queryClient.invalidateQueries({ queryKey: workspacesQueryKey }),
+  ]);
+  return {
+    createInvitation: useMutation({
+      mutationFn: (input: { role: 'member' | 'guest'; expiresInHours: number }) =>
+        createWorkspaceInvitation(workspaceId, input),
+      onSuccess: invalidate,
+    }),
+    revokeInvitation: useMutation({
+      mutationFn: (invitationId: string) => revokeWorkspaceInvitation(workspaceId, invitationId),
+      onSuccess: invalidate,
+    }),
+    updateMember: useMutation({
+      mutationFn: ({ memberId, role }: { memberId: string; role: 'member' | 'guest' }) =>
+        updateWorkspaceMember(workspaceId, memberId, role),
+      onSuccess: invalidate,
+    }),
+    removeMember: useMutation({
+      mutationFn: (memberId: string) => removeWorkspaceMember(workspaceId, memberId),
+      onSuccess: invalidate,
+    }),
+  };
 }

@@ -26,6 +26,7 @@ export function WorkspaceBoardsPage() {
     () => workspacesQuery.data?.items.find((item) => item.id === workspaceId),
     [workspaceId, workspacesQuery.data?.items],
   );
+  const canEdit = workspace?.currentUserRole === 'owner' || workspace?.currentUserRole === 'member';
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -68,6 +69,9 @@ export function WorkspaceBoardsPage() {
           <p className="muted">Доски выбранного пространства.</p>
         </div>
         <div className="page-header__actions">
+          {workspace ? (
+            <Button onClick={() => navigate(paths.workspaceAccess(workspace.id))}>Доступ</Button>
+          ) : null}
           <Button variant="ghost" onClick={() => navigate(paths.home)}>
             <Icon name="back" size={16} />
             К пространствам
@@ -75,7 +79,7 @@ export function WorkspaceBoardsPage() {
         </div>
       </section>
 
-      <section className="panel">
+      {canEdit ? <section className="panel">
         <div className="entity-header">
           <div>
             <h3>Новая доска</h3>
@@ -93,16 +97,21 @@ export function WorkspaceBoardsPage() {
             </Button>
           </div>
         </form>
-      </section>
+      </section> : (
+        <section className="panel">
+          <h3>Режим чтения</h3>
+          <p className="muted">Гость может просматривать доски, но не изменять их содержимое.</p>
+        </section>
+      )}
 
-      <BoardImportPanel
+      {canEdit ? <BoardImportPanel
         workspaceId={workspaceId}
         existingBoardNames={boardsQuery.data?.items.map((board) => board.name) || []}
         onImported={async (boardId) => {
           await boardsQuery.refetch();
           navigate(paths.board(workspaceId, boardId));
         }}
-      />
+      /> : null}
 
       {boardsQuery.isLoading ? <LoadingState label="Загружаем доски…" /> : null}
       {boardsQuery.isError ? <ErrorState title="Не удалось загрузить доски" onRetry={() => void boardsQuery.refetch()} /> : null}
@@ -130,7 +139,7 @@ export function WorkspaceBoardsPage() {
                   <Button data-testid="board-open" variant="primary" onClick={() => navigate(paths.board(workspaceId, board.id))}>
                     Открыть
                   </Button>
-                  <Button
+                  {canEdit ? <Button
                     iconOnly
                     onClick={() => void handleRename(board.id, board.name)}
                     disabled={updateBoardMutation.isPending}
@@ -138,8 +147,8 @@ export function WorkspaceBoardsPage() {
                     aria-label="Переименовать доску"
                   >
                     <Icon name="edit" size={16} />
-                  </Button>
-                  {!board.isArchived ? (
+                  </Button> : null}
+                  {canEdit && !board.isArchived ? (
                     <Button
                       iconOnly
                       variant="danger"
