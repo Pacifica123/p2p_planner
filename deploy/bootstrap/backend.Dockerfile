@@ -19,7 +19,8 @@ WORKDIR /app
 COPY --from=builder /source/backend/target/release/p2p-planner-backend /usr/local/bin/p2p-planner-backend
 COPY backend/config ./config
 COPY deploy/bootstrap/backend-entrypoint.sh /usr/local/bin/p2pkanban-entrypoint
-RUN chmod 0555 /usr/local/bin/p2pkanban-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/p2pkanban-entrypoint \
+    && chmod 0555 /usr/local/bin/p2pkanban-entrypoint
 
 EXPOSE 18080
 ENTRYPOINT ["/usr/local/bin/p2pkanban-entrypoint"]

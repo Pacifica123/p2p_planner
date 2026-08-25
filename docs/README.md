@@ -18,14 +18,15 @@
 - [`deployment/application-update-strategy-v1.md`](deployment/application-update-strategy-v1.md) — рабочее обновление и rollback;
 - [`deployment/postgresql-backup-restore-v1.md`](deployment/postgresql-backup-restore-v1.md) — ручной backup и проверяемый restore;
 - [`product/v1-known-limitations.md`](product/v1-known-limitations.md) — честные ограничения;
-- [`product/v1.0.0-beta.13-release-notes.md`](product/v1.0.0-beta.13-release-notes.md) — текст текущего релиза.
+- [`product/v1.0.0-release-notes.md`](product/v1.0.0-release-notes.md) — текст текущего релиза;
+- [`product/version-policy.md`](product/version-policy.md) — почему каналов stable/dev/beta больше нет.
 
 Разработчику:
 
 - [`product/v1-execution-roadmap.md`](product/v1-execution-roadmap.md) — что
   готово, частично готово и отложено;
-- [`product/stable-v1-readiness-2026-07-29.md`](product/stable-v1-readiness-2026-07-29.md)
-  — проверка актуальных блокеров stable;
+- [`product/v1-remaining-checklist.md`](product/v1-remaining-checklist.md)
+  — полевые проверки и известные границы v1;
 - [`product/github-devctl-project-integration-concept-v1.md`](product/github-devctl-project-integration-concept-v1.md)
   — provider-neutral концепция GitHub/devctl;
 - [`architecture/project-structure.md`](architecture/project-structure.md) —
@@ -54,7 +55,7 @@
 
 | Область | Фактическое решение |
 |---|---|
-| Версия | `v1.0.0-beta.13` |
+| Версия | `v1` (`1.0.0`), единая непрерывная линия без release-каналов |
 | Основной запуск | `python bootstrap.py`, весь runtime в Docker |
 | Обновление | Web-плашка или CLI, commit SHA + backup + versioned images + rollback |
 | Канонический путь | React/Vite → Nginx → Rust/Axum → PostgreSQL |
@@ -62,7 +63,7 @@
 | Синхронизация | Backend-координируемая; активный web polling, web-node link и roaming карточек/чек-листов/оформления |
 | P2P | Nostr roaming используется Android; `sync-core`, Iroh и edge coordinator остаются экспериментальными |
 | Edge coordinator | Отдельный совместимый прототип; не заменяет основной backend |
-| Mobile | Android mobile.9: column-state карточки, local-first, напоминания и web-совместимое оформление |
+| Mobile | Android v1 (`versionCode 10`): column-state, local-first, напоминания, оформление и немедленный выход с загружаемой доски |
 | Релиз | Основной артефакт — self-host bootstrap ZIP, а не AppImage и не одинокий `.exe` |
 
 ## Важная граница

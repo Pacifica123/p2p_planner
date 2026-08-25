@@ -34,7 +34,7 @@ def main() -> int:
         {
             "P2PKANBAN_WEB_PORT": "18088",
             "P2PKANBAN_BIND_ADDRESS": "127.0.0.1",
-            "P2PKANBAN_IMAGE_TAG": "devctl-beta13-build-check",
+            "P2PKANBAN_IMAGE_TAG": "devctl-v1-build-check",
             "P2PKANBAN_SOURCE_REVISION": "0" * 40,
         }
     )

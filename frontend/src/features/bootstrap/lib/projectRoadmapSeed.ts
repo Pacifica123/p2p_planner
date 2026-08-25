@@ -1,5 +1,5 @@
 import { createBoard, getBoards } from '@/features/boards/api/boards';
-import { createCard, getCards } from '@/features/cards/api/cards';
+import { createCard, getCards, updateCard } from '@/features/cards/api/cards';
 import { createColumn, getColumns } from '@/features/columns/api/columns';
 import { createWorkspace, getWorkspaces } from '@/features/workspaces/api/workspaces';
 import type { BoardColumn, Card } from '@/shared/types/api';
@@ -26,56 +26,80 @@ const ROADMAP_COLUMNS = [
   },
 ] as const;
 
-const ROADMAP_CARDS = {
-  'Готово': [
-    'MVP scope v1',
-    'Docs v2 и ADR',
-    'Data model и БД',
-    'Backend module map',
-    'OpenAPI / HTTP API v1',
-    'Auth и identity модель',
-    'Migrations и backend skeleton',
-    'Core backend CRUD',
-    'Appearance / customization backend',
-    'Activity / history / audit',
-    'Web frontend architecture',
-    'Web frontend core UI',
-    'Web customization UI',
-    'UI cleanup и рефакторинг beta-базы',
-  ],
+type RoadmapCardSeed = {
+  title: string;
+  priority: Card['priority'];
+  description: string;
+};
+
+const V1_COMPLETED_TITLES = [
+  'MVP scope v1',
+  'Docs v2 и ADR',
+  'Data model и БД',
+  'Backend module map',
+  'OpenAPI / HTTP API v1',
+  'Auth и identity модель',
+  'Migrations и backend skeleton',
+  'Core backend CRUD',
+  'Appearance / customization backend',
+  'Activity / history / audit',
+  'Web frontend architecture',
+  'Web frontend core UI',
+  'Web customization UI',
+  'UI cleanup и рефакторинг beta-базы',
+  'Косметический polish кнопок и micro-UX',
+  'Автогенерация dev-roadmap board',
+  'Local-first слой',
+  'Sync model implementation plan',
+  'Conflict resolution',
+  'P2P / relay / bootstrap abstraction',
+  'Integrations architecture',
+  'Import / export / backup',
+  'Security / privacy / threat model',
+  'Testing strategy',
+  'Deployment / packaging',
+  'Beta scope',
+  'Mobile architecture',
+] as const;
+
+export const ROADMAP_CARDS: Record<string, readonly RoadmapCardSeed[]> = {
+  'Готово': V1_COMPLETED_TITLES.map((title) => ({
+    title,
+    priority: null,
+    description: `Этап «${title}» завершён в v1 и служит опорой для следующей продуктовой сессии.`,
+  })),
   'Сейчас': [
-    'Косметический polish кнопок и micro-UX',
-    'Автогенерация dev-roadmap board',
+    {
+      title: 'v2: Пригласительные ссылки и права доступа',
+      priority: 'urgent',
+      description: 'Спроектировать owner/member/guest роли, срок жизни приглашения, отзыв доступа и ротацию capability после изменения состава пространства.',
+    },
+    {
+      title: 'v2: Rich text в карточках',
+      priority: 'high',
+      description: 'Добавить переносимый безопасный формат rich text для описаний и комментариев с одинаковым отображением в web и Android.',
+    },
   ],
   'Далее': [
-    'Local-first слой',
-    'Sync model implementation plan',
-    'Conflict resolution',
-    'P2P / relay / bootstrap abstraction',
-    'Integrations architecture',
-    'Import / export / backup',
+    {
+      title: 'v2: Интеграция с GitHub',
+      priority: 'high',
+      description: 'Связать карточки с issues/PR/commit, сохранив local-first очередь, явное владение полями и проверяемые webhook-события.',
+    },
+    {
+      title: 'v2: Интеграция с devctl',
+      priority: 'medium',
+      description: 'Показывать планы, применение патчей и receipts как связанные с карточками действия без переноса transport-терминов в обычный UX.',
+    },
   ],
   'Потом': [
-    'Security / privacy / threat model',
-    'Testing strategy',
-    'Deployment / packaging',
-    'Beta scope',
-    'Mobile architecture',
+    {
+      title: 'v2: Интеграция с Obsidian',
+      priority: 'medium',
+      description: 'Исследовать двусторонние ссылки на Markdown-заметки и предсказуемый export/import без скрытого destructive merge.',
+    },
   ],
-} as const satisfies Record<string, readonly string[]>;
-
-function buildCardDescription(columnName: string, title: string) {
-  if (columnName === 'Готово') {
-    return `Этап «${title}» уже закрыт и может служить опорой для следующих шагов.`;
-  }
-  if (columnName === 'Сейчас') {
-    return `Актуальная небольшая задача для текущего витка разработки: ${title}.`;
-  }
-  if (columnName === 'Далее') {
-    return `Следующий логичный этап после текущего полиша интерфейса: ${title}.`;
-  }
-  return `Отложенная, но запланированная тема: ${title}.`;
-}
+};
 
 async function ensureRoadmapWorkspace() {
   const workspaces = await getWorkspaces();
@@ -121,33 +145,38 @@ async function ensureColumns(boardId: string) {
 
 async function ensureCards(boardId: string, columns: BoardColumn[]) {
   const cards = await getCards(boardId);
-  const existingByColumn = new Map<string, Card[]>();
-
-  cards.items.forEach((card) => {
-    const items = existingByColumn.get(card.columnId) || [];
-    items.push(card);
-    existingByColumn.set(card.columnId, items);
-  });
-
+  const existingByTitle = new Map(cards.items.map((card) => [card.title, card]));
   const columnByName = new Map(columns.map((column) => [column.name, column]));
 
-  for (const [columnName, titles] of Object.entries(ROADMAP_CARDS)) {
+  for (const [columnName, seeds] of Object.entries(ROADMAP_CARDS)) {
     const column = columnByName.get(columnName);
     if (!column) continue;
 
-    const existingCards = existingByColumn.get(column.id) || [];
+    for (const seed of seeds) {
+      const existing = existingByTitle.get(seed.title);
+      if (!existing) {
+        const created = await createCard(boardId, {
+          title: seed.title,
+          description: seed.description,
+          columnId: column.id,
+          priority: seed.priority,
+        });
+        existingByTitle.set(seed.title, created);
+        continue;
+      }
 
-    for (const title of titles) {
-      const exists = existingCards.some((card) => card.title === title);
-      if (exists) continue;
-
-      const created = await createCard(boardId, {
-        title,
-        description: buildCardDescription(columnName, title),
-        columnId: column.id,
-      });
-      existingCards.push(created);
-      existingByColumn.set(column.id, existingCards);
+      if (
+        existing.columnId !== column.id
+        || existing.priority !== seed.priority
+        || existing.description !== seed.description
+      ) {
+        const updated = await updateCard(existing.id, {
+          columnId: column.id,
+          priority: seed.priority,
+          description: seed.description,
+        });
+        existingByTitle.set(seed.title, updated);
+      }
     }
   }
 }

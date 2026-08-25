@@ -21,6 +21,7 @@ OUTPUT_DIR = ROOT / "release" / "dist"
 
 ROOT_FILES = (
     ".dockerignore",
+    ".gitattributes",
     ".gitignore",
     "README.md",
     "VERSION",

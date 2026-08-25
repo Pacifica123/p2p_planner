@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Проверяет статический контракт Android -> coordinator -> web для beta.6+."""
+"""Проверяет статический контракт Android -> coordinator -> web для v1."""
 
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ def forbid(relative: str, *needles: str) -> None:
 def main() -> None:
     version = read("VERSION").strip()
     frontend = json.loads(read("frontend/package.json"))
-    if not version.startswith("1.0.0-beta.") or frontend.get("version") != version:
-        raise SystemExit("FAIL: beta versions are not aligned")
+    if version != "1.0.0" or frontend.get("version") != version:
+        raise SystemExit("FAIL: v1 versions are not aligned")
 
     forbid("backend/src/modules/cards/dto.rs", "pub status:", "pub completed_at:")
     forbid("docs/api/openapi.yaml", "      - name: completed\n        in: query")

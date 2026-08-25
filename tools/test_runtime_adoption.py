@@ -196,7 +196,7 @@ class RuntimeAdoptionTests(unittest.TestCase):
                 path = source / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("placeholder\n")
-            (source / "VERSION").write_text("1.0.0-beta.13\n")
+            (source / "VERSION").write_text("1.0.0\n")
             (source / ".git").mkdir()
             (source / ".git/should-not-copy").write_text("ignored\n")
             (source / "frontend/.env.local").write_text("SECRET=ignored\n")

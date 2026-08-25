@@ -2,10 +2,57 @@ services:
   bootstrap-init:
     image: alpine:3.20
     restart: "no"
-    entrypoint: ["/bin/sh", "/usr/local/bin/init-secrets.sh"]
+    # Keep the script in Compose itself: a Windows checkout may convert a
+    # bind-mounted *.sh file to CRLF before BusyBox sees it.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        set -eu
+        secrets_dir=/run/p2pkanban-secrets
+        mkdir -p "$$secrets_dir"
+        umask 077
+
+        generate_hex() {
+          od -An -N "$$1" -tx1 /dev/urandom | tr -d ' \n'
+        }
+
+        generate_base64() {
+          head -c "$$1" /dev/urandom | base64 | tr -d '\r\n'
+        }
+
+        ensure_secret() {
+          target="$$1"
+          byte_count="$$2"
+          if [ -s "$$target" ]; then
+            return
+          fi
+          temporary="$${target}.tmp.$$$$"
+          generate_hex "$$byte_count" > "$$temporary"
+          printf '\n' >> "$$temporary"
+          chmod 0444 "$$temporary"
+          mv "$$temporary" "$$target"
+        }
+
+        ensure_secret "$$secrets_dir/postgres-password" 32
+        ensure_secret "$$secrets_dir/jwt-secret" 64
+        ensure_secret "$$secrets_dir/nostr-secret-key" 32
+
+        if [ ! -s "$$secrets_dir/nostr-master-key" ]; then
+          temporary="$$secrets_dir/nostr-master-key.tmp.$$$$"
+          generate_base64 32 > "$$temporary"
+          printf '\n' >> "$$temporary"
+          chmod 0444 "$$temporary"
+          mv "$$temporary" "$$secrets_dir/nostr-master-key"
+        fi
+
+        schema_target="$$secrets_dir/schema-version"
+        schema_temporary="$${schema_target}.tmp.$$$$"
+        printf '2\n' > "$$schema_temporary"
+        chmod 0444 "$$schema_temporary"
+        mv -f "$$schema_temporary" "$$schema_target"
+        echo "p2pKanban bootstrap secrets are ready."
     volumes:
       - bootstrap_secrets:/run/p2pkanban-secrets
-      - ./init-secrets.sh:/usr/local/bin/init-secrets.sh:ro
     networks:
       - internal
 

@@ -5,7 +5,7 @@ p2pKanban — экспериментальный local-first планировщ�
 клиент и постепенно переводить с обычного координатора на сменяемые P2P/relay
 транспорты.
 
-Сейчас это beta: основной web-сценарий работает, но полностью бессерверная синхронизация ещё не готова.
+Текущая версия — `v1` (`1.0.0`): разработка непрерывна без каналов stable/dev/beta, а следующий `vN` обозначает новую сессию развития.
 
 ## Быстрый запуск
 
@@ -118,7 +118,7 @@ read-only проверка работает после перезапуска к
 
 ### Второй независимый web-узел
 
-Email уникален только внутри одного deployment. На чистом втором узле beta.13
+Email уникален только внутри одного deployment. На чистом втором узле v1
 выберите `Подключить с другого узла`; ненужную локальную копию после проверки
 можно удалить командой `python bootstrap.py reset --yes`. Полный порядок:
 [`docs/architecture/web-node-link-v1.md`](docs/architecture/web-node-link-v1.md).
@@ -202,7 +202,7 @@ npm run dev
 - [`docs/deployment/free-hosting-transports-v1.md`](docs/deployment/free-hosting-transports-v1.md) — бесплатные transport-варианты;
 - [`docs/adr/ADR-006-homeless-board-transport-stack.md`](docs/adr/ADR-006-homeless-board-transport-stack.md) — выбранная transport-архитектура;
 - [`docs/dev-bootstrap/devbootstrap-v1-operations.md`](docs/dev-bootstrap/devbootstrap-v1-operations.md) — расширенная локальная диагностика;
-- [`docs/product/stable-v1-readiness-2026-07-29.md`](docs/product/stable-v1-readiness-2026-07-29.md) — актуальная оценка stable v1;
+- [`docs/product/version-policy.md`](docs/product/version-policy.md) — политика непрерывных версий `vN`;
 - [`docs/product/github-devctl-project-integration-concept-v1.md`](docs/product/github-devctl-project-integration-concept-v1.md) — концепция GitHub/devctl.
 
 ## Проверки

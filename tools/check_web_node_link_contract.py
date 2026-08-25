@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Проверяет статический контракт связывания двух web-узлов beta.7+."""
+"""Проверяет статический контракт связывания двух web-узлов v1."""
 
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ def require(relative: str, *needles: str) -> None:
 def main() -> None:
     version = read("VERSION").strip()
     frontend = json.loads(read("frontend/package.json"))
-    if not version.startswith("1.0.0-beta.") or frontend.get("version") != version:
-        raise SystemExit("FAIL: beta versions are not aligned")
+    if version != "1.0.0" or frontend.get("version") != version:
+        raise SystemExit("FAIL: v1 versions are not aligned")
 
     cargo_lock = tomllib.loads(read("backend/Cargo.lock"))
     backend_package = next(

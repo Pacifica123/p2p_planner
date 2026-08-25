@@ -18,6 +18,7 @@ REQUIRED_FILES = (
     "README.md",
     "bootstrap.py",
     "deploy/bootstrap/compose.yaml",
+    "docs/product/version-policy.md",
     f"docs/product/v{EXPECTED_VERSION}-release-notes.md",
     f"release/p2pkanban-v{EXPECTED_VERSION}/README_RELEASE_RU.md",
     f"release/p2pkanban-v{EXPECTED_VERSION}/README_RELEASE_EN.md",
@@ -49,6 +50,8 @@ def load_json(relative: str) -> dict:
 
 def check_versions() -> None:
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    if version != "1.0.0":
+        fail(f"VERSION={version!r}, для этой линии ожидалось '1.0.0'")
     if version != EXPECTED_VERSION:
         fail(f"VERSION={version!r}, ожидалось {EXPECTED_VERSION!r}")
 
@@ -129,6 +132,18 @@ def check_release_surface() -> None:
     expected_tag = f"v{EXPECTED_VERSION}"
     if expected_tag not in active_docs:
         fail(f"Активная документация не фиксирует {expected_tag}")
+
+    policy = (ROOT / "docs/product/version-policy.md").read_text(encoding="utf-8")
+    if "непрерыв" not in policy.lower():
+        fail("Политика версий не фиксирует непрерывную разработку")
+    if "stable/dev/beta" not in policy:
+        fail("Политика версий не фиксирует отказ от каналов stable/dev/beta")
+
+    release_notes = (ROOT / f"docs/product/v{EXPECTED_VERSION}-release-notes.md").read_text(
+        encoding="utf-8"
+    )
+    if "Windows" not in release_notes or "Android" not in release_notes:
+        fail("Release notes v1 не описывают Windows и Android")
 
 
 def check_bundle_builder() -> None:

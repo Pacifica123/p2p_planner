@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 
-TOOL_VERSION = "1.3.0"
+TOOL_VERSION = "1.4.0"
 STATE_VERSION = 2
 COMPOSE_PROJECT = "p2pkanban-bootstrap"
 COMPOSE_RELATIVE_PATH = Path("deploy/bootstrap/compose.yaml")
@@ -527,6 +527,42 @@ def is_port_available(port: int, host: str = "127.0.0.1") -> bool:
     return True
 
 
+def published_web_port(container: dict[str, Any]) -> int | None:
+    """Return the sole published 8080/tcp port, including stopped containers."""
+
+    candidates: set[int] = set()
+    network_settings = container.get("NetworkSettings")
+    if isinstance(network_settings, dict):
+        ports = network_settings.get("Ports")
+        if isinstance(ports, dict):
+            bindings = ports.get("8080/tcp")
+            if isinstance(bindings, list):
+                for binding in bindings:
+                    if not isinstance(binding, dict):
+                        continue
+                    try:
+                        candidates.add(int(binding.get("HostPort", 0)))
+                    except (TypeError, ValueError):
+                        continue
+
+    host_config = container.get("HostConfig")
+    if isinstance(host_config, dict):
+        port_bindings = host_config.get("PortBindings")
+        if isinstance(port_bindings, dict):
+            bindings = port_bindings.get("8080/tcp")
+            if isinstance(bindings, list):
+                for binding in bindings:
+                    if not isinstance(binding, dict):
+                        continue
+                    try:
+                        candidates.add(int(binding.get("HostPort", 0)))
+                    except (TypeError, ValueError):
+                        continue
+
+    valid = {port for port in candidates if 1 <= port <= 65535}
+    return next(iter(valid)) if len(valid) == 1 else None
+
+
 def discover_owned_web_port(project_root: Path) -> int | None:
     docker = shutil.which("docker")
     if not docker:
@@ -536,6 +572,7 @@ def discover_owned_web_port(project_root: Path) -> int | None:
             [
                 docker,
                 "ps",
+                "--all",
                 "--filter",
                 f"label=com.docker.compose.project={COMPOSE_PROJECT}",
                 "--filter",
@@ -548,14 +585,12 @@ def discover_owned_web_port(project_root: Path) -> int | None:
             timeout=20,
         )
         container_id = containers.stdout.strip().splitlines()
-        if containers.returncode != 0 or not container_id:
+        if containers.returncode != 0 or len(container_id) != 1:
             continue
         inspected = run_capture(
             [
                 docker,
                 "inspect",
-                "--format",
-                "{{json .NetworkSettings.Ports}}",
                 container_id[0],
             ],
             cwd=project_root,
@@ -565,12 +600,12 @@ def discover_owned_web_port(project_root: Path) -> int | None:
         if inspected.returncode != 0:
             continue
         try:
-            ports = json.loads(inspected.stdout)
-            bindings = ports.get("8080/tcp") if isinstance(ports, dict) else None
-            host_port = int(bindings[0]["HostPort"]) if bindings else 0
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            payload = json.loads(inspected.stdout)
+            container = payload[0] if isinstance(payload, list) and len(payload) == 1 else None
+            host_port = published_web_port(container) if isinstance(container, dict) else None
+        except json.JSONDecodeError:
             continue
-        if 1 <= host_port <= 65535:
+        if host_port is not None:
             return host_port
     return None
 

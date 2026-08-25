@@ -22,8 +22,8 @@ def require(relative: str, *needles: str) -> None:
 def main() -> None:
     version = read("VERSION").strip()
     frontend = json.loads(read("frontend/package.json"))
-    if not version.startswith("1.0.0-beta.") or frontend.get("version") != version:
-        raise SystemExit("FAIL: beta versions are not aligned")
+    if version != "1.0.0" or frontend.get("version") != version:
+        raise SystemExit("FAIL: v1 versions are not aligned")
 
     require(
         "backend/migrations/0011_account_workflow_and_accent_customization.sql",

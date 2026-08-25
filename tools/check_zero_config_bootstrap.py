@@ -120,6 +120,16 @@ def check_python() -> None:
     )
     require(adoption_tests.returncode == 0, adoption_tests.stdout)
 
+    windows_tests = subprocess.run(
+        [sys.executable, "-B", "tools/test_windows_bootstrap.py"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    require(windows_tests.returncode == 0, windows_tests.stdout)
+
 
 def check_compose_contract() -> None:
     compose_path = ROOT / "deploy/bootstrap/compose.yaml"
@@ -138,6 +148,9 @@ def check_compose_contract() -> None:
     require("\n    ports:" not in web, "versioned web must stay on the Docker network")
     require("\n    ports:" in gateway, "stable gateway must publish the only host port")
     require("service_completed_successfully" in init + postgres + backend, "init ordering is missing")
+    require('entrypoint: ["/bin/sh", "-ec"]' in init, "init must use an inline POSIX script")
+    require("ensure_secret" in init, "inline secret initialization is missing")
+    require("./init-secrets.sh" not in init, "Windows-sensitive init bind mount is forbidden")
     require("bootstrap_secrets:" in text, "persistent secret volume is missing")
     require("postgres_data:" in text, "persistent PostgreSQL volume is missing")
     require(
@@ -164,7 +177,6 @@ def check_compose_contract() -> None:
 
 def check_images_and_proxy() -> None:
     required = (
-        "deploy/bootstrap/init-secrets.sh",
         "deploy/bootstrap/backend-entrypoint.sh",
         "deploy/bootstrap/backend.Dockerfile",
         "deploy/bootstrap/frontend.Dockerfile",
@@ -286,9 +298,14 @@ def check_manifest_and_readme() -> None:
     )
 
 
-def optional_compose_validation() -> None:
+def optional_compose_validation(
+    *,
+    require_docker: bool = False,
+    bootstrap_init_smoke: bool = False,
+) -> None:
     docker = shutil.which("docker")
     if not docker:
+        require(not require_docker, "docker CLI is required")
         print("SKIP docker compose config: docker CLI is not installed")
         return
     version = subprocess.run(
@@ -299,6 +316,7 @@ def optional_compose_validation() -> None:
         check=False,
     )
     if version.returncode != 0:
+        require(not require_docker, "Docker Compose v2 is required")
         print("SKIP docker compose config: Compose v2 is not available")
         return
     env = os.environ.copy()
@@ -308,17 +326,17 @@ def optional_compose_validation() -> None:
             "P2PKANBAN_BIND_ADDRESS": "127.0.0.1",
         }
     )
+    project_name = f"p2pkanban-bootstrap-check-{os.getpid()}"
+    compose = [
+        docker,
+        "compose",
+        "--project-name",
+        project_name,
+        "--file",
+        "deploy/bootstrap/compose.yaml",
+    ]
     result = subprocess.run(
-        [
-            docker,
-            "compose",
-            "--project-name",
-            "p2pkanban-bootstrap-check",
-            "--file",
-            "deploy/bootstrap/compose.yaml",
-            "config",
-            "--quiet",
-        ],
+        compose + ["config", "--quiet"],
         cwd=ROOT,
         env=env,
         text=True,
@@ -328,6 +346,32 @@ def optional_compose_validation() -> None:
     )
     require(result.returncode == 0, result.stdout)
     print("OK docker compose config")
+
+    if not bootstrap_init_smoke:
+        return
+
+    try:
+        smoke = subprocess.run(
+            compose + ["run", "--rm", "--no-deps", "bootstrap-init"],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        require(smoke.returncode == 0, smoke.stdout)
+        require("bootstrap secrets are ready" in smoke.stdout, smoke.stdout)
+        print("OK isolated bootstrap-init smoke")
+    finally:
+        subprocess.run(
+            compose + ["down", "--volumes", "--remove-orphans"],
+            cwd=ROOT,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
 
 
 def check_frontend_production_build() -> None:
@@ -379,6 +423,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also run npm ci, frontend tests and the production Vite build in a temporary copy.",
     )
+    parser.add_argument(
+        "--require-docker",
+        action="store_true",
+        help="Fail instead of skipping when Docker Compose v2 is unavailable.",
+    )
+    parser.add_argument(
+        "--bootstrap-init-smoke",
+        action="store_true",
+        help="Run bootstrap-init in an isolated temporary Compose project and volume.",
+    )
     return parser
 
 
@@ -390,7 +444,13 @@ def main(argv: list[str] | None = None) -> int:
         ("container images and gateway", check_images_and_proxy),
         ("UI update and local reminder contract", check_update_control_contract),
         ("Cargo and README contract", check_manifest_and_readme),
-        ("optional Compose parser", optional_compose_validation),
+        (
+            "optional Compose parser",
+            lambda: optional_compose_validation(
+                require_docker=args.require_docker or args.bootstrap_init_smoke,
+                bootstrap_init_smoke=args.bootstrap_init_smoke,
+            ),
+        ),
     )
     for name, check in checks:
         check()

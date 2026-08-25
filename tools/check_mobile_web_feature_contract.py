@@ -21,8 +21,8 @@ def require(relative: str, *needles: str) -> None:
 
 def main() -> None:
     version = read("VERSION").strip()
-    if not version.startswith("1.0.0-beta."):
-        raise SystemExit("FAIL: VERSION must remain on the 1.0.0 beta line")
+    if version != "1.0.0":
+        raise SystemExit("FAIL: VERSION must be 1.0.0")
 
     frontend = json.loads(read("frontend/package.json"))
     if frontend.get("version") != version:
@@ -58,6 +58,16 @@ def main() -> None:
         "frontend/src/shared/appearance/theme.ts",
         "backgroundImage",
         "backgroundSize",
+    )
+    require(
+        "frontend/src/features/bootstrap/lib/projectRoadmapSeed.ts",
+        "ROADMAP_CARDS",
+        "v2: Rich text в карточках",
+        "v2: Интеграция с devctl",
+        "v2: Интеграция с GitHub",
+        "v2: Интеграция с Obsidian",
+        "v2: Пригласительные ссылки и права доступа",
+        "updateCard",
     )
     require(
         "docs/api/openapi.yaml",
