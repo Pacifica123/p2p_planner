@@ -12,7 +12,8 @@ PostgreSQL-роли, базы, `.env`, согласования портов bac
 python bootstrap.py
 ```
 
-Единственная внешняя зависимость — запущенный Docker с Compose v2.
+Внешние зависимости — Python 3.11+ для wrapper и запущенный Docker с Compose v2
+или новее (Linux containers). Компиляторы и PostgreSQL работают в контейнерах.
 
 ## Как устроен stack
 
@@ -47,8 +48,8 @@ web-gateway. Поэтому установленный на компьютере
    daemon.
 2. Если `8080` свободен, выбирается он. Иначе выбирается первый свободный порт
    до `8180`; после первого запуска этот порт становится адресом узла.
-3. `bootstrap-init` создаёт два случайных секрета в Docker volume:
-   пароль PostgreSQL и JWT secret.
+3. `bootstrap-init` создаёт четыре секрета в Docker volume:
+   пароль PostgreSQL, JWT secret, Nostr secret key и Nostr master key.
 4. Официальный PostgreSQL image при первом старте создаёт:
    роль `p2pkanban`, БД `p2pkanban` и постоянный data volume.
 5. Backend читает секреты из volume, собирает `DATABASE__URL` только внутри
@@ -161,8 +162,8 @@ docker compose \
 ## Границы
 
 - Это локальный/self-host bootstrap, а не coordinator-free P2P-режим.
-- Nostr и Iroh отключены: их ключи и выбор реле не должны неявно создаваться
-  для пользователя.
+- Nostr включён для roaming; bootstrap создаёт ключи в persistent secret volume.
+  Iroh остаётся отключённым экспериментальным транспортом.
 - Внешний PostgreSQL не подхватывается и не изменяется.
 - Существующий host-native `tools/devbootstrap.py up` остаётся разработческим
   путём для release gates и точечной диагностики.
@@ -186,3 +187,10 @@ docker compose \
 | Web переключается | Gateway показывает progress/maintenance на прежнем URL |
 | Нужна предыдущая версия кода | `rollback` создаёт backup и переключает images без удаления volumes |
 | Нужна чистая установка | Только явный `reset --yes` удаляет volumes |
+
+Первый build также сохраняется в `.dev-bootstrap/container-runs/*_start.log`,
+включая ошибки `npm ci`, когда контейнеров приложения ещё нет.
+`python bootstrap.py doctor` создаёт JSON-отчёт Docker/Compose/buildx,
+контейнерных логов и контрольных сумм миграций. Код возврата `1` означает,
+что приложение пока не прошло health-check; сам отчёт при этом сохраняется.
+Подробнее: [переносимый запуск](portable-startup-v1.md).

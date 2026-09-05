@@ -402,8 +402,10 @@ def check_frontend_production_build() -> None:
             }
         )
         for command in ([npm, "ci"], [npm, "run", "test:run"], [npm, "run", "build"]):
+            from devbootstrap import command_for_subprocess
+
             result = subprocess.run(
-                command,
+                command_for_subprocess(command),
                 cwd=checkout,
                 env=env,
                 text=True,

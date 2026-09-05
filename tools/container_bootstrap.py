@@ -948,6 +948,8 @@ def run_capture(
         cwd=str(cwd),
         env=env,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         timeout=timeout,
@@ -994,7 +996,9 @@ def validate_compose(source_root: Path, env: dict[str, str]) -> None:
 
 def http_ready(url: str, timeout: float = 2.0) -> bool:
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        # A machine-wide HTTP proxy must not intercept our own loopback health.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(url, timeout=timeout) as response:
             return 200 <= response.status < 300
     except (urllib.error.URLError, TimeoutError, OSError):
         return False
@@ -1324,6 +1328,107 @@ def print_compose_diagnostics(
         )
         if result.stdout.strip():
             print(result.stdout.rstrip(), file=sys.stderr)
+
+
+def redact_diagnostic(text: str) -> str:
+    text = re.sub(r"(https?://|postgres(?:ql)?://)[^\s/@]+:[^\s/@]+@", r"\1<redacted>@", text)
+    text = re.sub(r"(?i)(bearer\s+)\S+", r"\1<redacted>", text)
+    return re.sub(r"(?i)((?:_authToken|_auth|password|authorization)\s*[=:]\s*)\S+", r"\1<redacted>", text)
+
+
+def run_logged(command: Sequence[str], *, cwd: Path, env: dict[str, str], log_path: Path) -> subprocess.CompletedProcess[str]:
+    """Stream output and retain build errors even before any container exists."""
+    # Docker's UTF-8 progress symbols may not exist in a redirected Windows
+    # console code page. Retain UTF-8 in the file and avoid a console crash.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", encoding="utf-8") as log:
+        log.write(f"{iso_now()}\n{display_command(command)}\n")
+        log.flush()
+        with subprocess.Popen(
+            list(command), cwd=str(cwd), env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+        ) as process:
+            assert process.stdout is not None
+            for line in process.stdout:
+                safe_line = redact_diagnostic(line)
+                print(safe_line, end="", flush=True)
+                log.write(safe_line)
+                log.flush()
+            code = process.wait()
+        log.write(f"\nexit: {code}\n")
+    return subprocess.CompletedProcess(list(command), code)
+
+
+def migration_checksum_report(source_root: Path, history: str) -> list[dict[str, Any]]:
+    known = {}
+    for path in (source_root / "backend/migrations").glob("*.sql"):
+        version = int(path.name.split("_", 1)[0])
+        lf = path.read_bytes().replace(b"\r\n", b"\n")
+        known[version] = {
+            "file": path.name, "lf": hashlib.sha384(lf).hexdigest(),
+            "crlf": hashlib.sha384(lf.replace(b"\n", b"\r\n")).hexdigest(),
+        }
+    report = []
+    for line in history.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 3 or not parts[0].isdigit():
+            continue
+        version = int(parts[0])
+        source = known.get(version, {})
+        status = "unknown"
+        if parts[1] != "t":
+            status = "dirty"
+        elif not source:
+            status = "missing-source"
+        elif parts[2] == source.get("lf"):
+            status = "LF"
+        elif parts[2] == source.get("crlf"):
+            status = "CRLF-compatible"
+        report.append({"version": version, "status": status, "databaseChecksum": parts[2], **source})
+    return report
+
+
+def command_doctor(args: argparse.Namespace, project_root: Path) -> int:
+    """Read-only runtime inspection: no reset, no SQL UPDATE, no env dump."""
+    state = load_state(project_root)
+    source_root = active_source_root(project_root, state)
+    port = configured_web_port(state)
+    env = compose_environment(port, str(state.get("bindAddress", "127.0.0.1")), configured_image_tag(state))
+    report: dict[str, Any] = {"createdAt": iso_now(), "sourceFingerprint": source_fingerprint(source_root), "checks": []}
+    destination = project_root / ".dev-bootstrap/diagnostics" / (datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f") + ".json")
+    try:
+        docker = docker_executable()
+        commands = [
+            ("docker-version", [docker, "version"]),
+            ("docker-context", [docker, "context", "show"]),
+            ("compose-version", [docker, "compose", "version"]),
+            ("buildx-version", [docker, "buildx", "version"]),
+            ("containers", compose_command(source_root, "ps", "--all")),
+            ("logs", compose_command(source_root, "logs", "--no-color", "--tail", "100")),
+            ("migration-history", compose_command(source_root, "exec", "-T", "postgres", "psql", "-X", "-U", "p2pkanban", "-d", "p2pkanban", "-At", "-c", "SELECT version, success, encode(checksum, 'hex') FROM _sqlx_migrations ORDER BY version")),
+        ]
+        for name, command in commands:
+            try:
+                result = run_capture(command, cwd=source_root, env=env, timeout=30)
+                output = redact_diagnostic(result.stdout)
+                report["checks"].append({"name": name, "exitCode": result.returncode, "output": output})
+                print(f"{name}: {'OK' if result.returncode == 0 else 'недоступно'}")
+                if name == "migration-history" and result.returncode == 0:
+                    report["migrations"] = migration_checksum_report(source_root, output)
+                    for item in report["migrations"]:
+                        print(f"  migration {item['version']}: {item['status']}")
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                report["checks"].append({"name": name, "error": redact_diagnostic(str(exc))})
+        report["healthy"] = http_ready(f"http://127.0.0.1:{port}/healthz")
+    except BootstrapError as exc:
+        report["error"] = str(exc)
+        report["healthy"] = False
+    write_json_object(destination, report, private=True)
+    print(f"Диагностика: {destination}")
+    print("Данные и секреты узла не изменялись.")
+    return 0 if report.get("healthy") else 1
 
 
 def require_free_space(project_root: Path) -> None:
@@ -1809,14 +1914,18 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
         )
 
     print("Запускаю p2pKanban. Первый запуск может занять несколько минут.")
-    completed = subprocess.run(
+    log_path = project_root / ".dev-bootstrap/container-runs" / (datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f") + "_start.log")
+    print(f"Лог запуска: {log_path}")
+    completed = run_logged(
         command,
-        cwd=str(source_root),
+        cwd=source_root,
         env=env,
-        check=False,
+        log_path=log_path,
     )
     if completed.returncode != 0:
-        message = "Docker Compose не смог собрать или запустить контейнеры."
+        message = ("Docker Compose не смог собрать или запустить контейнеры. "
+                   f"Лог сборки: {log_path}. Диагностика: python bootstrap.py doctor. "
+                   "При migration checksum mismatch не выполняйте reset: данные можно сохранить.")
         write_state(
             project_root,
             stack_state(
@@ -2584,6 +2693,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Показать контейнеры и доступность web.")
     status.set_defaults(func=command_status)
+
+    doctor = subparsers.add_parser("doctor", help="Сохранить диагностику Docker и контрольных сумм миграций без изменения БД.")
+    doctor.set_defaults(func=command_doctor)
 
     watch_updates = subparsers.add_parser(
         "watch-updates",

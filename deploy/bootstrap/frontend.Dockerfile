@@ -1,10 +1,13 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-alpine AS builder
+# Pin the exact Node image identified in the field logs; npm is pinned below.
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
 
 WORKDIR /source/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+COPY deploy/bootstrap/npm-install.mjs /opt/p2pkanban/npm-install.mjs
+RUN node /opt/p2pkanban/npm-install.mjs install --global npm@11.9.0 \
+    && node /opt/p2pkanban/npm-install.mjs ci
 COPY frontend ./
 
 ARG VITE_API_BASE_URL=/api/v1

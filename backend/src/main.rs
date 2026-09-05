@@ -1,12 +1,12 @@
 use anyhow::Context;
-use sqlx::migrate::Migrator;
 
 use p2p_planner_backend::{
-    app::build_app, config::Settings, db::pool::create_pool, state::AppState,
+    app::build_app,
+    config::Settings,
+    db::{migrations::run_migrations, pool::create_pool},
+    state::AppState,
     telemetry::init_tracing, transports::spawn_workers,
 };
-
-static MIGRATOR: Migrator = sqlx::migrate!();
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,8 +18,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to connect to postgres")?;
 
-    MIGRATOR
-        .run(&db)
+    run_migrations(&db)
         .await
         .context("failed to run database migrations")?;
 

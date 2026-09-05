@@ -6,6 +6,7 @@ WORKDIR /source
 COPY backend ./backend
 RUN cargo build \
     --manifest-path backend/Cargo.toml \
+    --locked \
     --release \
     --bin p2p-planner-backend
 
