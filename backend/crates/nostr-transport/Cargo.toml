@@ -10,7 +10,7 @@ anyhow = "1"
 base64 = "0.22"
 chacha20poly1305 = "0.10"
 hmac = "0.12"
-nostr-sdk = "0.44"
+nostr-sdk = {version="0.44",features=["nip44"]}
 p2p-kanban-sync-core = { path = "../sync-core" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }

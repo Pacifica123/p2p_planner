@@ -92,25 +92,28 @@ pub async fn create_roaming_capability(
                     &payload.board_id.to_string(),
                 )
                 .map_err(|_| AppError::internal())?;
-            sqlx::query(
+            let stored = sqlx::query_as::<_, (String, String)>(
                 r#"
                 insert into roaming_board_capabilities (
                   board_id, board_tag, board_key_base64, source_kind, capability_epoch
                 ) values ($1, $2, $3, 'linked_node', $4)
                 on conflict (board_id) do update set
-                  board_tag = excluded.board_tag,
-                  board_key_base64 = excluded.board_key_base64,
+                  board_tag = case when roaming_board_capabilities.capability_epoch = excluded.capability_epoch then roaming_board_capabilities.board_tag else excluded.board_tag end,
+                  board_key_base64 = case when roaming_board_capabilities.capability_epoch = excluded.capability_epoch then roaming_board_capabilities.board_key_base64 else excluded.board_key_base64 end,
                   capability_epoch = excluded.capability_epoch,
                   updated_at = now()
+                returning board_tag, board_key_base64
                 "#,
             )
             .bind(payload.board_id)
             .bind(&material.board_tag)
             .bind(&material.board_key)
             .bind(access_epoch)
-            .execute(&state.db)
+            .fetch_one(&state.db)
             .await?;
-            material
+            let winning = p2p_kanban_nostr_transport::NostrCodec::roaming_capability_from_board_key(&payload.board_id.to_string(), &stored.1).map_err(|_| AppError::internal())?;
+            if winning.board_tag != stored.0 { return Err(AppError::internal()); }
+            winning
         };
 
         if let Some(author_public_key) = &author_public_key {
@@ -168,6 +171,10 @@ pub async fn create_roaming_capability(
         .fetch_one(&state.db)
         .await?;
 
+        let mut delegation_roots=sqlx::query_scalar::<_,String>("select distinct author_public_key from roaming_board_authorizations where board_id=$1 and role='owner' and capability_epoch=$2 and revoked_at is null union select root_key from roaming_device_grants where board_id=$1 and epoch=$2").bind(payload.board_id).bind(access_epoch).fetch_all(&state.db).await?;
+        delegation_roots.push(p2p_kanban_nostr_transport::device_link::public_key(nostr.secret_key.as_deref().ok_or_else(AppError::internal)?).map_err(|_|AppError::internal())?);
+        delegation_roots.sort();delegation_roots.dedup();
+        let delegation_chain=if role=="owner"{if let Some(author)=&author_public_key{crate::auth::device_link::issue_chain(state,payload.board_id,auth.user_id,author).await?}else{vec![]}}else{vec![]};
         Ok(RoamingCapabilityResponse {
             format_version: 1,
             protocol_version: material.protocol_version,
@@ -177,7 +184,7 @@ pub async fn create_roaming_capability(
             board_key: material.board_key,
             capability_epoch: access_epoch,
             can_write,
-            writer_public_keys,
+            writer_public_keys,delegation_roots,delegation_chain,
             relays: nostr.relays.clone(),
             event_kind: nostr
                 .event_kind

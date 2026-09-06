@@ -1,3 +1,4 @@
+pub mod projects;
 pub mod dto;
 pub mod handler;
 pub mod provider;
@@ -11,7 +12,9 @@ use axum::{
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new()
+    Router::new().route("/integrations/projects",get(projects::list).post(projects::create))
+      .route("/integrations/projects/{projectId}/receipts",get(projects::receipts).post(projects::ingest))
+      .route("/integrations/projects/{projectId}/receipts/preview",post(projects::preview))
         .route("/integrations/providers", get(handler::list_providers))
         .route(
             "/integrations/providers/{providerKey}",

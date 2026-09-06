@@ -283,7 +283,7 @@ pub async fn create_card(
     .bind(payload.column_id)
     .bind(payload.parent_card_id)
     .bind(payload.title.trim())
-    .bind(trim_to_option(payload.description))
+    .bind(payload.description.filter(|s| !s.is_empty()))
     .bind(position)
     .bind(payload.priority)
     .bind(payload.start_at)
@@ -431,7 +431,7 @@ pub async fn update_card(
     let before = fetch_card(pool, card_id).await?;
     let title = payload.title.map(|v| v.trim().to_string());
     let description_changed = payload.description.is_some();
-    let description = payload.description.map(trim_to_option);
+    let description = payload.description.map(|v| v.filter(|s| !s.is_empty()));
     let start_at = payload.start_at.clone();
     let due_at = payload.due_at.clone();
     let row = sqlx::query(

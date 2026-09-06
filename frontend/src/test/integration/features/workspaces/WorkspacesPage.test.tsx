@@ -1,3 +1,4 @@
+vi.mock('@/app/providers/AuthSessionProvider', () => ({ useAuthSession: () => ({ refreshCurrentSession: vi.fn() }) }));
 import userEvent from '@testing-library/user-event';
 import { screen, waitFor } from '@testing-library/react';
 import { WorkspacesPage } from '@/features/workspaces/pages/WorkspacesPage';

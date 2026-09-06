@@ -1,3 +1,4 @@
+import {DeviceLinkPanel} from '@/features/deviceLink/DeviceLinkPanel';
 import { FormEvent, useMemo, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/shared/api/errors';
@@ -57,6 +58,7 @@ export function AuthPage() {
 
   return (
     <div className="content-stack" data-testid="auth-page" style={{ maxWidth: 560, margin: '40px auto' }}>
+      <DeviceLinkPanel destination/>
       <Panel title="p2pKanban" description="Ваши доски в собственном локальном окружении.">
         <div className="toolbar">
           <Button data-testid="auth-mode-sign-in" variant={mode === 'sign_in' ? 'primary' : 'default'} onClick={() => setMode('sign_in')}>

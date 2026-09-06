@@ -263,6 +263,7 @@ impl IntegrationProvider for WebhookBridgeProvider {
 
 pub fn builtin_providers() -> Vec<Box<dyn IntegrationProvider>> {
     vec![
+        Box::new(DevctlProvider),
         Box::new(ObsidianProvider),
         Box::new(GithubProvider),
         Box::new(ImportExportProvider),
@@ -276,3 +277,10 @@ pub fn find_provider(provider_key: &str) -> Option<IntegrationProviderDetailResp
         (manifest.provider.key == provider_key).then_some(manifest)
     })
 }
+
+pub struct DevctlProvider;
+impl IntegrationProvider for DevctlProvider{fn manifest(&self)->IntegrationProviderDetailResponse{IntegrationProviderDetailResponse{
+ provider:IntegrationProviderSummary{key:"devctl".into(),display_name:"devctl project evidence".into(),provider_type:"local_tool".into(),status:"available".into(),auth_mode:"explicit_authenticated_import".into(),supports_import:true,supports_export:true,supports_inbound_webhooks:false,supports_outbound_webhooks:false},
+ import_touchpoints:vec![IntegrationTouchpoint{key:"receipt".into(),direction:"import".into(),payload_format:"p2pkanban_devctl_receipt/1".into(),description:"Preview and idempotent evidence ingestion".into(),status:"available".into()}],
+ export_touchpoints:vec![IntegrationTouchpoint{key:"project_binding".into(),direction:"export".into(),payload_format:".p2pkanban/project.json/1".into(),description:"Public project/component/resource/work scope identifiers".into(),status:"available".into()}],
+ domain_event_subscriptions:vec![],inbound_webhook:None,outbound_webhook:None,boundary_rules:vec!["No shell execution or automatic transitions".into()],notes:vec!["User-supplied evidence, node-local storage".into()]}}}

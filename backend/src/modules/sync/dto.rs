@@ -171,6 +171,8 @@ pub struct RoamingCapabilityResponse {
     pub capability_epoch: i64,
     pub can_write: bool,
     pub writer_public_keys: Vec<String>,
+    pub delegation_roots:Vec<String>,
+    pub delegation_chain:Vec<serde_json::Value>,
     pub relays: Vec<String>,
     pub event_kind: u16,
     pub minimum_relay_acks: usize,

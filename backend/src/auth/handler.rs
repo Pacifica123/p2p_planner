@@ -21,7 +21,7 @@ use super::{
     service,
 };
 
-fn response_with_cookies<T: serde::Serialize>(
+pub(super) fn response_with_cookies<T: serde::Serialize>(
     status: StatusCode,
     data: T,
     cookies: &[String],

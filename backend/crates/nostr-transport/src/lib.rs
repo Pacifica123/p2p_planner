@@ -1,3 +1,4 @@
+pub mod device_link;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};

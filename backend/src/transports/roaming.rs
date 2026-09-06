@@ -407,7 +407,7 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
         } else {
             json!({ "card": card })
         };
-        let event = RoamingBoardEvent {
+        let mut event = RoamingBoardEvent {
             protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
             event_id: outbox_id.to_string(),
             workspace_id: row.try_get::<Uuid, _>("workspace_id").unwrap().to_string(),
@@ -430,6 +430,8 @@ async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) 
             .try_get::<Option<String>, _>("board_key_base64")
             .ok()
             .flatten();
+        let delegation=sqlx::query_scalar::<_,Value>("select chain_json from roaming_device_grants where board_id=$1 and epoch=$2").bind(Uuid::parse_str(&event.board_id).unwrap_or_default()).bind(event.capability_epoch).fetch_optional(pool).await;
+        match delegation{Ok(Some(chain))=>event.payload["_deviceDelegation"]=chain,Ok(None)=>{},Err(error)=>{tracing::warn!(%error,"Cannot load delegation; outbox remains pending");continue;}}
         let delivery = match imported_board_key.as_deref() {
             Some(board_key) => {
                 transport
@@ -535,7 +537,7 @@ async fn publish_pending_board_settings(pool: &PgPool, transport: &NostrTranspor
             Err(_) => continue,
         };
         let logical_clock = row.try_get::<i64, _>("logical_clock").unwrap_or(1);
-        let event = RoamingBoardEvent {
+        let mut event = RoamingBoardEvent {
             protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
             event_id: outbox_id.to_string(),
             workspace_id: row
@@ -567,6 +569,8 @@ async fn publish_pending_board_settings(pool: &PgPool, transport: &NostrTranspor
             .try_get::<Option<String>, _>("board_key_base64")
             .ok()
             .flatten();
+        let delegation=sqlx::query_scalar::<_,Value>("select chain_json from roaming_device_grants where board_id=$1 and epoch=$2").bind(Uuid::parse_str(&event.board_id).unwrap_or_default()).bind(event.capability_epoch).fetch_optional(pool).await;
+        match delegation{Ok(Some(chain))=>event.payload["_deviceDelegation"]=chain,Ok(None)=>{},Err(error)=>{tracing::warn!(%error,"Cannot load delegation; outbox remains pending");continue;}}
         let delivery = match imported_board_key.as_deref() {
             Some(board_key) => {
                 transport
@@ -1944,6 +1948,15 @@ async fn roaming_event_actor(
         return Ok(actor);
     }
 
+    if let Some(raw)=event.payload.get("_deviceDelegation"){
+      let chain:Vec<Value>=serde_json::from_value(raw.clone())?;
+      let(root,g)=p2p_kanban_nostr_transport::device_link::verify_chain(&chain,&recovered.author_public_key,p2p_kanban_nostr_transport::device_link::now())?;
+      anyhow::ensure!(g.board_id==board_id.to_string()&&g.workspace_id==workspace_id.to_string()&&g.epoch==current_epoch,"delegation scope mismatch");
+      let user=Uuid::parse_str(&g.user_id)?;
+      let trusted=sqlx::query_scalar::<_,bool>("select exists(select 1 from roaming_board_authorizations a join workspaces w on w.id=a.workspace_id where a.board_id=$1 and a.author_public_key=$2 and a.role='owner' and a.user_id=$3 and w.owner_user_id=$3 and a.capability_epoch=$4 and a.revoked_at is null)").bind(board_id).bind(&root).bind(user).bind(current_epoch).fetch_one(pool).await?;
+      let pinned=sqlx::query_scalar::<_,bool>("select exists(select 1 from roaming_device_grants g join workspaces w on w.id=$3 where g.board_id=$1 and g.root_key=$2 and g.user_id=$4 and g.epoch=$5 and w.owner_user_id=$4 and w.deleted_at is null)").bind(board_id).bind(&root).bind(workspace_id).bind(user).bind(current_epoch).fetch_one(pool).await?;
+      anyhow::ensure!(trusted||pinned,"unknown delegation root");return Ok(user);
+    }
     // Compatibility for capabilities issued before authorization binding
     // existed. Epoch 1 keys were only provisioned to legacy owner/admin
     // clients; every membership mutation moves the workspace past this path.

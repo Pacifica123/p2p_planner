@@ -1,3 +1,4 @@
+import {DeviceLinkPanel} from '@/features/deviceLink/DeviceLinkPanel';
 import { FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { paths } from '@/app/router/paths';
@@ -68,6 +69,7 @@ export function WorkspacesPage() {
 
   return (
     <div className="page-shell" data-testid="workspace-list-page">
+      <DeviceLinkPanel/>
       <section className="page-header">
         <div>
           <h2>Рабочие пространства</h2>

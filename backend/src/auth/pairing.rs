@@ -45,18 +45,12 @@ pub async fn export_node_link(
     state: &AppState,
     payload: NodeLinkExportRequest,
 ) -> AppResult<NodeLinkExportResponse> {
-    #[cfg(not(feature = "nostr-shadow"))]
-    {
-        let _ = (state, payload);
-        return Err(AppError::conflict(
-            "This backend build does not include linked web-node sync",
-        ));
-    }
-
-    #[cfg(feature = "nostr-shadow")]
-    {
-        let user =
-            authenticate_user_with_password(state, &payload.email, &payload.password).await?;
+    let user=authenticate_user_with_password(state,&payload.email,&payload.password).await?;
+    export_for_user(state,user).await
+}
+pub(super) async fn export_for_user(state:&AppState,user:repo::AuthUserRecord)->AppResult<NodeLinkExportResponse>{
+ #[cfg(not(feature="nostr-shadow"))]{let _=(state,user);return Err(AppError::conflict("Nostr support is required"));}
+ #[cfg(feature="nostr-shadow")]{
         let nostr = &state.settings.transports.nostr;
         if !nostr.enabled {
             return Err(AppError::conflict(
@@ -122,7 +116,7 @@ pub async fn export_node_link(
 
         let board_rows = sqlx::query(
             r#"
-            select b.id, rbc.board_tag, rbc.board_key_base64
+            select b.id, w.access_epoch, rbc.board_tag, rbc.board_key_base64
             from boards b
             join workspaces w on w.id = b.workspace_id
             left join roaming_board_capabilities rbc on rbc.board_id = b.id
@@ -158,10 +152,13 @@ pub async fn export_node_link(
                     .roaming_capability(&board_id.to_string())
                     .map_err(|_| AppError::internal())?
             };
+            // Pin exported keys so later capability provisioning reuses them.
+            let stored = sqlx::query_as::<_, (String, String)>(
+                "insert into roaming_board_capabilities (board_id,board_tag,board_key_base64,source_kind,capability_epoch) values ($1,$2,$3,'linked_node',$4) on conflict (board_id) do update set board_id=excluded.board_id returning board_tag,board_key_base64"
+            ).bind(board_id).bind(&material.board_tag).bind(&material.board_key)
+                .bind(row.try_get::<i64,_>("access_epoch")?).fetch_one(&state.db).await?;
             board_capabilities.push(NodeLinkBoardCapabilitySnapshot {
-                board_id,
-                board_tag: material.board_tag,
-                board_key: material.board_key,
+                board_id, board_tag: stored.0, board_key: stored.1,
             });
         }
 
@@ -362,7 +359,7 @@ pub async fn import_node_link(
     }
 }
 
-async fn ensure_empty_destination(state: &AppState) -> AppResult<()> {
+pub(super) async fn ensure_empty_destination(state: &AppState) -> AppResult<()> {
     let occupied = sqlx::query_scalar::<_, bool>(
         r#"
         select exists(select 1 from users)
@@ -427,7 +424,7 @@ fn source_export_endpoint(source_url: &str) -> AppResult<reqwest::Url> {
 }
 
 #[cfg(feature = "nostr-shadow")]
-fn validate_remote_snapshot(
+pub(super) fn validate_remote_snapshot(
     state: &AppState,
     remote: &NodeLinkExportResponse,
     expected_email: &str,
@@ -614,7 +611,7 @@ fn value_uuid(value: &Value, field: &str) -> AppResult<Uuid> {
         .map_err(|_| AppError::bad_request(format!("В снимке некорректный {field}")))
 }
 
-async fn import_user(
+pub(super) async fn import_user(
     tx: &mut Transaction<'_, Postgres>,
     remote: &NodeLinkExportResponse,
     password_hash: &str,
@@ -634,7 +631,7 @@ async fn import_user(
     Ok(())
 }
 
-async fn import_workspace_bundle(
+pub(super) async fn import_workspace_bundle(
     tx: &mut Transaction<'_, Postgres>,
     user_id: Uuid,
     bundle: &PortableBundle,
@@ -866,7 +863,7 @@ async fn import_workspace_bundle(
     Ok(())
 }
 
-async fn import_user_appearance(
+pub(super) async fn import_user_appearance(
     tx: &mut Transaction<'_, Postgres>,
     user_id: Uuid,
     appearance: Option<&NodeLinkUserAppearanceSnapshot>,
@@ -894,7 +891,7 @@ async fn import_user_appearance(
     Ok(())
 }
 
-async fn import_board_capabilities(
+pub(super) async fn import_board_capabilities(
     tx: &mut Transaction<'_, Postgres>,
     capabilities: &[NodeLinkBoardCapabilitySnapshot],
 ) -> AppResult<()> {
@@ -916,7 +913,7 @@ async fn import_board_capabilities(
     Ok(())
 }
 
-async fn import_card_tombstones(
+pub(super) async fn import_card_tombstones(
     tx: &mut Transaction<'_, Postgres>,
     tombstones: &[NodeLinkCardTombstoneSnapshot],
 ) -> AppResult<()> {

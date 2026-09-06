@@ -1,3 +1,6 @@
+import {DevctlPanel} from '@/features/integrations/components/DevctlPanel';
+import {orderCards} from '@/shared/lib/cardOrder';
+import {PriorityStars} from '@/shared/ui/PriorityStars';
 import { DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { paths } from '@/app/router/paths';
@@ -37,20 +40,6 @@ import { ErrorState } from '@/shared/ui/ErrorState';
 import { Icon } from '@/shared/ui/Icon';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { useWorkspacesQuery } from '@/features/workspaces/hooks/useWorkspaces';
-
-const priorityTone: Record<string, string> = {
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  urgent: 'urgent',
-};
-
-const priorityLabel: Record<string, string> = {
-  high: 'высокий',
-  low: 'низкий',
-  medium: 'средний',
-  urgent: 'срочно',
-};
 
 interface DragSessionState extends CardMoveIntent {
   overColumnId: string;
@@ -98,6 +87,7 @@ export function BoardPage() {
   const [isColumnComposerOpen, setColumnComposerOpen] = useState(false);
   const [isActivityOpen, setActivityOpen] = useState(false);
   const [isHiddenCardsOpen, setHiddenCardsOpen] = useState(false);
+  const [prioritySort,setPrioritySort]=useState<Record<string,boolean>>({});
   const dropHandledRef = useRef(false);
 
   const hasPendingCardMove = localFirst.isFlushing;
@@ -323,7 +313,7 @@ export function BoardPage() {
     const rows: ReactNode[] = [];
     let visibleIndex = 0;
 
-    cards.forEach((card) => {
+    orderCards(cards, Boolean(prioritySort[columnId])).forEach((card) => {
       const isDraggedCard = dragCardId === card.id;
       if (!isDraggedCard && dropIndex === visibleIndex) {
         rows.push(<div key={`drop-${columnId}-${visibleIndex}`} className="card-drop-indicator">Переместить сюда</div>);
@@ -334,11 +324,11 @@ export function BoardPage() {
       rows.push(
         <div key={card.id} className="card-slot">
           <article
-            draggable={Boolean(canEdit && !hasPendingCardMove)}
+            draggable={Boolean(canEdit && !hasPendingCardMove && !prioritySort[columnId])}
             className={`card-tile ${boardAppearance?.cardPreviewMode === 'compact' ? 'card-tile--compact' : ''} ${isDraggedCard ? 'card-tile--ghosted' : ''}`}
             data-testid="card-tile"
             onDragStart={(event) => handleCardDragStart(card, cards, event)}
-            onDragOver={(event) => handleCardDragOver(columnId, currentVisibleIndex, event)}
+            onDragOver={event=>{if(!prioritySort[columnId])handleCardDragOver(columnId,currentVisibleIndex,event);}}
             onDragEnd={handleCardDragEnd}
             onClick={() => {
               if (dragSession) return;
@@ -373,7 +363,7 @@ export function BoardPage() {
               </div>
             ) : null}
             <div className="card-tile__footer">
-              {card.priority ? <Badge tone={priorityTone[card.priority] || 'default'}>{priorityLabel[card.priority] || card.priority}</Badge> : null}
+              <PriorityStars value={card.priority}/>
               {localFirst.getEntityStatus('card', card.id)?.status === 'pending' ? <Badge tone="warning">сохранено локально</Badge> : null}
               {localFirst.getEntityStatus('card', card.id)?.status === 'failed' ? <Badge tone="urgent">ошибка синхронизации</Badge> : null}
               {(boardAppearance?.showCardDates ?? true) && card.dueAt ? <Badge tone="default">до {formatDateTime(card.dueAt)}</Badge> : null}
@@ -507,6 +497,7 @@ export function BoardPage() {
               cardCount={currentCards.length}
             />
             <ProductivityGraph boardId={boardId} />
+            <DevctlPanel key={boardId} boardId={boardId} canCreate={workspace?.currentUserRole==='owner'} canImport={canEdit}/>
             <div className="board-main">
               {orderedColumns.length ? (
                 <div className="columns-strip columns-strip--board-surface">
@@ -526,7 +517,7 @@ export function BoardPage() {
                         readOnly={!canEdit}
                         onRename={(item) => void handleRenameColumn(item)}
                         onDelete={(item) => void handleDeleteColumn(item)}
-                        onColumnDragOver={handleColumnDragOver}
+                        prioritySorted={Boolean(prioritySort[column.id])} onTogglePriority={()=>{setDragSession(null);setPrioritySort(current=>({...current,[column.id]:!current[column.id]}));}} onColumnDragOver={(id,count,event)=>{if(!prioritySort[id])handleColumnDragOver(id,count,event);}}
                         onDrop={(event) => void handleCardDrop(event)}
                         cardsContent={renderColumnCards(column.id, cards)}
                       />

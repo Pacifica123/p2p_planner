@@ -1,3 +1,5 @@
+import {MarkdownEditor} from '@/shared/markdown/MarkdownEditor';
+import {PriorityStars} from '@/shared/ui/PriorityStars';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAppearance } from '@/app/providers/AppearanceProvider';
@@ -62,14 +64,6 @@ import {
   toLocalDateTimeInput,
   updateLocalCardReminderTitle,
 } from '@/features/reminders/lib/localReminders';
-
-const PRIORITY_OPTIONS = [
-  { value: '', label: '—' },
-  { value: 'low', label: 'Низкий' },
-  { value: 'medium', label: 'Средний' },
-  { value: 'high', label: 'Высокий' },
-  { value: 'urgent', label: 'Срочный' },
-];
 
 export function CardDetailsDrawer({
   boardAppearance,
@@ -197,7 +191,7 @@ export function CardDetailsDrawer({
 
     const nextCardInput = {
       title: title.trim(),
-      description: description.trim() || null,
+      description: description || null,
       priority: priority || null,
     };
 
@@ -378,7 +372,7 @@ export function CardDetailsDrawer({
   async function handleCreateComment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const body = newCommentBody.trim();
-    if (!body) return;
+    if (!body || readOnly || createCommentMutation.isPending) return;
     await createCommentMutation.mutateAsync(body);
     setNewCommentBody('');
   }
@@ -432,14 +426,8 @@ export function CardDetailsDrawer({
             ) : null}
             <div className="grid" style={{ gap: 14 }}>
               <TextField label="Название" value={title} disabled={readOnly} onChange={(event) => setTitle(event.target.value)} />
-              <TextAreaField label="Описание" value={description} disabled={readOnly} onChange={(event) => setDescription(event.target.value)} />
-              <SelectField label="Приоритет" value={priority ?? ''} disabled={readOnly} onChange={(event) => setPriority(event.target.value ? (event.target.value as CardPriority) : null)}>
-                {PRIORITY_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </SelectField>
+              <MarkdownEditor value={description} onChange={setDescription} readOnly={readOnly}/>
+              <PriorityStars value={priority} onChange={setPriority} disabled={readOnly}/>
               <SelectField label="Колонка · это статус карточки" value={columnId} disabled={readOnly} onChange={(event) => setColumnId(event.target.value)}>
                 {columnOptions.map((column) => (
                   <option key={column.id} value={column.id}>
@@ -637,7 +625,7 @@ export function CardDetailsDrawer({
                 </div>
               </div>
               <form className="grid" style={{ gap: 10 }} onSubmit={handleCreateComment}>
-                <TextAreaField label="Новый комментарий" value={newCommentBody} disabled={readOnly} onChange={(event) => setNewCommentBody(event.target.value)} placeholder="Оставить заметку по карточке…" />
+                <TextAreaField label="Новый комментарий" value={newCommentBody} disabled={readOnly} onKeyDown={event => { if (shouldSubmitChecklistItem(effectiveUserAppearance?.checklistItemSubmitMode || 'ctrl_enter', {...event,isComposing:event.nativeEvent.isComposing})) { event.preventDefault(); if(!createCommentMutation.isPending) event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setNewCommentBody(event.target.value)} placeholder="Оставить заметку по карточке…" />
                 <Button type="submit" variant="primary" disabled={readOnly || createCommentMutation.isPending}><Icon name="plus" size={16} /> Добавить</Button>
               </form>
               {commentsQuery.isLoading ? <LoadingState label="Загружаем комментарии…" compact /> : null}

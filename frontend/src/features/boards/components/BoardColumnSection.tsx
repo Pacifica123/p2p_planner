@@ -13,6 +13,7 @@ interface BoardColumnSectionProps {
   isDropTarget: boolean;
   isMutating: boolean;
   readOnly?: boolean;
+  prioritySorted:boolean; onTogglePriority:()=>void;
   onRename: (column: BoardColumn) => void;
   onDelete: (column: BoardColumn) => void;
   onColumnDragOver: (columnId: string, itemCount: number, event: DragEvent<HTMLElement>) => void;
@@ -27,7 +28,7 @@ export function BoardColumnSection({
   cardsWithoutDragged,
   isDropTarget,
   isMutating,
-  readOnly = false,
+  readOnly = false, prioritySorted, onTogglePriority,
   onRename,
   onDelete,
   onColumnDragOver,
@@ -56,6 +57,7 @@ export function BoardColumnSection({
         </div> : null}
       </div>
 
+      <Button aria-pressed={prioritySorted} onClick={onTogglePriority} title="Ручной порядок сохранён">{prioritySorted?'★ Сначала важные · вернуть ручной':'☆ По приоритету'}</Button>
       {!readOnly ? <div className="column-card__composer">
         <CreateCardInlineForm columnId={column.id} boardId={boardId} />
       </div> : null}
