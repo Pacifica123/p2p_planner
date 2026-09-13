@@ -53,3 +53,35 @@ if (attempts.length === 1 || process.env.FAKE_NPM_MODE === 'always') { console.e
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('network retry reuses verified downloaded packages', { skip: process.platform === 'win32' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'p2pkanban-network-test-'));
+  try {
+    writeFileSync(join(root, 'package-lock.json'), '{}');
+    writeFileSync(join(root, 'npm'), `#!/usr/bin/env node
+const fs=require('node:fs');
+if(process.argv.includes('--version'))process.exit(0);
+let a=[];try{a=JSON.parse(fs.readFileSync('attempts.json'))}catch{}
+a.push(process.env.npm_config_cache);fs.writeFileSync('attempts.json',JSON.stringify(a));
+if(a.length===1){console.error('ECONNRESET');process.exit(1)}
+`, {mode:0o755});
+    const result=spawnSync(process.execPath,[join(dirname(fileURLToPath(import.meta.url)),'npm-install.mjs'),'ci'],{cwd:root,encoding:'utf8',timeout:15000,env:{...process.env,PATH:`${root}${delimiter}${process.env.PATH}`}});
+    assert.equal(result.status,0,result.stderr);
+    const a=JSON.parse(readFileSync(join(root,'attempts.json')));assert.equal(a.length,2);assert.equal(a[0],a[1]);
+  } finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test('watchdog allows progress, but terminates silent or overlong installs', {skip:process.platform==='win32'}, async()=>{
+  const {execute}=await import('./npm-install.mjs');
+  const root=mkdtempSync(join(tmpdir(),'p2pkanban-watchdog-'));
+  try {
+    writeFileSync(join(root,'npm'),`#!/usr/bin/env node
+if(process.env.MODE==='silent')setInterval(()=>{},1000);
+else {const t=setInterval(()=>console.log('download progress'),50);setTimeout(()=>{clearInterval(t)},500)}
+`,{mode:0o755});
+    const env={...process.env,PATH:`${root}${delimiter}${process.env.PATH}`};
+    assert.equal((await execute(['ci'],env,2000,250)).code,0);
+    assert.equal((await execute(['ci'],{...env,MODE:'silent'},2000,100)).code,124);
+    assert.equal((await execute(['ci'],env,200,250)).code,124);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});

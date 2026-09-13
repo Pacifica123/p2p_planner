@@ -19,27 +19,35 @@ export function shouldRetry(output) {
   return /Exit handler never called|\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b|\bE5\d\d\b/i.test(output);
 }
 
-function execute(args, env, timeoutMs = 600_000) {
+export function execute(args, env, timeoutMs = 1_800_000, idleMs = 300_000) {
   return new Promise((resolve) => {
-    const child = spawn('npm', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('npm', args, { env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    const terminate = (signal) => { try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, signal); else child.kill(signal); } catch {} };
     let tail = '';
     let timedOut = false;
     let killTimer;
+    let lastActivity = Date.now();
     const capture = (chunk) => {
       const value = chunk.toString();
+      lastActivity = Date.now();
       tail = (tail + value).slice(-262144);
       process.stdout.write(redact(value));
     };
     child.stdout.on('data', capture);
     child.stderr.on('data', capture);
-    const timer = setTimeout(() => {
+    const stop = (reason) => {
+      if (timedOut) return;
       timedOut = true;
-      child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), 5_000);
-    }, timeoutMs);
+      console.error(`npm watchdog: ${reason}; retry may reuse cached packages.`);
+      terminate('SIGTERM');
+      killTimer = setTimeout(() => terminate('SIGKILL'), 5_000);
+    };
+    const timer = setTimeout(() => stop('overall time limit'), timeoutMs);
+    const idleTimer = setInterval(() => { if (Date.now() - lastActivity > idleMs) stop('no download/build output'); }, Math.min(idleMs, 5000));
     child.on('error', (error) => { tail += String(error); });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
+      clearInterval(idleTimer);
       clearTimeout(killTimer);
       resolve({ code: timedOut ? 124 : (code ?? 1), output: tail, signal, timedOut });
     });
@@ -66,14 +74,21 @@ export async function install(args) {
   const before = args[0] === 'ci' ? lockHash() : null;
   console.log(`Build environment: node=${process.version} platform=${process.platform} arch=${process.arch}`);
   await execute(['--version'], process.env, 10_000);
+  let sharedCache = process.env.P2PKANBAN_NPM_CACHE;
+  const temporaryCaches = [];
+  try {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const cache = mkdtempSync(join(tmpdir(), 'p2pkanban-npm-'));
+    const cache = sharedCache || mkdtempSync(join(tmpdir(), 'p2pkanban-npm-'));
+    if (!sharedCache) temporaryCaches.push(cache);
+    sharedCache = cache;
     try {
-      console.log(`npm ${args.join(' ')}: attempt ${attempt}/2 (isolated cache)`);
+      console.log(`npm ${args.join(' ')}: attempt ${attempt}/2 (verified npm cache)`);
       const env = {
         ...process.env,
         npm_config_cache: cache,
         npm_config_audit: 'false',
+        npm_config_loglevel: 'http',
+        npm_config_prefer_offline: 'true',
         npm_config_fund: 'false',
         npm_config_update_notifier: 'false',
         npm_config_fetch_retries: '2',
@@ -90,16 +105,18 @@ export async function install(args) {
       const debug = debugTail(cache);
       console.error(redact(debug));
       const evidence = `${result.output}\n${debug}`;
-      if (attempt === 2 || result.timedOut || !shouldRetry(evidence)) {
+      if (attempt === 2 || (!result.timedOut && !shouldRetry(evidence))) {
         console.error('Dependency installation failed. See npm output above. Check Docker build network/DNS/proxy and registry access; package-lock.json was retained.');
         return result.code;
       }
-      console.error('Transient npm failure: retrying once with a fresh cache and the same lockfile.');
+      if (/Exit handler never called/i.test(evidence)) sharedCache = null;
+      console.error('Transient npm failure or timeout: retrying once; lockfile retained, downloaded packages reused when possible.');
     } finally {
-      rmSync(cache, { recursive: true, force: true });
+      // Cache is retained until all attempts finish.
     }
   }
   return 1;
+  } finally { for (const cache of temporaryCaches) rmSync(cache, { recursive: true, force: true }); }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

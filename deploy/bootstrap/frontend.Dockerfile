@@ -6,7 +6,8 @@ FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a55
 WORKDIR /source/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 COPY deploy/bootstrap/npm-install.mjs /opt/p2pkanban/npm-install.mjs
-RUN node /opt/p2pkanban/npm-install.mjs install --global npm@11.9.0 \
+ENV P2PKANBAN_NPM_CACHE=/root/.npm
+RUN --mount=type=cache,target=/root/.npm,sharing=locked node /opt/p2pkanban/npm-install.mjs install --global npm@11.9.0 \
     && node /opt/p2pkanban/npm-install.mjs ci
 COPY frontend ./
 

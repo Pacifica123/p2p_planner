@@ -36,6 +36,9 @@ class WindowsBootstrapTests(unittest.TestCase):
         with (
             mock.patch.object(bootstrap.shutil, "which", return_value=docker),
             mock.patch.object(bootstrap, "run_capture", side_effect=run),
+            # This test isolates port retention; ownership is covered separately.
+            mock.patch.object(bootstrap.resilient, "verified_owner", return_value=True),
+            mock.patch.object(bootstrap, "is_port_available", return_value=True),
         ):
             port = bootstrap.discover_owned_web_port(Path("C:/p2pKanban"))
 

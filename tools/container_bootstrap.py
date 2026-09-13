@@ -25,13 +25,14 @@ import urllib.parse
 import urllib.request
 import webbrowser
 import zipfile
+import resilient_bootstrap as resilient
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 
-TOOL_VERSION = "1.4.0"
+TOOL_VERSION = "1.5.0"
 STATE_VERSION = 2
 COMPOSE_PROJECT = "p2pkanban-bootstrap"
 COMPOSE_RELATIVE_PATH = Path("deploy/bootstrap/compose.yaml")
@@ -204,6 +205,7 @@ def source_fingerprint(source_root: Path) -> str:
         Path("VERSION"),
         Path("bootstrap.py"),
         Path("tools/container_bootstrap.py"),
+        Path("tools/resilient_bootstrap.py"),
         UPDATE_CONTROL_RELATIVE_PATH,
         Path("backend/Cargo.toml"),
         Path("backend/Cargo.lock"),
@@ -258,6 +260,9 @@ def validate_update_source(source_root: Path) -> str:
         Path("deploy/bootstrap/maintenance.html"),
     )
     missing = [path.as_posix() for path in required if not (source_root / path).is_file()]
+    launcher = source_root / "tools/container_bootstrap.py"
+    if launcher.is_file() and "import resilient_bootstrap" in launcher.read_text(encoding="utf-8") and not (source_root / "tools/resilient_bootstrap.py").is_file():
+        missing.append("tools/resilient_bootstrap.py")
     if missing:
         raise BootstrapError(
             "Полученный источник обновления неполный. Не хватает: "
@@ -606,7 +611,12 @@ def discover_owned_web_port(project_root: Path) -> int | None:
         except json.JSONDecodeError:
             continue
         if host_port is not None:
-            return host_port
+            if not resilient.verified_owner(sys.modules[__name__], project_root, container):
+                raise BootstrapError("Найден gateway/web с именем Compose проекта p2pKanban, но не подтверждены образы и подключения data/secrets volumes. Автоматическая замена остановлена; выполните bootstrap.py doctor.")
+            if container.get("State", {}).get("Running") or is_port_available(host_port):
+                return host_port
+            # A stopped container does not own a socket now used by another process.
+            return None
     return None
 
 
@@ -1683,6 +1693,10 @@ def install_launcher_update(
         (project_root / UPDATE_CONTROL_RELATIVE_PATH, source_root / UPDATE_CONTROL_RELATIVE_PATH),
         (project_root / "bootstrap.py", source_root / "bootstrap.py"),
     )
+    helper = Path("tools/resilient_bootstrap.py")
+    if (source_root / helper).is_file():
+        pairs = ((project_root / helper, source_root / helper),) + pairs
+    existed = {destination for destination, _ in pairs if destination.exists()}
     temporary_paths: list[Path] = []
     try:
         backup_root.mkdir(parents=True, exist_ok=False)
@@ -1690,8 +1704,9 @@ def install_launcher_update(
             relative = destination.relative_to(project_root)
             backup = backup_root / relative
             backup.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(destination, backup)
+            if destination.exists(): shutil.copy2(destination, backup)
         for destination, source in pairs:
+            destination.parent.mkdir(parents=True, exist_ok=True)
             temporary = destination.with_name(f"{destination.name}.update-tmp")
             shutil.copy2(source, temporary)
             temporary_paths.append(temporary)
@@ -1704,6 +1719,7 @@ def install_launcher_update(
         for destination, _source in pairs:
             backup = backup_root / destination.relative_to(project_root)
             if not backup.is_file():
+                if destination not in existed: destination.unlink(missing_ok=True)
                 continue
             temporary = destination.with_name(f"{destination.name}.rollback-tmp")
             try:
@@ -1822,8 +1838,21 @@ def stack_state(
 
 
 def command_start(args: argparse.Namespace, project_root: Path) -> int:
+    if getattr(args, "offline", False): args.no_build = True
     previous = load_state(project_root)
-    source_root = active_source_root(project_root, previous)
+    source_root = project_root if getattr(args, "offline", False) else active_source_root(project_root, previous)
+    incoming = getattr(args, "source_dir", None) or getattr(args, "start_source_root", None)
+    if incoming and not args.no_build:
+        source_root = Path(incoming).expanduser().resolve()
+        validate_update_source(source_root)
+        if not args.dry_run:
+            staged = project_root / UPDATE_RELEASES_RELATIVE_PATH / ("start-" + source_fingerprint(source_root)[:16]) / "source"
+            if not staged.exists():
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                copy_source_tree(source_root, staged)
+            if source_fingerprint(staged) != source_fingerprint(source_root):
+                raise BootstrapError("Копия исходников запуска повреждена.")
+            source_root = staged
     web_port = choose_web_port(args.port, previous, project_root)
     previous_listen = "lan" if previous.get("bindAddress") == "0.0.0.0" else "local"
     listen = args.listen or previous_listen
@@ -1840,7 +1869,7 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
         previous_revision
         if args.no_build
         else detected_revision
-        or (previous_revision if source_root != project_root else None)
+        or (previous_revision if source_root != project_root and not incoming else None)
     )
     image_tag = (
         configured_image_tag(previous)
@@ -1853,6 +1882,10 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
         image_tag,
         source_revision=build_revision,
     )
+    offline_manifest = None
+    if getattr(args, "offline", False) and not args.dry_run:
+        offline_manifest = resilient.offline_environment(sys.modules[__name__], source_root, env)
+        image_tag = env["P2PKANBAN_IMAGE_TAG"]
     up_arguments = ["up", "--detach", "--remove-orphans"]
     if not args.no_build:
         up_arguments.append("--build")
@@ -1870,8 +1903,8 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
         print(f"- Порт узла закрепляется; UI updater использует loopback {DEFAULT_UPDATE_CONTROL_PORT}.")
         if source_root != project_root:
             print(
-                "- Код: активная проверенная версия из "
-                f"{relative_state_path(project_root, source_root)}"
+                f"- Код: {source_root}"
+                + (" (при запуске будет скопирован в releases)" if incoming else "")
             )
         print(f"- Команда: {display_command(command)}")
         if shutil.which("docker") is None:
@@ -1894,6 +1927,17 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
             "Bootstrap не будет молча создавать новый адрес. Освободите порт "
             "либо явно выберите новый: python bootstrap.py start --port <порт>."
         )
+
+    # Complete all network/build work before replacing any running service.
+    preparation_log = project_root / ".dev-bootstrap/container-runs" / (datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f") + "_prepare.log")
+    resilient.prepare(sys.modules[__name__], source_root, env, preparation_log,
+                      build=not args.no_build, offline=getattr(args, "offline", False))
+    if owned_port is not None:
+        resilient.ready_existing_database(sys.modules[__name__], project_root, env)
+        backup, _ = create_database_backup(source_root, project_root, env,
+                   "start-" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f"))
+        print(f"Резервная копия перед заменой: {backup}")
+    command = compose_command(source_root, "up", "--detach", "--remove-orphans", "--no-build", "--pull", "never")
 
     write_state(
         project_root,
@@ -1974,6 +2018,12 @@ def command_start(args: argparse.Namespace, project_root: Path) -> int:
             running_state["activeRevision"] = build_revision
         else:
             running_state.pop("activeRevision", None)
+    if source_root != project_root:
+        running_state["activeSourceRoot"] = relative_state_path(project_root, source_root)
+    if offline_manifest:
+        running_state.pop("activeSourceRoot", None)
+        running_state.pop("activeRevision", None)
+        running_state.update({"imageTag": image_tag, "appVersion": offline_manifest["version"]})
     write_state(project_root, running_state)
 
     print("\np2pKanban запущен.")
@@ -2665,6 +2715,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="local: только этот компьютер; lan: доверенная локальная сеть.",
     )
+    start.add_argument("--source-dir", help="Явно запустить код из этого каталога вместо ранее активного release.")
+    start.add_argument("--offline", action="store_true", help="Только проверенные bundle-import образы; без сети и сборки.")
     start.add_argument("--no-build", action="store_true", help="Не пересобирать образы.")
     start.add_argument("--no-open", action="store_true", help="Не открывать браузер.")
     start.add_argument("--dry-run", action="store_true", help="Показать план без запуска Docker.")
@@ -2675,6 +2727,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Сколько ждать первого запуска web-контейнера.",
     )
     start.set_defaults(func=command_start)
+
+    export = subparsers.add_parser("bundle-export", help="Собрать переносимый набор runtime-образов без данных.")
+    export.add_argument("--output", required=True)
+    export.set_defaults(func=lambda args, root: resilient.bundle_export(args, root, sys.modules[__name__]))
+    load = subparsers.add_parser("bundle-import", help="Проверить и загрузить доверенный офлайн-набор.")
+    load.add_argument("bundle")
+    load.set_defaults(func=lambda args, root: resilient.bundle_import(args, root, sys.modules[__name__]))
 
     adopt = subparsers.add_parser(
         "adopt-running",
@@ -2807,10 +2866,13 @@ def main(
         )
         return 2
 
-    if args.command != "adopt-running" and not (root / STATE_RELATIVE_PATH).is_file():
+    if args.command not in {"adopt-running", "bundle-import", "bundle-export"} and not (root / STATE_RELATIVE_PATH).is_file():
         registered = registered_deployment_root(root)
         if registered:
-            root = registered
+            if args.command == "start" and not args.no_build and not getattr(args, "offline", False):
+                args.start_source_root = root
+            if not (args.command == "start" and getattr(args, "offline", False)):
+                root = registered
 
     try:
         return int(args.func(args, root))
