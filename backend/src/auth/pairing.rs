@@ -636,7 +636,13 @@ pub(super) async fn import_workspace_bundle(
     user_id: Uuid,
     bundle: &PortableBundle,
 ) -> AppResult<()> {
+    import_workspace_bundle_parts(tx, user_id, bundle, true).await
+}
+pub(super) async fn import_workspace_bundle_parts(
+    tx: &mut Transaction<'_, Postgres>, user_id: Uuid, bundle: &PortableBundle, include_workspace: bool,
+) -> AppResult<()> {
     let payload = &bundle.payload;
+    if include_workspace {
     sqlx::query(
         r#"
         insert into workspaces (
@@ -671,6 +677,7 @@ pub(super) async fn import_workspace_bundle(
     .execute(&mut **tx)
     .await?;
 
+    }
     sqlx::query(
         r#"
         insert into boards (

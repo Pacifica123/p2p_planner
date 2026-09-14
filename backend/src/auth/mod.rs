@@ -1,5 +1,7 @@
 #[cfg(feature="nostr-shadow")]
 pub mod device_link;
+#[cfg(feature="nostr-shadow")]
+mod device_supplement;
 pub mod dto;
 pub mod handler;
 mod pairing;
@@ -32,6 +34,7 @@ pub fn router() -> Router<AppState> {
     #[cfg(feature="nostr-shadow")]
     let router=router.route("/auth/device-link/request",post(device_link::request))
     .route("/auth/device-link/prepare",post(device_link::prepare)).route("/auth/device-link/approve",post(device_link::approve))
-    .route("/auth/device-link/accept",post(device_link::accept));
+    .route("/auth/device-link/accept",post(device_link::accept))
+    .route("/auth/device-link/supplement-request",post(device_link::supplement_request));
     router.layer(axum::extract::DefaultBodyLimit::max(16*1024*1024))
 }

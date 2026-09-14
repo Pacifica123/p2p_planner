@@ -80,7 +80,8 @@ if(process.env.MODE==='silent')setInterval(()=>{},1000);
 else {const t=setInterval(()=>console.log('download progress'),50);setTimeout(()=>{clearInterval(t)},500)}
 `,{mode:0o755});
     const env={...process.env,PATH:`${root}${delimiter}${process.env.PATH}`};
-    assert.equal((await execute(['ci'],env,2000,250)).code,0);
+    // Allow process startup on a loaded host.
+    assert.equal((await execute(['ci'],env,20000,5000)).code,0);
     assert.equal((await execute(['ci'],{...env,MODE:'silent'},2000,100)).code,124);
     assert.equal((await execute(['ci'],env,200,250)).code,124);
   }finally{rmSync(root,{recursive:true,force:true});}

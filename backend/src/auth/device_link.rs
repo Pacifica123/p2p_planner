@@ -122,6 +122,13 @@ pub async fn prepare(
 }
 pub async fn request(State(state): State<AppState>) -> AppResult<Json<ApiEnvelope<Value>>> {
     pairing::ensure_empty_destination(&state).await?;
+    create_request(&state, false).await
+}
+pub async fn supplement_request(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Json<ApiEnvelope<Value>>> {
+    auth_context(&state, &headers).await?;
+    create_request(&state, true).await
+}
+async fn create_request(state: &AppState, supplement: bool) -> AppResult<Json<ApiEnvelope<Value>>> {
     let key = secret(&state)?;
     let now = protocol::now();
     let mut tx = state.db.begin().await?;
@@ -132,8 +139,8 @@ pub async fn request(State(state): State<AppState>) -> AppResult<Json<ApiEnvelop
         .bind(now as i64)
         .execute(&mut *tx)
         .await?;
-    if let Some(e)=sqlx::query_scalar::<_,Value>("select request_json from device_link_challenges where consumed_at is null and expires_at>$1 order by created_at desc limit 1").bind(now as i64).fetch_optional(&mut *tx).await?{tx.commit().await?;return Ok(ok(e));}
-    let e=protocol::sign(key,protocol::REQUEST_KIND,&json!({"protocol":protocol::PROTOCOL,"nonce":Uuid::now_v7().to_string(),"expiresAt":now+600,"label":"Самостоятельный узел p2pKanban"})).map_err(invalid)?;
+    if !supplement { if let Some(e)=sqlx::query_scalar::<_,Value>("select request_json from device_link_challenges where consumed_at is null and expires_at>$1 order by created_at desc limit 1").bind(now as i64).fetch_optional(&mut *tx).await?{tx.commit().await?;return Ok(ok(e));} }
+    let e=protocol::sign(key,protocol::REQUEST_KIND,&json!({"protocol":protocol::PROTOCOL,"nonce":Uuid::now_v7().to_string(),"expiresAt":now+600,"label":"Самостоятельный узел p2pKanban","supplement":supplement})).map_err(invalid)?;
     sqlx::query("insert into device_link_challenges(id,request_json,expires_at) values($1,$2,$3)")
         .bind(e["id"].as_str().unwrap())
         .bind(&e)
@@ -181,7 +188,10 @@ pub async fn approve(
 #[serde(rename_all = "camelCase")]
 pub struct Accept {
     response: Value,
+    #[serde(default)]
     password: String,
+    #[serde(default)]
+    supplement: bool,
     confirmed_sender: String,
 }
 pub async fn accept(
@@ -189,7 +199,8 @@ pub async fn accept(
     headers: HeaderMap,
     Json(input): Json<Accept>,
 ) -> AppResult<Response> {
-    service::validate_password(&input.password)?;
+    let local_user = if input.supplement { Some(auth_context(&state, &headers).await?.user_id) }
+        else { service::validate_password(&input.password)?; None };
     let key = secret(&state)?;
     let recipient = protocol::public_key(key).map_err(invalid)?;
     let (sender, _, body) =
@@ -264,22 +275,32 @@ pub async fn accept(
         }
         verified.push((cap.board_id, workspace, root, g.epoch, chain));
     }
-    let password_hash = service::hash_password(&input.password)?;
+    if local_user.is_some_and(|user| user != remote.user.id) { return Err(AppError::forbidden("Разрешение принадлежит другому аккаунту")); }
+    let password_hash = if input.supplement { String::new() } else { service::hash_password(&input.password)? };
     let mut tx = state.db.begin().await?;
     // Admission, snapshot and nonce consumption commit together; sign-up races cannot merge identities.
     sqlx::query("lock table users,workspaces,boards in exclusive mode")
         .execute(&mut *tx)
         .await?;
     let occupied=sqlx::query_scalar::<_,bool>("select exists(select 1 from users) or exists(select 1 from workspaces) or exists(select 1 from boards)").fetch_one(&mut *tx).await?;
-    if occupied {
+    if occupied && !input.supplement {
         return Err(AppError::conflict(
             "Нужен пустой узел. Существующие данные сохранены",
         ));
     }
     let request=sqlx::query("select request_json,consumed_at is not null as used from device_link_challenges where id=$1 for update").bind(id).fetch_optional(&mut *tx).await?.ok_or_else(||invalid("Неизвестный запрос"))?;
     let (_, rid, rexp) = check_request(&request.try_get::<Value, _>("request_json")?)?;
+    let request_body = protocol::checked_event(&request.try_get::<Value, _>("request_json")?, protocol::REQUEST_KIND).map_err(invalid)?.2;
+    if request_body["supplement"].as_bool().unwrap_or(false) != input.supplement { return Err(invalid("Режим запроса не совпадает с режимом принятия")); }
     if rid != id || rexp != expiry || request.try_get::<bool, _>("used")? {
         return Err(invalid("Приглашение уже использовано или истекло"));
+    }
+    if input.supplement {
+        let added = super::device_supplement::import_missing(&mut tx, &remote, &verified).await?;
+        sqlx::query("update device_link_challenges set consumed_at=now() where id=$1").bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        use axum::response::IntoResponse;
+        return Ok(ok(json!({"addedBoards":added,"mode":"add-missing-boards"})).into_response());
     }
     pairing::import_user(&mut tx, &remote, &password_hash).await?;
     for w in &remote.workspaces {

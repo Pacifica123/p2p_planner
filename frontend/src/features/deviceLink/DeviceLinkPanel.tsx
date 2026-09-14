@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { apiRequest } from '@/shared/api/client';
 import { useAuthSession } from '@/app/providers/AuthSessionProvider';
@@ -17,10 +18,13 @@ function download(value: unknown, name: string) {
 }
 export function DeviceLinkPanel({
   destination = false,
+  supplement = false,
 }: {
   destination?: boolean;
+  supplement?: boolean;
 }) {
   const auth = useAuthSession();
+  const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false),
     [request, setRequest] = useState<SignedEvent | null>(null),
     [raw, setRaw] = useState(''),
@@ -50,7 +54,7 @@ export function DeviceLinkPanel({
     <Panel
       title={
         destination
-          ? 'Подключить через доверенное устройство'
+          ? (supplement ? 'Получить новые доски от доверенного устройства' : 'Подключить через доверенное устройство')
           : 'Разрешить новое устройство'
       }
     >
@@ -61,7 +65,7 @@ export function DeviceLinkPanel({
         <div className="stack">
           <p>
             {destination
-              ? 'Нужен пустой узел. Подготовленный Android или другой узел владельца может разрешить подключение без доступного PC-node.'
+              ? supplement ? 'Добавляет отсутствующие доски в уже доверенные пространства. Существующие доски не перезаписываются. Получите свежий зашифрованный ответ на запрос ниже.' : 'Нужен пустой узел. Подготовленный Android или другой узел владельца может разрешить подключение без доступного PC-node.'
               : 'Вы передаёте свои пространства владельца и право дальнейшего подключения от вашего имени. Новый узел работает самостоятельно через relay.'}
           </p>
           {destination && (
@@ -72,9 +76,9 @@ export function DeviceLinkPanel({
                   void run(async () => {
                     setRequest(
                       await apiRequest<SignedEvent>(
-                        '/auth/device-link/request',
+                        supplement ? '/auth/device-link/supplement-request' : '/auth/device-link/request',
                         { method: 'POST' },
-                        { skipAuthRefresh: true },
+                        { skipAuthRefresh: !supplement },
                       ),
                     );
                     setConfirmed(false);
@@ -151,7 +155,7 @@ export function DeviceLinkPanel({
             />{' '}
             Отпечаток совпадает; разрешаю подключение
           </label>
-          {destination && (
+          {destination && !supplement && (
             <TextField
               label="Новый пароль только для этого узла"
               type="password"
@@ -166,26 +170,30 @@ export function DeviceLinkPanel({
               busy ||
               !confirmed ||
               !parsed ||
-              (destination && password.length < 8)
+              (destination && !supplement && password.length < 8)
             }
             onClick={() =>
               void run(async () => {
                 if (!parsed) return;
                 if (destination) {
-                  await apiRequest(
+                  const result = await apiRequest<{ addedBoards?: number }>(
                     '/auth/device-link/accept',
                     {
                       method: 'POST',
                       body: JSON.stringify({
                         response: parsed,
                         password,
+                        supplement,
                         confirmedSender: parsed.pubkey,
                       }),
                     },
-                    { skipAuthRefresh: true },
+                    { skipAuthRefresh: !supplement },
                   );
                   setPassword('');
-                  await auth.refreshCurrentSession();
+                  if (supplement) {
+                    await queryClient.invalidateQueries();
+                    setMessage(`Добавлено досок: ${result.addedBoards ?? 0}.`);
+                  } else await auth.refreshCurrentSession();
                 } else {
                   const response = await apiRequest<SignedEvent>(
                     '/auth/device-link/approve',
@@ -206,7 +214,7 @@ export function DeviceLinkPanel({
             }
           >
             {destination
-              ? 'Принять и подключиться'
+              ? (supplement ? 'Принять новые доски' : 'Принять и подключиться')
               : 'Разрешить и скачать зашифрованный ответ'}
           </Button>
           {message && (

@@ -70,6 +70,7 @@ export function WorkspacesPage() {
   return (
     <div className="page-shell" data-testid="workspace-list-page">
       <DeviceLinkPanel/>
+      <DeviceLinkPanel destination supplement/>
       <section className="page-header">
         <div>
           <h2>Рабочие пространства</h2>
