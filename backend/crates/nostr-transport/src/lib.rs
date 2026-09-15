@@ -62,6 +62,7 @@ pub struct RoamingBoardEvent {
 #[derive(Debug, Clone)]
 pub struct RecoveredRoamingEvent {
     pub nostr_event_id: String,
+    pub signed_at: u64,
     pub author_public_key: String,
     pub event: RoamingBoardEvent,
 }
@@ -501,6 +502,7 @@ impl NostrTransport {
             if let Ok(event) = opened {
                 recovered.push(RecoveredRoamingEvent {
                     nostr_event_id: nostr_event.id.to_string(),
+                    signed_at: nostr_event.created_at.as_secs(),
                     author_public_key: nostr_event.pubkey.to_string(),
                     event,
                 });
@@ -703,4 +705,12 @@ mod tests {
             original
         );
     }
+    #[test]
+    fn sql_frozen_event_roundtrip() {
+        let original: RoamingBoardEvent = serde_json::from_str(include_str!("../../../tests/regression/fixtures/frozen-card.json")).unwrap();
+        let material = NostrCodec::random_roaming_capability(&original.board_id).unwrap();
+        let wire = NostrCodec::seal_roaming_with_board_key(&original,&material.board_key).unwrap();
+        assert_eq!(NostrCodec::open_roaming_with_board_key(&original.board_id,&wire,&material.board_key).unwrap(), original);
+    }
+
 }

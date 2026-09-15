@@ -149,12 +149,21 @@ pub async fn run(settings: std::sync::Arc<Settings>, db: PgPool) -> anyhow::Resu
             publish_pending(&db, &transport, settings.transports.batch_size),
             publish_pending_board_settings(&db, &transport, settings.transports.batch_size),
             ingest_remote(&db, &transport),
+            publish_baselines(&db, &transport),
         );
         tokio::time::sleep(poll).await;
     }
 }
 
 async fn ensure_node_authorizations(pool: &PgPool, author_public_key: &str) -> anyhow::Result<()> {
+    // Allocate once before any publication; HTTP enrollment reuses the same key.
+    let missing = sqlx::query_as::<_,(Uuid,i64)>("select b.id,w.access_epoch from boards b join workspaces w on w.id=b.workspace_id left join roaming_board_capabilities c on c.board_id=b.id where c.board_id is null and b.deleted_at is null and w.deleted_at is null")
+        .fetch_all(pool).await?;
+    for (board, epoch) in missing {
+        let material = p2p_kanban_nostr_transport::NostrCodec::random_roaming_capability(&board.to_string())?;
+        sqlx::query("insert into roaming_board_capabilities(board_id,board_tag,board_key_base64,capability_epoch) values($1,$2,$3,$4) on conflict(board_id) do nothing")
+            .bind(board).bind(material.board_tag).bind(material.board_key).bind(epoch).execute(pool).await?;
+    }
     sqlx::query(
         r#"
         insert into roaming_board_authorizations (
@@ -198,6 +207,8 @@ async fn enqueue_backfill(pool: &PgPool) -> anyhow::Result<()> {
         where c.deleted_at is null
           and b.deleted_at is null
           and w.deleted_at is null
+          and not exists(select 1 from roaming_board_outbox old where old.card_id=c.id)
+          and not exists(select 1 from roaming_board_events old where old.entity_id=c.id)
         on conflict (source_key) do nothing
         "#,
     )
@@ -207,407 +218,92 @@ async fn enqueue_backfill(pool: &PgPool) -> anyhow::Result<()> {
 }
 
 async fn publish_pending(pool: &PgPool, transport: &NostrTransport, limit: i64) {
-    let rows = match sqlx::query(
-        r#"
-        select
-          o.id,
-          o.event_seq,
-          o.workspace_id,
-          o.board_id,
-          o.card_id,
-          ae.kind as source_activity_kind,
-          ae.entity_type as source_entity_type,
-          ae.entity_id as source_entity_id,
-          ae.field_mask as source_field_mask,
-          n.replica_id as node_replica_id,
-          rbc.board_key_base64,
-          coalesce(rbc.capability_epoch, w.access_epoch) as capability_epoch,
-          case
-            when c.deleted_at is not null or t.entity_id is not null then 'card.delete'
-            else 'card.put'
-          end as roaming_operation,
-          case when coalesce(c.deleted_at, t.deleted_at) is null then null else
-            to_char(coalesce(c.deleted_at, t.deleted_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-          end as deleted_at,
-          to_char(o.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as occurred_at,
-          (
-            floor(extract(epoch from o.created_at) * 1000)::bigint * 1000
-            + (o.event_seq % 1000)
-          ) as logical_clock,
-          jsonb_build_object(
-            'id', c.id::text,
-            'boardId', c.board_id::text,
-            'columnId', c.column_id::text,
-            'parentCardId', c.parent_card_id::text,
-            'title', c.title,
-            'description', c.description,
-            'priority', c.priority,
-            'position', c.position::double precision,
-            'startAt', case when c.start_at is null then null else to_char(c.start_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
-            'dueAt', case when c.due_at is null then null else to_char(c.due_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
-            'isArchived', c.archived_at is not null,
-            'labelIds', '[]'::jsonb,
-            'checklistCount', (
-              select count(*)::bigint
-              from checklists ch
-              where ch.card_id = c.id and ch.deleted_at is null
-            ),
-            'checklistItemCount', (
-              select count(*)::bigint
-              from checklist_items chi
-              join checklists ch on ch.id = chi.checklist_id
-              where ch.card_id = c.id and ch.deleted_at is null and chi.deleted_at is null
-            ),
-            'checklistCompletedItemCount', (
-              select count(*)::bigint
-              from checklist_items chi
-              join checklists ch on ch.id = chi.checklist_id
-              where ch.card_id = c.id
-                and ch.deleted_at is null
-                and chi.deleted_at is null
-                and chi.is_done = true
-            ),
-            'commentCount', 0,
-            'createdByUserId', c.created_by_user_id::text,
-            'createdAt', to_char(c.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-            'updatedAt', to_char(c.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-            'archivedAt', case when c.archived_at is null then null else to_char(c.archived_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end
-          ) as card,
-          coalesce((
-            select jsonb_agg(
-              jsonb_build_object(
-                'id', ch.id::text,
-                'cardId', ch.card_id::text,
-                'title', ch.title,
-                'position', ch.position::double precision,
-                'items', coalesce((
-                  select jsonb_agg(
-                    jsonb_build_object(
-                      'id', chi.id::text,
-                      'checklistId', chi.checklist_id::text,
-                      'title', chi.title,
-                      'isDone', chi.is_done,
-                      'position', chi.position::double precision,
-                      'completedAt', case when chi.completed_at is null then null else to_char(chi.completed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
-                      'createdAt', to_char(chi.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-                      'updatedAt', to_char(chi.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                    )
-                    order by chi.position, chi.id
-                  )
-                  from checklist_items chi
-                  where chi.checklist_id = ch.id and chi.deleted_at is null
-                ), '[]'::jsonb),
-                'createdAt', to_char(ch.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-                'updatedAt', to_char(ch.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-              )
-              order by ch.position, ch.id
-            )
-            from checklists ch
-            where ch.card_id = c.id and ch.deleted_at is null
-          ), '[]'::jsonb) as checklists
-        from roaming_board_outbox o
-        join cards c on c.id = o.card_id
-        join workspaces w on w.id = o.workspace_id and w.deleted_at is null
-        left join activity_entries ae on ae.id = o.source_activity_id
-        cross join local_node_identity n
-        left join roaming_board_capabilities rbc on rbc.board_id = o.board_id
-        left join tombstones t
-          on t.entity_type = 'card'
-         and t.entity_id = o.card_id
-        where o.status in ('pending', 'retry')
-          and o.next_attempt_at <= now()
-        order by o.event_seq
-        limit $1
-        "#,
-    )
-    .bind(limit.clamp(1, 500))
-    .fetch_all(pool)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(error) => {
-            tracing::warn!(%error, "could not load roaming outbox");
-            return;
-        }
-    };
-
-    for row in rows {
-        let outbox_id: Uuid = match row.try_get("id") {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let operation: String = row
-            .try_get("roaming_operation")
-            .unwrap_or_else(|_| "card.put".to_string());
-        let deleted_at = row
-            .try_get::<Option<String>, _>("deleted_at")
-            .ok()
-            .flatten();
-        let card = row
-            .try_get::<Value, _>("card")
-            .unwrap_or_else(|_| json!({}));
-        let checklists = row
-            .try_get::<Value, _>("checklists")
-            .unwrap_or_else(|_| json!([]));
-        let source_kind = row
-            .try_get::<Option<String>, _>("source_activity_kind")
-            .ok()
-            .flatten();
-        let source_entity_type = row
-            .try_get::<Option<String>, _>("source_entity_type")
-            .ok()
-            .flatten();
-        let source_entity_id = row
-            .try_get::<Option<Uuid>, _>("source_entity_id")
-            .ok()
-            .flatten();
-        let source_field_mask = row
-            .try_get::<Option<Vec<String>>, _>("source_field_mask")
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        let occurred_at: String = row.try_get("occurred_at").unwrap_or_default();
-        let card_id: Uuid = row.try_get("card_id").unwrap();
-        let checklist_delta = source_kind
-            .as_deref()
-            .zip(source_entity_type.as_deref())
-            .zip(source_entity_id)
-            .and_then(|((kind, entity_type), entity_id)| {
-                checklist_delta_from_activity(
-                    kind,
-                    entity_type,
-                    entity_id,
-                    card_id,
-                    &source_field_mask,
-                    &checklists,
-                    &occurred_at,
-                )
-            });
-        let field_mask = if operation == "card.delete" {
-            vec!["__lifecycle".to_string()]
-        } else if checklist_delta.is_some() {
-            vec!["checklists".to_string()]
-        } else if source_kind.as_deref() == Some("card.created") || source_kind.is_none() {
-            vec!["*".to_string()]
-        } else {
-            source_field_mask
-        };
-        let payload = if operation == "card.delete" {
-            json!({ "deletedAt": deleted_at })
-        } else if let Some(delta) = checklist_delta {
-            json!({
-                "card": card,
-                "checklistDelta": delta,
-            })
-        } else if field_mask.iter().any(|field| field == "*") {
-            json!({
-                "card": card,
-                "checklists": checklists,
-            })
-        } else {
-            json!({ "card": card })
-        };
-        let mut event = RoamingBoardEvent {
-            protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
-            event_id: outbox_id.to_string(),
-            workspace_id: row.try_get::<Uuid, _>("workspace_id").unwrap().to_string(),
-            board_id: row.try_get::<Uuid, _>("board_id").unwrap().to_string(),
-            capability_epoch: row.try_get("capability_epoch").unwrap_or(1),
-            replica_id: row
-                .try_get::<Uuid, _>("node_replica_id")
-                .unwrap()
-                .to_string(),
-            replica_seq: row.try_get("event_seq").unwrap_or(1),
-            logical_clock: row.try_get("logical_clock").unwrap_or(1),
-            entity_type: "card".to_string(),
-            entity_id: card_id.to_string(),
-            operation: operation.clone(),
-            field_mask,
-            payload,
-            occurred_at,
-        };
-        let imported_board_key = row
-            .try_get::<Option<String>, _>("board_key_base64")
-            .ok()
-            .flatten();
-        let delegation=sqlx::query_scalar::<_,Value>("select chain_json from roaming_device_grants where board_id=$1 and epoch=$2").bind(Uuid::parse_str(&event.board_id).unwrap_or_default()).bind(event.capability_epoch).fetch_optional(pool).await;
-        match delegation{Ok(Some(chain))=>event.payload["_deviceDelegation"]=chain,Ok(None)=>{},Err(error)=>{tracing::warn!(%error,"Cannot load delegation; outbox remains pending");continue;}}
-        let delivery = match imported_board_key.as_deref() {
-            Some(board_key) => {
-                transport
-                    .publish_roaming_with_board_key(&event, board_key)
-                    .await
+    publish_frozen_queue(pool, transport, limit, false).await;
+}
+async fn publish_pending_board_settings(pool: &PgPool, transport: &NostrTransport, limit: i64) {
+    publish_frozen_queue(pool, transport, limit, true).await;
+}
+async fn publish_frozen_queue(pool: &PgPool, transport: &NostrTransport, limit: i64, appearance: bool) {
+    // Closed table choice; never interpolate external input into SQL.
+    let table = if appearance { "roaming_board_settings_outbox" } else { "roaming_board_outbox" };
+    let result: anyhow::Result<()> = async {
+        sqlx::query(&format!("update {table} set status=status where event_json is null and status in ('pending','retry')"))
+            .execute(pool).await?;
+        let rows = sqlx::query(&format!("select o.id,o.event_json,c.board_key_base64,w.access_epoch from {table} o join workspaces w on w.id=o.workspace_id join roaming_board_capabilities c on c.board_id=o.board_id and c.capability_epoch=w.access_epoch where o.status in ('pending','retry') and o.next_attempt_at<=now() and o.event_json is not null order by o.event_seq limit $1"))
+            .bind(limit.clamp(1,500)).fetch_all(pool).await?;
+        for row in rows {
+            let id: Uuid = row.try_get("id")?;
+            let event: RoamingBoardEvent = serde_json::from_value(row.try_get("event_json")?)?;
+            if event.capability_epoch != row.try_get::<i64,_>("access_epoch")? {
+                sqlx::query(&format!("update {table} set last_error='Access epoch changed; original event retained',next_attempt_at=now()+interval '1 hour' where id=$1"))
+                    .bind(id).execute(pool).await?;
+                continue;
             }
-            None => transport.publish_roaming(&event).await,
-        };
-        match delivery {
-            Ok(receipt) => {
-                let _ = sqlx::query(
-                    "update roaming_board_outbox set status = 'delivered', delivered_at = now(), nostr_event_id = $2, last_error = null where id = $1",
-                )
-                .bind(outbox_id)
-                .bind(receipt.nostr_event_id)
-                .execute(pool)
-                .await;
-            }
-            Err(error) => {
-                let _ = sqlx::query(
-                    r#"
-                    update roaming_board_outbox
-                    set
-                      status = case when attempt_count + 1 >= 12 then 'dead_letter' else 'retry' end,
-                      attempt_count = attempt_count + 1,
-                      next_attempt_at = now() + make_interval(secs => least(300, (attempt_count + 1) * 5)),
-                      last_error = left($2, 1000)
-                    where id = $1
-                    "#,
-                )
-                .bind(outbox_id)
-                .bind(format!("{error:#}"))
-                .execute(pool)
-                .await;
+            let key: String = row.try_get("board_key_base64")?;
+            match transport.publish_roaming_with_board_key(&event,&key).await {
+                Ok(receipt) => {
+                    sqlx::query(&format!("update {table} set status='delivered',delivered_at=now(),nostr_event_id=$2,last_error=null where id=$1"))
+                        .bind(id).bind(receipt.nostr_event_id).execute(pool).await?;
+                },
+                Err(error) => {
+                    sqlx::query(&format!("update {table} set status='retry',attempt_count=attempt_count+1,next_attempt_at=now()+interval '10 seconds',last_error=left($2,1000) where id=$1"))
+                        .bind(id).bind(format!("{error:#}")).execute(pool).await?;
+                }
             }
         }
-    }
+        Ok(())
+    }.await;
+    if let Err(error)=result { tracing::warn!(%error,%table,"frozen roaming queue remains pending"); }
 }
 
-async fn publish_pending_board_settings(pool: &PgPool, transport: &NostrTransport, limit: i64) {
-    let rows = match sqlx::query(
-        r#"
-        select
-          o.id,
-          o.event_seq,
-          o.workspace_id,
-          o.board_id,
-          n.replica_id as node_replica_id,
-          rbc.board_key_base64,
-          coalesce(rbc.capability_epoch, w.access_epoch) as capability_epoch,
-          to_char(o.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as occurred_at,
-          (
-            floor(extract(epoch from o.created_at) * 1000)::bigint * 1000
-            + (o.event_seq % 1000)
-          ) as logical_clock,
-          jsonb_build_object(
-            'boardId', b.id::text,
-            'isCustomized', a.board_id is not null,
-            'themePreset', coalesce(a.theme_preset, 'system'),
-            'wallpaper', jsonb_build_object(
-              'kind', coalesce(a.wallpaper_kind, 'none'),
-              'value', a.wallpaper_value
-            ),
-            'columnDensity', coalesce(a.column_density, 'comfortable'),
-            'cardPreviewMode', coalesce(a.card_preview_mode, 'expanded'),
-            'showCardDescription', coalesce(a.show_card_description, true),
-            'showCardDates', coalesce(a.show_card_dates, true),
-            'showChecklistProgress', coalesce(a.show_checklist_progress, true),
-            'customProperties', coalesce(a.custom_properties_jsonb, '{}'::jsonb),
-            'createdAt', case when a.created_at is null then null else to_char(a.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end,
-            'updatedAt', case when a.updated_at is null then null else to_char(a.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end
-          ) as appearance
-        from roaming_board_settings_outbox o
-        join boards b on b.id = o.board_id and b.deleted_at is null
-        join workspaces w on w.id = b.workspace_id and w.deleted_at is null
-        left join board_appearance_settings a on a.board_id = o.board_id
-        cross join local_node_identity n
-        left join roaming_board_capabilities rbc on rbc.board_id = o.board_id
-        where o.status in ('pending', 'retry')
-          and o.next_attempt_at <= now()
-        order by o.event_seq
-        limit $1
-        "#,
-    )
-    .bind(limit.clamp(1, 500))
-    .fetch_all(pool)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(error) => {
-            tracing::warn!(%error, "could not load roaming board settings outbox");
-            return;
-        }
-    };
-
-    for row in rows {
-        let outbox_id: Uuid = match row.try_get("id") {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let board_id: Uuid = match row.try_get("board_id") {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let logical_clock = row.try_get::<i64, _>("logical_clock").unwrap_or(1);
-        let mut event = RoamingBoardEvent {
-            protocol_version: ROAMING_PROTOCOL_VERSION.to_string(),
-            event_id: outbox_id.to_string(),
-            workspace_id: row
-                .try_get::<Uuid, _>("workspace_id")
-                .unwrap_or_default()
-                .to_string(),
-            board_id: board_id.to_string(),
-            capability_epoch: row.try_get("capability_epoch").unwrap_or(1),
-            replica_id: row
-                .try_get::<Uuid, _>("node_replica_id")
-                .unwrap_or_default()
-                .to_string(),
-            replica_seq: logical_clock,
-            logical_clock,
-            entity_type: "board".to_string(),
-            entity_id: board_id.to_string(),
-            operation: "board.appearance.put".to_string(),
-            field_mask: vec!["appearance".to_string()],
-            payload: json!({
-                "appearance": row
-                    .try_get::<Value, _>("appearance")
-                    .unwrap_or_else(|_| json!({})),
-            }),
-            occurred_at: row
-                .try_get("occurred_at")
-                .unwrap_or_else(|_| chrono_fallback_timestamp()),
-        };
-        let imported_board_key = row
-            .try_get::<Option<String>, _>("board_key_base64")
-            .ok()
-            .flatten();
-        let delegation=sqlx::query_scalar::<_,Value>("select chain_json from roaming_device_grants where board_id=$1 and epoch=$2").bind(Uuid::parse_str(&event.board_id).unwrap_or_default()).bind(event.capability_epoch).fetch_optional(pool).await;
-        match delegation{Ok(Some(chain))=>event.payload["_deviceDelegation"]=chain,Ok(None)=>{},Err(error)=>{tracing::warn!(%error,"Cannot load delegation; outbox remains pending");continue;}}
-        let delivery = match imported_board_key.as_deref() {
-            Some(board_key) => {
-                transport
-                    .publish_roaming_with_board_key(&event, board_key)
-                    .await
-            }
-            None => transport.publish_roaming(&event).await,
-        };
-        match delivery {
-            Ok(receipt) => {
-                let _ = sqlx::query(
-                    "update roaming_board_settings_outbox set status = 'delivered', delivered_at = now(), nostr_event_id = $2, last_error = null where id = $1",
-                )
-                .bind(outbox_id)
-                .bind(receipt.nostr_event_id)
-                .execute(pool)
-                .await;
-            }
-            Err(error) => {
-                let _ = sqlx::query(
-                    r#"
-                    update roaming_board_settings_outbox
-                    set
-                      status = case when attempt_count + 1 >= 12 then 'dead_letter' else 'retry' end,
-                      attempt_count = attempt_count + 1,
-                      next_attempt_at = now() + make_interval(secs => least(300, (attempt_count + 1) * 5)),
-                      last_error = left($2, 1000)
-                    where id = $1
-                    "#,
-                )
-                .bind(outbox_id)
-                .bind(format!("{error:#}"))
-                .execute(pool)
-                .await;
+// Snapshots are recovery material, not acknowledgements or an origin authority.
+async fn publish_baselines(pool: &PgPool, transport: &NostrTransport) {
+    let result: anyhow::Result<()> = async {
+        let boards = sqlx::query("select b.id,b.workspace_id,w.access_epoch,n.replica_id,c.board_key_base64 from boards b join workspaces w on w.id=b.workspace_id join roaming_board_capabilities c on c.board_id=b.id cross join local_node_identity n where b.deleted_at is null and w.deleted_at is null and c.capability_epoch=w.access_epoch")
+            .fetch_all(pool).await?;
+        for board in boards {
+            let id: Uuid = board.try_get("id")?;
+            let workspace: Uuid = board.try_get("workspace_id")?;
+            // One MVCC statement: values and their version stamps belong together.
+            let payload: Value = sqlx::query_scalar(r#"
+                select jsonb_build_object('snapshot',roaming_board_snapshot($1),'fieldVersions',
+                  coalesce((select jsonb_object_agg(v.entity_id::text||':'||v.field_name,
+                    jsonb_build_object('logicalClock',v.logical_clock,'replicaId',v.replica_id,'eventId',v.event_id))
+                    from roaming_field_versions v where v.workspace_id=$2 and (
+                      v.entity_id=$1 or v.entity_id in (select id from cards where board_id=$1)
+                      or v.entity_id in (select ch.id from checklists ch join cards c on c.id=ch.card_id where c.board_id=$1)
+                      or v.entity_id in (select i.id from checklist_items i join checklists ch on ch.id=i.checklist_id join cards c on c.id=ch.card_id where c.board_id=$1)
+                    )),'{}'::jsonb))
+            "#).bind(id).bind(workspace).fetch_one(pool).await?;
+            let fingerprint = payload.to_string();
+            let previous = sqlx::query_as::<_, (String, Value, bool)>("select fingerprint,event_json,delivered from roaming_board_baselines where board_id=$1").bind(id).fetch_optional(pool).await?;
+            if previous.as_ref().is_some_and(|(old,_,delivered)| old==&fingerprint && *delivered) { continue; }
+            let event: RoamingBoardEvent = if let Some((old, raw, _)) = previous.filter(|(old,_,_)| old==&fingerprint) {
+                let _ = old; serde_json::from_value(raw)?
+            } else {
+                let mut event = RoamingBoardEvent {
+                    protocol_version: ROAMING_PROTOCOL_VERSION.into(), event_id: Uuid::now_v7().to_string(),
+                    workspace_id:workspace.to_string(), board_id:id.to_string(), capability_epoch:board.try_get("access_epoch")?,
+                    replica_id:board.try_get::<Uuid,_>("replica_id")?.to_string(), replica_seq:1, logical_clock:1,
+                    entity_type:"board".into(), entity_id:id.to_string(), operation:"board.snapshot".into(),
+                    field_mask:vec!["*".into()], payload, occurred_at:chrono_fallback_timestamp(),
+                };
+                if let Some(chain) = sqlx::query_scalar::<_,Value>("select chain_json from roaming_device_grants where board_id=$1 and epoch=$2").bind(id).bind(event.capability_epoch).fetch_optional(pool).await? {
+                    event.payload["_deviceDelegation"] = chain;
+                }
+                sqlx::query("insert into roaming_board_baselines(board_id,fingerprint,event_json) values($1,$2,$3) on conflict(board_id) do update set fingerprint=excluded.fingerprint,event_json=excluded.event_json,delivered=false")
+                    .bind(id).bind(&fingerprint).bind(serde_json::to_value(&event)?).execute(pool).await?;
+                event
+            };
+            let key:String=board.try_get("board_key_base64")?;
+            match transport.publish_roaming_with_board_key(&event, &key).await {
+                Ok(_) => { sqlx::query("update roaming_board_baselines set delivered=true where board_id=$1 and fingerprint=$2").bind(id).bind(&fingerprint).execute(pool).await?; },
+                Err(error) => tracing::debug!(%id,%error,"baseline remains pending"),
             }
         }
-    }
+        Ok(())
+    }.await;
+    if let Err(error)=result { tracing::warn!(%error,"could not publish board baselines"); }
 }
 
 fn chrono_fallback_timestamp() -> String {
@@ -1950,7 +1646,7 @@ async fn roaming_event_actor(
 
     if let Some(raw)=event.payload.get("_deviceDelegation"){
       let chain:Vec<Value>=serde_json::from_value(raw.clone())?;
-      let(root,g)=p2p_kanban_nostr_transport::device_link::verify_chain(&chain,&recovered.author_public_key,p2p_kanban_nostr_transport::device_link::now())?;
+      let(root,g)=p2p_kanban_nostr_transport::device_link::verify_replication_chain(&chain,&recovered.author_public_key,recovered.signed_at)?;
       anyhow::ensure!(g.board_id==board_id.to_string()&&g.workspace_id==workspace_id.to_string()&&g.epoch==current_epoch,"delegation scope mismatch");
       let user=Uuid::parse_str(&g.user_id)?;
       let trusted=sqlx::query_scalar::<_,bool>("select exists(select 1 from roaming_board_authorizations a join workspaces w on w.id=a.workspace_id where a.board_id=$1 and a.author_public_key=$2 and a.role='owner' and a.user_id=$3 and w.owner_user_id=$3 and a.capability_epoch=$4 and a.revoked_at is null)").bind(board_id).bind(&root).bind(user).bind(current_epoch).fetch_one(pool).await?;
@@ -2027,7 +1723,7 @@ async fn apply_remote_event(
     let entity_id = Uuid::parse_str(&event.entity_id)?;
     let replica_id = Uuid::parse_str(&event.replica_id)?;
     let exists = sqlx::query_scalar::<_, bool>(
-        "select exists(select 1 from roaming_board_events where event_id = $1)",
+        "select exists(select 1 from roaming_board_events where event_id = $1 and (status <> 'rejected' or error = 'tombstone_wins'))",
     )
     .bind(event_id)
     .fetch_one(pool)
@@ -2061,6 +1757,10 @@ async fn apply_remote_event(
             return Ok(());
         }
     };
+
+    // Re-evaluate old authorization rejections after enrollment semantics changed.
+    sqlx::query("delete from roaming_board_events where event_id=$1 and status='rejected'")
+        .bind(event_id).execute(pool).await?;
 
     if event.operation == "board.appearance.put" {
         if event.entity_type != "board" || entity_id != board_id {

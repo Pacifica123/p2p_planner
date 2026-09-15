@@ -15,3 +15,5 @@ frontend/.env.local
 deploy/home-coordinator/runtime.env
 .dev-bootstrap/
 *.tsbuildinfo
+
+/backend/tests/regression/node_modules/

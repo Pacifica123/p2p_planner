@@ -143,7 +143,7 @@ pub async fn create_roaming_capability(
             .await?;
         }
 
-        let writer_public_keys = sqlx::query_scalar::<_, String>(
+        let mut writer_public_keys = sqlx::query_scalar::<_, String>(
             r#"
             select distinct a.author_public_key
             from roaming_board_authorizations a
@@ -165,6 +165,9 @@ pub async fn create_roaming_capability(
         .bind(access_epoch)
         .fetch_all(&state.db)
         .await?;
+        writer_public_keys.push(p2p_kanban_nostr_transport::device_link::public_key(nostr.secret_key.as_deref().ok_or_else(AppError::internal)?).map_err(|_|AppError::internal())?);
+        writer_public_keys.sort();
+        writer_public_keys.dedup();
         let provisioned_at = sqlx::query_scalar::<_, String>(
             r#"select to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')"#,
         )

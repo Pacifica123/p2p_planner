@@ -55,6 +55,7 @@ pub fn verify_chain(chain: &[Value], subject: &str, at: u64) -> Result<(String, 
     let mut root = String::new();
     for raw in chain {
         let (signer, id, content) = checked_event(raw, GRANT_KIND)?;
+        ensure!(raw.get("created_at").and_then(Value::as_u64).is_some_and(|issued| issued <= at), "delegation issued after event");
         let g: Grant = serde_json::from_value(content)?;
         ensure!(
             g.protocol == PROTOCOL && g.epoch > 0 && g.expires_at > at,
@@ -83,6 +84,12 @@ pub fn verify_chain(chain: &[Value], subject: &str, at: u64) -> Result<(String, 
     let (_, g) = parent.unwrap();
     ensure!(g.subject == subject, "grant belongs to another device");
     Ok((root, g))
+}
+/// Existing epoch membership survives invitation expiry; new enrollment does not.
+pub fn verify_replication_chain(chain: &[Value], subject: &str, signed_at: u64) -> Result<(String, Grant)> {
+    let enrolled = chain.last().and_then(|v| v.get("created_at")).and_then(Value::as_u64);
+    ensure!(enrolled.is_some_and(|at| at <= signed_at), "event predates enrollment");
+    verify_chain(chain, subject, enrolled.unwrap())
 }
 pub fn extend(secret: &str, chain: &[Value], subject: &str) -> Result<Vec<Value>> {
     let (_, mut g) = verify_chain(chain, &public_key(secret)?, now())?;
@@ -153,6 +160,8 @@ mod tests {
         assert!(verify_chain(&chain, &public_key(&c).unwrap(), now()).is_ok());
         assert!(verify_chain(&chain, &public_key(&b).unwrap(), now()).is_err());
         assert!(verify_chain(&chain, &public_key(&c).unwrap(), now() + 4000).is_err());
+        assert!(verify_replication_chain(&chain, &public_key(&c).unwrap(), now()+4000).is_ok());
+        assert!(verify_replication_chain(&chain, &public_key(&c).unwrap(), 0).is_err());
         let mut bad = chain.clone();
         bad[1]["content"] = Value::String("{}".into());
         assert!(verify_chain(&bad, &public_key(&c).unwrap(), now()).is_err());
