@@ -1,8 +1,8 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use p2p_kanban_nostr_transport::{
-    NostrTransport, NostrTransportConfig, RecoveredRoamingEvent, RoamingBoardEvent,
-    ROAMING_PROTOCOL_VERSION,
+    NostrTransport, NostrTransportConfig, RecoveredDeviceCatalog, RecoveredRoamingEvent,
+    RoamingBoardEvent, DEVICE_CATALOG_PROTOCOL, ROAMING_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -148,8 +148,10 @@ pub async fn run(settings: std::sync::Arc<Settings>, db: PgPool) -> anyhow::Resu
         tokio::join!(
             publish_pending(&db, &transport, settings.transports.batch_size),
             publish_pending_board_settings(&db, &transport, settings.transports.batch_size),
+            ingest_device_catalogs(&db, &transport),
             ingest_remote(&db, &transport),
             publish_baselines(&db, &transport),
+            publish_device_catalogs(&db, &transport, &settings),
         );
         tokio::time::sleep(poll).await;
     }
@@ -186,6 +188,20 @@ async fn ensure_node_authorizations(pool: &PgPool, author_public_key: &str) -> a
     .bind(author_public_key)
     .execute(pool)
     .await?;
+    sqlx::query(r#"
+        insert into roaming_board_authorizations(id,workspace_id,board_id,user_id,device_id,author_public_key,role,capability_epoch)
+        select gen_random_uuid(),b.workspace_id,b.id,a.user_id,a.device_id,a.author_public_key,a.role,w.access_epoch
+        from boards b join workspaces w on w.id=b.workspace_id
+        join lateral (
+          select distinct on (source.author_public_key) source.user_id,source.device_id,source.author_public_key,source.role
+          from roaming_board_authorizations source
+          where source.workspace_id=b.workspace_id and source.revoked_at is null
+          order by source.author_public_key,case source.role when 'owner' then 0 when 'member' then 1 else 2 end
+        ) a on true
+        where b.deleted_at is null and w.deleted_at is null
+        on conflict(board_id,author_public_key) where revoked_at is null do update set
+          user_id=excluded.user_id,device_id=excluded.device_id,role=excluded.role,capability_epoch=excluded.capability_epoch
+    "#).execute(pool).await?;
     Ok(())
 }
 
@@ -254,6 +270,148 @@ async fn publish_frozen_queue(pool: &PgPool, transport: &NostrTransport, limit: 
         Ok(())
     }.await;
     if let Err(error)=result { tracing::warn!(%error,%table,"frozen roaming queue remains pending"); }
+}
+
+const LONG_LIVED_DEVICE_GRANT_EXPIRY: u64 = 253_402_300_799;
+async fn publish_device_catalogs(pool:&PgPool,transport:&NostrTransport,settings:&Settings){
+    let result:anyhow::Result<()> = async {
+        let signing_secret=settings.transports.nostr.secret_key.as_deref()
+          .ok_or_else(||anyhow::anyhow!("Nostr secret key is missing"))?;
+        let rows=sqlx::query(r#"
+          select a.author_public_key,a.role,a.user_id,b.id board_id,b.workspace_id,w.owner_user_id,w.access_epoch,
+            c.board_tag,c.board_key_base64,roaming_board_snapshot(b.id)->'board' board,
+            roaming_board_snapshot(b.id)->'columns' columns,
+            coalesce((select array_agg(distinct x.author_public_key order by x.author_public_key)
+              from roaming_board_authorizations x where x.board_id=b.id and x.revoked_at is null and x.role in ('owner','member')),'{}') writer_keys
+          from roaming_board_authorizations a join boards b on b.id=a.board_id
+          join workspaces w on w.id=b.workspace_id join roaming_board_capabilities c on c.board_id=b.id and c.capability_epoch=w.access_epoch
+          where a.revoked_at is null and a.capability_epoch=w.access_epoch and b.deleted_at is null and w.deleted_at is null
+        "#).fetch_all(pool).await?;
+        for row in rows {
+            let recipient:String=row.try_get("author_public_key")?;
+            if recipient.len()!=64 {continue;}
+            let board_id:Uuid=row.try_get("board_id")?;let workspace_id:Uuid=row.try_get("workspace_id")?;
+            let role:String=row.try_get("role")?;let user:Uuid=row.try_get("user_id")?;let owner:Uuid=row.try_get("owner_user_id")?;
+            let mut payload=json!({"protocol":DEVICE_CATALOG_PROTOCOL,"workspaceId":workspace_id,"board":row.try_get::<Value,_>("board")?,
+              "columns":row.try_get::<Value,_>("columns")?,
+              "capability":{"formatVersion":1,"protocolVersion":ROAMING_PROTOCOL_VERSION,"workspaceId":workspace_id,"boardId":board_id,
+                "boardTag":row.try_get::<String,_>("board_tag")?,"boardKey":row.try_get::<String,_>("board_key_base64")?,
+                "capabilityEpoch":row.try_get::<i64,_>("access_epoch")?,"canWrite":role=="owner"||role=="member",
+                "writerPublicKeys":row.try_get::<Vec<String>,_>("writer_keys")?,"delegationRoots":[transport.author_public_key()],"delegationChain":[],
+                "relays":settings.transports.nostr.relays.clone(),"eventKind":settings.transports.nostr.event_kind.saturating_add(p2p_kanban_nostr_transport::ROAMING_EVENT_KIND_OFFSET),
+                "minimumRelayAcks":settings.transports.nostr.min_relay_acks,"provisionedAt":chrono_fallback_timestamp()},
+              "publishedAt":chrono_fallback_timestamp()});
+            let fingerprint=payload.to_string();
+            let old=sqlx::query_as::<_,(String,Value,bool)>("select fingerprint,payload_json,delivered from roaming_device_catalog_receipts where device_public_key=$1 and board_id=$2")
+              .bind(&recipient).bind(board_id).fetch_optional(pool).await?;
+            if old.as_ref().is_some_and(|(f,_,delivered)|f==&fingerprint&&*delivered){continue;}
+            if let Some((old_fingerprint,old_payload,_))=&old {
+              if old_fingerprint==&fingerprint { payload=old_payload.clone(); }
+            }
+            if payload["capability"]["delegationChain"].as_array().is_some_and(Vec::is_empty)&&role=="owner"&&user==owner {
+              let grant=p2p_kanban_nostr_transport::device_link::Grant{protocol:p2p_kanban_nostr_transport::device_link::PROTOCOL.into(),workspace_id:workspace_id.to_string(),board_id:board_id.to_string(),user_id:user.to_string(),epoch:row.try_get("access_epoch")?,subject:recipient.clone(),can_delegate:true,parent_id:None,expires_at:LONG_LIVED_DEVICE_GRANT_EXPIRY};
+              payload["capability"]["delegationChain"]=json!([p2p_kanban_nostr_transport::device_link::sign(signing_secret, p2p_kanban_nostr_transport::device_link::GRANT_KIND,&serde_json::to_value(grant)?)?]);
+            }
+            sqlx::query("insert into roaming_device_catalog_receipts(device_public_key,board_id,fingerprint,payload_json) values($1,$2,$3,$4) on conflict(device_public_key,board_id) do update set fingerprint=excluded.fingerprint,payload_json=excluded.payload_json,delivered=false,updated_at=now()")
+              .bind(&recipient).bind(board_id).bind(&fingerprint).bind(&payload).execute(pool).await?;
+            match transport.publish_device_catalog(&recipient,&payload).await{
+              Ok(receipt)=>{sqlx::query("update roaming_device_catalog_receipts set delivered=true,nostr_event_id=$3,last_error=null,updated_at=now() where device_public_key=$1 and board_id=$2 and fingerprint=$4")
+                .bind(&recipient).bind(board_id).bind(receipt.nostr_event_id).bind(&fingerprint).execute(pool).await?;},
+              Err(error)=>{sqlx::query("update roaming_device_catalog_receipts set last_error=left($3,1000),updated_at=now() where device_public_key=$1 and board_id=$2")
+                .bind(&recipient).bind(board_id).bind(format!("{error:#}")).execute(pool).await?;}
+            }
+        } Ok(())
+    }.await;
+    if let Err(error)=result{tracing::warn!(%error,"could not publish device catalogs");}
+}
+
+async fn ingest_device_catalogs(pool: &PgPool, transport: &NostrTransport) {
+    let catalogs = match transport.recover_device_catalogs().await {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::debug!(%error, "could not pull device catalogs");
+            return;
+        }
+    };
+    for catalog in catalogs {
+        if let Err(error) = apply_device_catalog(pool, transport, &catalog).await {
+            tracing::debug!(event_id=%catalog.nostr_event_id,%error,"ignored device catalog");
+        }
+    }
+}
+
+async fn apply_device_catalog(
+    pool: &PgPool,
+    transport: &NostrTransport,
+    recovered: &RecoveredDeviceCatalog,
+) -> anyhow::Result<()> {
+    let payload=&recovered.payload;
+    anyhow::ensure!(payload.get("protocol").and_then(Value::as_str)==Some(DEVICE_CATALOG_PROTOCOL),"wrong catalog protocol");
+    let workspace_id=Uuid::parse_str(payload.get("workspaceId").and_then(Value::as_str).ok_or_else(||anyhow::anyhow!("catalog workspace is missing"))?)?;
+    let workspace_text=workspace_id.to_string();
+    let board=payload.get("board").ok_or_else(||anyhow::anyhow!("catalog board is missing"))?;
+    let board_id=Uuid::parse_str(string_field(board,"id").ok_or_else(||anyhow::anyhow!("catalog board id is missing"))?)?;
+    let board_text=board_id.to_string();
+    anyhow::ensure!(string_field(board,"workspaceId")==Some(workspace_text.as_str()),"catalog board scope mismatch");
+    let capability=payload.get("capability").ok_or_else(||anyhow::anyhow!("catalog capability is missing"))?;
+    anyhow::ensure!(string_field(capability,"workspaceId")==Some(workspace_text.as_str())
+      && string_field(capability,"boardId")==Some(board_text.as_str()),"catalog capability scope mismatch");
+    let chain:Vec<Value>=serde_json::from_value(capability.get("delegationChain").cloned().unwrap_or_else(||json!([])))?;
+    let local_key=transport.author_public_key();
+    let(root,grant)=p2p_kanban_nostr_transport::device_link::verify_chain(
+      &chain,&local_key,p2p_kanban_nostr_transport::device_link::now())?;
+    anyhow::ensure!(root==recovered.author_public_key
+      && grant.workspace_id==workspace_text&&grant.board_id==board_text,"catalog delegation mismatch");
+    let user_id=Uuid::parse_str(&grant.user_id)?;
+    let epoch=capability.get("capabilityEpoch").and_then(Value::as_i64).ok_or_else(||anyhow::anyhow!("catalog epoch is missing"))?;
+    anyhow::ensure!(grant.epoch==epoch,"catalog epoch mismatch");
+    let trusted=sqlx::query_scalar::<_,bool>(r#"
+      select exists(
+        select 1 from roaming_device_grants g join boards b on b.id=g.board_id
+        where b.workspace_id=$1 and b.deleted_at is null and g.root_key=$2 and g.user_id=$3 and g.epoch=$4
+        union all
+        select 1 from roaming_board_authorizations a join workspaces w on w.id=a.workspace_id
+        where a.workspace_id=$1 and a.author_public_key=$2 and a.user_id=$3 and a.role='owner'
+          and a.capability_epoch=$4 and a.revoked_at is null and w.owner_user_id=$3 and w.deleted_at is null)
+    "#).bind(workspace_id).bind(&root).bind(user_id).bind(epoch).fetch_one(pool).await?;
+    anyhow::ensure!(trusted,"catalog publisher is not a trusted workspace owner");
+    let workspace_epoch=sqlx::query_scalar::<_,i64>("select access_epoch from workspaces where id=$1 and owner_user_id=$2 and deleted_at is null")
+      .bind(workspace_id).bind(user_id).fetch_one(pool).await?;
+    anyhow::ensure!(workspace_epoch==epoch,"catalog uses a stale workspace epoch");
+    let tombstoned=sqlx::query_scalar::<_,bool>("select exists(select 1 from tombstones where entity_type='board' and entity_id=$1)")
+      .bind(board_id).fetch_one(pool).await?;
+    if tombstoned{return Ok(());}
+    let name=string_field(board,"name").map(str::trim).filter(|v|!v.is_empty()).ok_or_else(||anyhow::anyhow!("catalog board name is missing"))?;
+    let description=board.get("description").and_then(Value::as_str);
+    let created_at=string_field(board,"createdAt").unwrap_or("1970-01-01T00:00:00Z");
+    let updated_at=string_field(board,"updatedAt").unwrap_or(created_at);
+    let archived_at=board.get("archivedAt").and_then(Value::as_str);
+    let mut tx=pool.begin().await?;
+    sqlx::query(r#"insert into boards(id,workspace_id,name,description,board_type,created_by_user_id,created_at,updated_at,archived_at)
+      values($1,$2,$3,$4,'kanban',$5,$6::timestamptz,$7::timestamptz,$8::timestamptz) on conflict(id) do nothing"#)
+      .bind(board_id).bind(workspace_id).bind(name).bind(description).bind(user_id).bind(created_at).bind(updated_at).bind(archived_at).execute(&mut *tx).await?;
+    let columns=payload.get("columns").and_then(Value::as_array).ok_or_else(||anyhow::anyhow!("catalog columns are missing"))?;
+    for column in columns {
+      anyhow::ensure!(string_field(column,"boardId")==Some(board_text.as_str()),"catalog column scope mismatch");
+      let id=Uuid::parse_str(string_field(column,"id").ok_or_else(||anyhow::anyhow!("catalog column id is missing"))?)?;
+      let column_name=string_field(column,"name").map(str::trim).filter(|v|!v.is_empty()).ok_or_else(||anyhow::anyhow!("catalog column name is missing"))?;
+      let position=finite_number(column,"position",1000.0)?;
+      sqlx::query("insert into board_columns(id,board_id,name,description,position,color_token,wip_limit) values($1,$2,$3,$4,$5,$6,$7) on conflict(id) do nothing")
+        .bind(id).bind(board_id).bind(column_name).bind(column.get("description").and_then(Value::as_str))
+        .bind(position).bind(column.get("colorToken").and_then(Value::as_str)).bind(column.get("wipLimit").and_then(Value::as_i64).map(|v|v as i32)).execute(&mut *tx).await?;
+    }
+    let board_tag=string_field(capability,"boardTag").ok_or_else(||anyhow::anyhow!("catalog board tag is missing"))?;
+    let board_key=string_field(capability,"boardKey").ok_or_else(||anyhow::anyhow!("catalog board key is missing"))?;
+    sqlx::query("insert into roaming_board_capabilities(board_id,board_tag,board_key_base64,source_kind,capability_epoch) values($1,$2,$3,'imported_capability',$4) on conflict(board_id) do update set board_tag=excluded.board_tag,board_key_base64=excluded.board_key_base64,capability_epoch=excluded.capability_epoch")
+      .bind(board_id).bind(board_tag).bind(board_key).bind(epoch).execute(&mut *tx).await?;
+    sqlx::query("insert into roaming_device_grants(board_id,user_id,root_key,chain_json,epoch) values($1,$2,$3,$4,$5) on conflict(board_id) do update set user_id=excluded.user_id,root_key=excluded.root_key,chain_json=excluded.chain_json,epoch=excluded.epoch")
+      .bind(board_id).bind(user_id).bind(&root).bind(json!(chain)).bind(epoch).execute(&mut *tx).await?;
+    for author in [&root,&local_key] {
+      sqlx::query("insert into roaming_board_authorizations(id,workspace_id,board_id,user_id,author_public_key,role,capability_epoch) values(gen_random_uuid(),$1,$2,$3,$4,'owner',$5) on conflict(board_id,author_public_key) where revoked_at is null do update set user_id=excluded.user_id,role='owner',capability_epoch=excluded.capability_epoch")
+        .bind(workspace_id).bind(board_id).bind(user_id).bind(author).bind(epoch).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 // Snapshots are recovery material, not acknowledgements or an origin authority.
@@ -1651,7 +1809,14 @@ async fn roaming_event_actor(
       let user=Uuid::parse_str(&g.user_id)?;
       let trusted=sqlx::query_scalar::<_,bool>("select exists(select 1 from roaming_board_authorizations a join workspaces w on w.id=a.workspace_id where a.board_id=$1 and a.author_public_key=$2 and a.role='owner' and a.user_id=$3 and w.owner_user_id=$3 and a.capability_epoch=$4 and a.revoked_at is null)").bind(board_id).bind(&root).bind(user).bind(current_epoch).fetch_one(pool).await?;
       let pinned=sqlx::query_scalar::<_,bool>("select exists(select 1 from roaming_device_grants g join workspaces w on w.id=$3 where g.board_id=$1 and g.root_key=$2 and g.user_id=$4 and g.epoch=$5 and w.owner_user_id=$4 and w.deleted_at is null)").bind(board_id).bind(&root).bind(workspace_id).bind(user).bind(current_epoch).fetch_one(pool).await?;
-      anyhow::ensure!(trusted||pinned,"unknown delegation root");return Ok(user);
+      anyhow::ensure!(trusted||pinned,"unknown delegation root");
+      let role=sqlx::query_scalar::<_,String>("select case when owner_user_id=$2 then 'owner' else 'member' end from workspaces where id=$1 and deleted_at is null")
+        .bind(workspace_id).bind(user).fetch_one(pool).await?;
+      // Remember the delegated peer discovered through a signed relay event.
+      // The workspace authorization is then copied to boards created later.
+      sqlx::query("insert into roaming_board_authorizations(id,workspace_id,board_id,user_id,author_public_key,role,capability_epoch) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6) on conflict(board_id,author_public_key) where revoked_at is null do update set user_id=excluded.user_id,role=excluded.role,capability_epoch=excluded.capability_epoch")
+        .bind(workspace_id).bind(board_id).bind(user).bind(&recovered.author_public_key).bind(role).bind(current_epoch).execute(pool).await?;
+      return Ok(user);
     }
     // Compatibility for capabilities issued before authorization binding
     // existed. Epoch 1 keys were only provisioned to legacy owner/admin
@@ -1706,15 +1871,58 @@ async fn record_rejected_roaming_event(
     Ok(())
 }
 
+async fn apply_remote_board_snapshot(
+    pool:&PgPool, workspace_id:Uuid, recovered:&RecoveredRoamingEvent,
+    event_id:Uuid, board_id:Uuid, replica_id:Uuid, actor_user_id:Uuid,
+) -> anyhow::Result<()> {
+    let event=&recovered.event;
+    let snapshot=event.payload.get("snapshot").ok_or_else(||anyhow::anyhow!("snapshot payload is missing"))?;
+    anyhow::ensure!(string_field(snapshot.get("board").unwrap_or(&Value::Null),"id")==Some(event.board_id.as_str())
+      && string_field(snapshot,"workspaceId")==Some(event.workspace_id.as_str()),"snapshot scope mismatch");
+    let cards=snapshot.get("cards").and_then(Value::as_array).ok_or_else(||anyhow::anyhow!("snapshot cards must be an array"))?;
+    let checklist_map=snapshot.get("checklistsByCardId").and_then(Value::as_object).ok_or_else(||anyhow::anyhow!("snapshot checklists must be an object"))?;
+    let mut tx=pool.begin().await?;
+    sqlx::query(r#"insert into roaming_board_events(event_id,nostr_event_id,author_public_key,workspace_id,board_id,replica_id,replica_seq,logical_clock,entity_id,operation,status,capability_epoch,actor_user_id,applied_at)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$5,'board.snapshot','applied',$9,$10,now()) on conflict(event_id) do nothing"#)
+      .bind(event_id).bind(&recovered.nostr_event_id).bind(&recovered.author_public_key).bind(workspace_id).bind(board_id)
+      .bind(replica_id).bind(event.replica_seq).bind(event.logical_clock).bind(event.capability_epoch).bind(actor_user_id).execute(&mut *tx).await?;
+    let mut parents=Vec::new();
+    for card in cards {
+      anyhow::ensure!(string_field(card,"boardId")==Some(event.board_id.as_str()),"snapshot card scope mismatch");
+      let card_id=Uuid::parse_str(string_field(card,"id").ok_or_else(||anyhow::anyhow!("snapshot card id is missing"))?)?;
+      let column_id=Uuid::parse_str(string_field(card,"columnId").ok_or_else(||anyhow::anyhow!("snapshot column id is missing"))?)?;
+      let column_matches=sqlx::query_scalar::<_,bool>("select exists(select 1 from board_columns where id=$1 and board_id=$2 and deleted_at is null)")
+        .bind(column_id).bind(board_id).fetch_one(&mut *tx).await?;
+      anyhow::ensure!(column_matches,"snapshot column is not installed");
+      let collision=sqlx::query_scalar::<_,bool>("select exists(select 1 from cards where id=$1 and board_id<>$2)")
+        .bind(card_id).bind(board_id).fetch_one(&mut *tx).await?;
+      anyhow::ensure!(!collision,"snapshot card id belongs to another board");
+      let title=string_field(card,"title").map(str::trim).filter(|v|!v.is_empty()).ok_or_else(||anyhow::anyhow!("snapshot card title is missing"))?;
+      let priority=normalized_card_priority(card)?;
+      let position=finite_number(card,"position",1000.0)?;
+      let archived=card.get("isArchived").and_then(Value::as_bool).unwrap_or(false);
+      sqlx::query(r#"insert into cards(id,board_id,column_id,title,description,position,priority,start_at,due_at,created_by_user_id,archived_at)
+        values($1,$2,$3,$4,$5,$6,$7,$8::timestamptz,$9::timestamptz,$10,case when $11 then now() else null end) on conflict(id) do nothing"#)
+        .bind(card_id).bind(board_id).bind(column_id).bind(title).bind(card.get("description").and_then(Value::as_str))
+        .bind(position).bind(priority).bind(card.get("startAt").and_then(Value::as_str)).bind(card.get("dueAt").and_then(Value::as_str))
+        .bind(actor_user_id).bind(archived).execute(&mut *tx).await?;
+      if let Some(parent)=card.get("parentCardId").and_then(Value::as_str){parents.push((card_id,Uuid::parse_str(parent)?));}
+      if let Some(checklists)=checklist_map.get(&card_id.to_string()) { apply_checklist_bundle(&mut tx,card_id,checklists).await?; }
+    }
+    for(card,parent) in parents {
+      sqlx::query("update cards set parent_card_id=$2 where id=$1 and board_id=$3 and exists(select 1 from cards p where p.id=$2 and p.board_id=$3)")
+        .bind(card).bind(parent).bind(board_id).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 async fn apply_remote_event(
     pool: &PgPool,
     workspace_id: Uuid,
     recovered: &RecoveredRoamingEvent,
 ) -> anyhow::Result<()> {
     let event = &recovered.event;
-    if event.operation == "board.snapshot" {
-        return Ok(());
-    }
     if event.workspace_id != workspace_id.to_string() {
         anyhow::bail!("unsupported roaming event shape");
     }
@@ -1761,6 +1969,11 @@ async fn apply_remote_event(
     // Re-evaluate old authorization rejections after enrollment semantics changed.
     sqlx::query("delete from roaming_board_events where event_id=$1 and status='rejected'")
         .bind(event_id).execute(pool).await?;
+
+    if event.operation == "board.snapshot" {
+        if event.entity_type!="board"||entity_id!=board_id{anyhow::bail!("unsupported snapshot event shape");}
+        return apply_remote_board_snapshot(pool,workspace_id,recovered,event_id,board_id,replica_id,actor_user_id).await;
+    }
 
     if event.operation == "board.appearance.put" {
         if event.entity_type != "board" || entity_id != board_id {

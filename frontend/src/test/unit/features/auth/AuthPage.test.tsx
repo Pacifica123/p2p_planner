@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthPage } from '@/features/auth/pages/AuthPage';
 
@@ -17,6 +18,16 @@ vi.mock('@/app/providers/AuthSessionProvider', () => ({
 }));
 
 describe('AuthPage web-node link', () => {
+  function renderPage() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <AuthPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
   beforeEach(() => {
     auth.signInFromAnotherNode.mockReset();
     auth.signInWithPassword.mockReset();
@@ -25,11 +36,7 @@ describe('AuthPage web-node link', () => {
   });
 
   it('submits source node credentials through the explicit link mode', async () => {
-    render(
-      <MemoryRouter>
-        <AuthPage />
-      </MemoryRouter>,
-    );
+    renderPage();
 
     fireEvent.click(screen.getByRole('button', { name: 'Подключить с другого узла' }));
     fireEvent.change(screen.getByTestId('auth-source-url'), {
@@ -53,11 +60,7 @@ describe('AuthPage web-node link', () => {
   });
 
   it('warns that registration creates a deployment-local identity', () => {
-    render(
-      <MemoryRouter>
-        <AuthPage />
-      </MemoryRouter>,
-    );
+    renderPage();
 
     fireEvent.click(screen.getByRole('button', { name: 'Создать отдельный аккаунт' }));
     expect(

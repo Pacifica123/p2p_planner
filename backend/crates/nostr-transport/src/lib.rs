@@ -24,6 +24,8 @@ const ROAMING_BOARD_KEY_DOMAIN: &[u8] = b"p2p-kanban:roaming-board-key:v1";
 const BOARD_TAG_DOMAIN: &[u8] = b"p2p-kanban:board-tag:v1";
 pub const ROAMING_PROTOCOL_VERSION: &str = "p2p-kanban-roaming/1";
 pub const ROAMING_EVENT_KIND_OFFSET: u16 = 1;
+pub const DEVICE_CATALOG_KIND_OFFSET: u16 = 2;
+pub const DEVICE_CATALOG_PROTOCOL: &str = "p2p-kanban-device-catalog/1";
 
 fn default_capability_epoch() -> i64 {
     1
@@ -65,6 +67,21 @@ pub struct RecoveredRoamingEvent {
     pub signed_at: u64,
     pub author_public_key: String,
     pub event: RoamingBoardEvent,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecoveredDeviceCatalog {
+    pub nostr_event_id: String,
+    pub signed_at: u64,
+    pub author_public_key: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceCatalogEnvelope {
+    protocol: String,
+    recipient: String,
+    parts: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -398,6 +415,77 @@ impl NostrTransport {
         })
     }
 
+
+    pub async fn publish_device_catalog(
+        &self,
+        recipient: &str,
+        payload: &serde_json::Value,
+    ) -> Result<NostrDeliveryReceipt> {
+        let recipient_key = PublicKey::from_hex(recipient)?;
+        let parts = device_link::encrypt(&self.config.secret_key, recipient, payload)?;
+        let content = serde_json::to_string(&serde_json::json!({
+            "protocol": DEVICE_CATALOG_PROTOCOL,
+            "recipient": recipient,
+            "parts": parts,
+        }))?;
+        let builder = EventBuilder::new(
+            Kind::Custom(self.config.event_kind.saturating_add(DEVICE_CATALOG_KIND_OFFSET)),
+            content,
+        ).tags([Tag::public_key(recipient_key), Tag::hashtag("p2pkanban-device-catalog")]);
+        let output = self.client.send_event_builder(builder).await
+            .context("Nostr relays did not accept the device catalog")?;
+        if output.success.len() < self.config.min_relay_acks {
+            bail!("device catalog reached only {}/{} required relays",output.success.len(),self.config.min_relay_acks);
+        }
+        Ok(NostrDeliveryReceipt {
+            nostr_event_id: output.val.to_string(), configured_relays:self.config.relays.len(),
+            accepted_relays:output.success.iter().map(ToString::to_string).collect(),
+            failed_relays:output.failed.keys().map(ToString::to_string).collect(),
+            board_tag:recipient.to_string(),
+        })
+    }
+
+    pub async fn recover_device_catalogs(&self) -> Result<Vec<RecoveredDeviceCatalog>> {
+        let recipient = self.keys.public_key().to_string();
+        let filter = Filter::new().kind(Kind::Custom(
+            self.config
+                .event_kind
+                .saturating_add(DEVICE_CATALOG_KIND_OFFSET),
+        ));
+        let events = self
+            .client
+            .fetch_events(filter, self.config.fetch_timeout)
+            .await
+            .context("could not fetch device catalogs")?;
+        let mut recovered = Vec::new();
+        for event in events.iter() {
+            let envelope: DeviceCatalogEnvelope = match serde_json::from_str(&event.content) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if envelope.protocol != DEVICE_CATALOG_PROTOCOL || envelope.recipient != recipient {
+                continue;
+            }
+            let sender = event.pubkey.to_string();
+            if let Ok(payload) =
+                device_link::decrypt(&self.config.secret_key, &sender, &envelope.parts)
+            {
+                recovered.push(RecoveredDeviceCatalog {
+                    nostr_event_id: event.id.to_string(),
+                    signed_at: event.created_at.as_secs(),
+                    author_public_key: sender,
+                    payload,
+                });
+            }
+        }
+        recovered.sort_by(|left, right| {
+            left.signed_at
+                .cmp(&right.signed_at)
+                .then_with(|| left.nostr_event_id.cmp(&right.nostr_event_id))
+        });
+        recovered.dedup_by(|left, right| left.nostr_event_id == right.nostr_event_id);
+        Ok(recovered)
+    }
     pub async fn publish_roaming(&self, event: &RoamingBoardEvent) -> Result<NostrDeliveryReceipt> {
         let board_tag = self.codec.roaming_board_tag(&event.board_id)?;
         let content = self.codec.seal_roaming(event)?;
