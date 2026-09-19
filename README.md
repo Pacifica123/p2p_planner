@@ -217,3 +217,7 @@ python -B tools/check_zero_config_bootstrap.py
 ```bash
 python -B tools/devbootstrap.py release-gates --profile full-local-release
 ```
+
+## v2.1.0 — локальное подтверждение узлов
+
+Доверенные узлы подключаются по IP:порту в настройках сети, получают права на доски и публикуют каталог через relay. См. [описание ограничений](docs/architecture/device-network-v2.1.0.md).

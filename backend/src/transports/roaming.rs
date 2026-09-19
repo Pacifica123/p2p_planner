@@ -189,6 +189,14 @@ async fn ensure_node_authorizations(pool: &PgPool, author_public_key: &str) -> a
     .execute(pool)
     .await?;
     sqlx::query(r#"
+      insert into roaming_board_authorizations(id,workspace_id,board_id,user_id,author_public_key,role,capability_epoch)
+      select gen_random_uuid(),w.id,b.id,p.user_id,p.public_key,'owner',w.access_epoch
+      from trusted_device_peers p join workspaces w on w.owner_user_id=p.user_id
+      join boards b on b.workspace_id=w.id where w.deleted_at is null and b.deleted_at is null
+      on conflict(board_id,author_public_key) where revoked_at is null do update set
+        user_id=excluded.user_id,role='owner',capability_epoch=excluded.capability_epoch
+    "#).execute(pool).await?;
+    sqlx::query(r#"
         insert into roaming_board_authorizations(id,workspace_id,board_id,user_id,device_id,author_public_key,role,capability_epoch)
         select gen_random_uuid(),b.workspace_id,b.id,a.user_id,a.device_id,a.author_public_key,a.role,w.access_epoch
         from boards b join workspaces w on w.id=b.workspace_id
@@ -279,6 +287,9 @@ async fn publish_device_catalogs(pool:&PgPool,transport:&NostrTransport,settings
           .ok_or_else(||anyhow::anyhow!("Nostr secret key is missing"))?;
         let rows=sqlx::query(r#"
           select a.author_public_key,a.role,a.user_id,b.id board_id,b.workspace_id,w.owner_user_id,w.access_epoch,
+            w.name workspace_name,w.description workspace_description,w.visibility workspace_visibility,
+            (select g.chain_json from roaming_device_grants g
+              where g.user_id=a.user_id limit 1) introduction_chain,
             c.board_tag,c.board_key_base64,roaming_board_snapshot(b.id)->'board' board,
             roaming_board_snapshot(b.id)->'columns' columns,
             coalesce((select array_agg(distinct x.author_public_key order by x.author_public_key)
@@ -292,7 +303,11 @@ async fn publish_device_catalogs(pool:&PgPool,transport:&NostrTransport,settings
             if recipient.len()!=64 {continue;}
             let board_id:Uuid=row.try_get("board_id")?;let workspace_id:Uuid=row.try_get("workspace_id")?;
             let role:String=row.try_get("role")?;let user:Uuid=row.try_get("user_id")?;let owner:Uuid=row.try_get("owner_user_id")?;
-            let mut payload=json!({"protocol":DEVICE_CATALOG_PROTOCOL,"workspaceId":workspace_id,"board":row.try_get::<Value,_>("board")?,
+            let mut payload=json!({"protocol":DEVICE_CATALOG_PROTOCOL,"workspaceId":workspace_id,
+              "workspace":{"id":workspace_id,"name":row.try_get::<String,_>("workspace_name")?,
+                "description":row.try_get::<Option<String>,_>("workspace_description")?,
+                "visibility":row.try_get::<String,_>("workspace_visibility")?},
+              "board":row.try_get::<Value,_>("board")?,
               "columns":row.try_get::<Value,_>("columns")?,
               "capability":{"formatVersion":1,"protocolVersion":ROAMING_PROTOCOL_VERSION,"workspaceId":workspace_id,"boardId":board_id,
                 "boardTag":row.try_get::<String,_>("board_tag")?,"boardKey":row.try_get::<String,_>("board_key_base64")?,
@@ -300,6 +315,7 @@ async fn publish_device_catalogs(pool:&PgPool,transport:&NostrTransport,settings
                 "writerPublicKeys":row.try_get::<Vec<String>,_>("writer_keys")?,"delegationRoots":[transport.author_public_key()],"delegationChain":[],
                 "relays":settings.transports.nostr.relays.clone(),"eventKind":settings.transports.nostr.event_kind.saturating_add(p2p_kanban_nostr_transport::ROAMING_EVENT_KIND_OFFSET),
                 "minimumRelayAcks":settings.transports.nostr.min_relay_acks,"provisionedAt":chrono_fallback_timestamp()},
+              "introductionChain":row.try_get::<Option<Value>,_>("introduction_chain")?,
               "publishedAt":chrono_fallback_timestamp()});
             let fingerprint=payload.to_string();
             let old=sqlx::query_as::<_,(String,Value,bool)>("select fingerprint,payload_json,delivered from roaming_device_catalog_receipts where device_public_key=$1 and board_id=$2")
@@ -366,7 +382,8 @@ async fn apply_device_catalog(
     let epoch=capability.get("capabilityEpoch").and_then(Value::as_i64).ok_or_else(||anyhow::anyhow!("catalog epoch is missing"))?;
     anyhow::ensure!(grant.epoch==epoch,"catalog epoch mismatch");
     let trusted=sqlx::query_scalar::<_,bool>(r#"
-      select exists(
+      select exists(select 1 from trusted_device_peers where user_id=$3 and public_key=$2)
+      or exists(
         select 1 from roaming_device_grants g join boards b on b.id=g.board_id
         where b.workspace_id=$1 and b.deleted_at is null and g.root_key=$2 and g.user_id=$3 and g.epoch=$4
         union all
@@ -374,10 +391,44 @@ async fn apply_device_catalog(
         where a.workspace_id=$1 and a.author_public_key=$2 and a.user_id=$3 and a.role='owner'
           and a.capability_epoch=$4 and a.revoked_at is null and w.owner_user_id=$3 and w.deleted_at is null)
     "#).bind(workspace_id).bind(&root).bind(user_id).bind(epoch).fetch_one(pool).await?;
-    anyhow::ensure!(trusted,"catalog publisher is not a trusted workspace owner");
+    if !trusted {
+      let intro:Vec<Value>=serde_json::from_value(payload.get("introductionChain").cloned().unwrap_or(Value::Null))?;
+      let(intro_root,intro_grant)=p2p_kanban_nostr_transport::device_link::verify_chain(
+        &intro,&recovered.author_public_key,p2p_kanban_nostr_transport::device_link::now())?;
+      anyhow::ensure!(intro_grant.user_id==user_id.to_string() && intro_grant.can_delegate,
+        "catalog introduction belongs to another identity");
+      let introduced_by=intro.last().and_then(|e|e["pubkey"].as_str()).unwrap_or("");
+      let sponsor=sqlx::query_scalar::<_,bool>(r#"
+        select exists(select 1 from trusted_device_peers where user_id=$1 and public_key=$2)
+        or exists(select 1 from roaming_device_grants g join boards b on b.id=g.board_id
+           join workspaces w on w.id=b.workspace_id where g.user_id=$1 and g.root_key=$3
+           and w.owner_user_id=$1 and w.deleted_at is null and g.epoch=w.access_epoch)
+      "#).bind(user_id).bind(introduced_by).bind(&intro_root).fetch_one(pool).await?;
+      anyhow::ensure!(sponsor || intro_root==local_key,
+        "catalog publisher has no approved introduction");
+      sqlx::query("insert into trusted_device_peers(user_id,public_key) values($1,$2) on conflict do nothing")
+        .bind(user_id).bind(&recovered.author_public_key).execute(pool).await?;
+    }
     let workspace_epoch=sqlx::query_scalar::<_,i64>("select access_epoch from workspaces where id=$1 and owner_user_id=$2 and deleted_at is null")
-      .bind(workspace_id).bind(user_id).fetch_one(pool).await?;
-    anyhow::ensure!(workspace_epoch==epoch,"catalog uses a stale workspace epoch");
+      .bind(workspace_id).bind(user_id).fetch_optional(pool).await?;
+    if let Some(current)=workspace_epoch {anyhow::ensure!(current==epoch,"catalog uses a stale workspace epoch");}
+    else {
+      let info=payload.get("workspace").ok_or_else(||anyhow::anyhow!("catalog workspace metadata is missing"))?;
+      anyhow::ensure!(string_field(info,"id")==Some(workspace_text.as_str()),"catalog workspace scope mismatch");
+      let name=string_field(info,"name").map(str::trim).filter(|v|!v.is_empty()).ok_or_else(||anyhow::anyhow!("workspace name missing"))?;
+      let visibility=string_field(info,"visibility").ok_or_else(||anyhow::anyhow!("workspace visibility missing"))?;
+      anyhow::ensure!(matches!(visibility,"private"|"shared"|"public_readonly"),"invalid workspace visibility");
+      let mut tx=pool.begin().await?;
+      sqlx::query("insert into workspaces(id,name,description,owner_user_id,visibility,access_epoch) values($1,$2,$3,$4,$5,$6) on conflict(id) do nothing")
+        .bind(workspace_id).bind(name).bind(info.get("description").and_then(Value::as_str))
+        .bind(user_id).bind(visibility).bind(epoch).execute(&mut *tx).await?;
+      let actual=sqlx::query_scalar::<_,i64>("select access_epoch from workspaces where id=$1 and owner_user_id=$2 and deleted_at is null")
+        .bind(workspace_id).bind(user_id).fetch_one(&mut *tx).await?;
+      anyhow::ensure!(actual==epoch,"workspace epoch mismatch");
+      sqlx::query("insert into workspace_members(id,workspace_id,user_id,role) values(gen_random_uuid(),$1,$2,'owner') on conflict do nothing")
+        .bind(workspace_id).bind(user_id).execute(&mut *tx).await?;
+      tx.commit().await?;
+    }
     let tombstoned=sqlx::query_scalar::<_,bool>("select exists(select 1 from tombstones where entity_type='board' and entity_id=$1)")
       .bind(board_id).fetch_one(pool).await?;
     if tombstoned{return Ok(());}

@@ -12,9 +12,10 @@ fn ids(rows: &Value) -> HashSet<String> {
 fn retain(rows: &mut Value, key: &str, selected: &HashSet<String>) {
     if let Some(rows) = rows.as_array_mut() { rows.retain(|v| v[key].as_str().is_some_and(|id| selected.contains(id))); }
 }
-fn select_boards(bundle: &PortableBundle, selected: &HashSet<String>, deleted: &HashSet<String>) -> PortableBundle {
+fn select_boards(bundle: &PortableBundle, selected: &HashSet<String>, deleted: &HashSet<String>, include_workspace: bool) -> PortableBundle {
     let mut result = bundle.clone();
     select_payload(&mut result.payload, selected, deleted);
+    if include_workspace { result.payload.workspaces=bundle.payload.workspaces.clone(); }
     result
 }
 fn select_payload(p: &mut PortableBundlePayload, selected: &HashSet<String>, deleted: &HashSet<String>) {
@@ -43,24 +44,27 @@ fn select_payload(p: &mut PortableBundlePayload, selected: &HashSet<String>, del
 }
 pub(super) async fn import_missing(tx: &mut Transaction<'_, Postgres>, remote: &NodeLinkExportResponse, verified: &[Verified]) -> AppResult<usize> {
     let mut selected = HashSet::new();
+    let mut new_workspaces=HashSet::new();
     for (board, workspace, root, epoch, _) in verified {
         let exists = sqlx::query_scalar::<_, bool>("select exists(select 1 from boards where id=$1) or exists(select 1 from tombstones where entity_type='board' and entity_id=$1)")
             .bind(board).fetch_one(&mut **tx).await?;
         if exists { continue; }
-        let trusted = sqlx::query_scalar::<_, bool>(r#"
-          select exists(select 1 from workspaces w where w.id=$1 and w.owner_user_id=$2
-            and w.deleted_at is null and w.access_epoch=$3 and (
-              exists(select 1 from roaming_device_grants g join boards b on b.id=g.board_id
-                join workspaces trusted on trusted.id=b.workspace_id
-                where b.deleted_at is null and trusted.deleted_at is null and trusted.owner_user_id=$2
-                  and g.user_id=$2 and g.root_key=$4 and g.epoch=trusted.access_epoch)
-              or exists(select 1 from roaming_board_authorizations a
-                join workspaces trusted on trusted.id=a.workspace_id
-                where trusted.owner_user_id=$2 and trusted.deleted_at is null
-                  and a.user_id=$2 and a.author_public_key=$4 and a.role='owner'
-                  and a.capability_epoch=trusted.access_epoch and a.revoked_at is null)))
-        "#).bind(workspace).bind(remote.user.id).bind(epoch).bind(root).fetch_one(&mut **tx).await?;
-        if !trusted { return Err(AppError::forbidden("Нет действующего доверия к владельцу этого пространства. Новые пространства и смена epoch требуют отдельного подключения.")); }
+        let trusted=sqlx::query_scalar::<_,bool>(r#"
+          select exists(select 1 from trusted_device_peers where user_id=$1 and public_key=$2)
+          or exists(select 1 from roaming_device_grants g join boards b on b.id=g.board_id
+             join workspaces w on w.id=b.workspace_id where g.user_id=$1 and g.root_key=$2
+             and g.epoch=w.access_epoch and w.owner_user_id=$1 and w.deleted_at is null)
+        "#).bind(remote.user.id).bind(root).fetch_one(&mut **tx).await?;
+        if !trusted { return Err(AppError::forbidden("Ключ отправителя не принадлежит ранее доверенному устройству")); }
+        let current=sqlx::query_scalar::<_,i64>("select access_epoch from workspaces where id=$1 and owner_user_id=$2 and deleted_at is null")
+          .bind(workspace).bind(remote.user.id).fetch_optional(&mut **tx).await?;
+        if let Some(value)=current {if value!=*epoch{return Err(AppError::conflict("Epoch пространства изменился; нужна повторная выдача ключей"));}}
+        else {
+          let collision=sqlx::query_scalar::<_,bool>("select exists(select 1 from workspaces where id=$1)")
+            .bind(workspace).fetch_one(&mut **tx).await?;
+          if collision{return Err(AppError::conflict("Идентификатор пространства занят другим владельцем"));}
+          new_workspaces.insert(workspace.to_string());
+        }
         selected.insert(board.to_string());
     }
     let local_deleted = sqlx::query_scalar::<_, Uuid>("select entity_id from tombstones where entity_type='card'").fetch_all(&mut **tx).await?;
@@ -73,9 +77,16 @@ pub(super) async fn import_missing(tx: &mut Transaction<'_, Postgres>, remote: &
         if collision { return Err(AppError::conflict("Tombstone ссылается на существующую карточку другой доски")); }
     }
     for workspace in &remote.workspaces {
-        let bundle = select_boards(&workspace.bundle, &selected, &deleted);
-        if bundle.payload.boards.as_array().is_some_and(|v| !v.is_empty()) {
-            pairing::import_workspace_bundle_parts(tx, remote.user.id, &bundle, false).await?;
+        let workspace_id=workspace.bundle.manifest_json.workspace_id.ok_or_else(||AppError::bad_request("No workspace ID"))?;
+        let include_workspace=new_workspaces.contains(&workspace_id.to_string());
+        let bundle=select_boards(&workspace.bundle,&selected,&deleted,include_workspace);
+        if bundle.payload.boards.as_array().is_some_and(|v|!v.is_empty()) {
+          pairing::import_workspace_bundle_parts(tx,remote.user.id,&bundle,include_workspace).await?;
+          if include_workspace {
+            let epoch=verified.iter().find(|(_,id,_,_,_)|*id==workspace_id).map(|(_,_,_,epoch,_)|*epoch).unwrap_or(1);
+            sqlx::query("update workspaces set access_epoch=$2 where id=$1")
+              .bind(workspace_id).bind(epoch).execute(&mut **tx).await?;
+          }
         }
     }
     let capabilities = remote.board_capabilities.iter().filter(|c| selected.contains(&c.board_id.to_string())).cloned().collect::<Vec<_>>();

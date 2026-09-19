@@ -7,6 +7,7 @@ import { BoardPage } from '@/features/boards/pages/BoardPage';
 import { UserAppearancePage } from '@/features/appearance/pages/UserAppearancePage';
 import { BoardAppearancePage } from '@/features/appearance/pages/BoardAppearancePage';
 import { AuthPage } from '@/features/auth/pages/AuthPage';
+import { NetworkPage } from '@/features/deviceLink/NetworkPage';
 import { LoadingState } from '@/shared/ui/LoadingState';
 import { WorkspaceAccessPage } from '@/features/workspaces/pages/WorkspaceAccessPage';
 import { InvitationAcceptPage } from '@/features/workspaces/pages/InvitationAcceptPage';
@@ -36,6 +37,7 @@ export function AppRouter() {
           <Route element={<MainLayout />}>
             <Route path="/" element={<WorkspacesPage />} />
             <Route path="/settings/appearance" element={<UserAppearancePage />} />
+            <Route path="/settings/network" element={<NetworkPage />} />
             <Route path="/workspaces/:workspaceId/boards" element={<WorkspaceBoardsPage />} />
             <Route path="/workspaces/:workspaceId/access" element={<WorkspaceAccessPage />} />
             <Route path="/workspaces/:workspaceId/boards/:boardId" element={<BoardPage />} />

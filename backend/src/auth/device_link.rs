@@ -19,7 +19,7 @@ use uuid::Uuid;
 fn invalid(e: impl std::fmt::Display) -> AppError {
     AppError::bad_request(format!("Device link: {e}"))
 }
-fn secret(state: &AppState) -> AppResult<&str> {
+pub(super) fn secret(state: &AppState) -> AppResult<&str> {
     if !state.settings.transports.nostr.enabled {
         return Err(AppError::conflict("Enable Nostr roaming first"));
     }
@@ -86,7 +86,7 @@ pub async fn issue_chain(
     )
     .map_err(invalid)?])
 }
-async fn prepared(state: &AppState, user_id: Uuid, subject: &str) -> AppResult<Value> {
+pub(super) async fn prepared(state: &AppState, user_id: Uuid, subject: &str) -> AppResult<Value> {
     let user = repo::find_active_user_by_id(&state.db, user_id)
         .await?
         .ok_or_else(AppError::internal)?;
@@ -116,6 +116,8 @@ pub async fn prepare(
 ) -> AppResult<Json<ApiEnvelope<Value>>> {
     let auth = auth_context(&state, &headers).await?;
     let data = prepared(&state, auth.user_id, &input.author_public_key).await?;
+    sqlx::query("insert into trusted_device_peers(user_id,public_key) values($1,$2) on conflict do nothing")
+      .bind(auth.user_id).bind(&input.author_public_key).execute(&state.db).await?;
     let parts =
         protocol::encrypt(secret(&state)?, &input.author_public_key, &data).map_err(invalid)?;
     Ok(ok(protocol::sign(secret(&state)?,protocol::RESPONSE_KIND,&json!({"protocol":protocol::PROTOCOL,"recipient":input.author_public_key,"requestId":"preparation","parts":parts})).map_err(invalid)?))
@@ -128,7 +130,7 @@ pub async fn supplement_request(State(state): State<AppState>, headers: HeaderMa
     auth_context(&state, &headers).await?;
     create_request(&state, true).await
 }
-async fn create_request(state: &AppState, supplement: bool) -> AppResult<Json<ApiEnvelope<Value>>> {
+pub(super) async fn create_request(state: &AppState, supplement: bool) -> AppResult<Json<ApiEnvelope<Value>>> {
     let key = secret(&state)?;
     let now = protocol::now();
     let mut tx = state.db.begin().await?;
@@ -150,7 +152,7 @@ async fn create_request(state: &AppState, supplement: bool) -> AppResult<Json<Ap
     tx.commit().await?;
     Ok(ok(e))
 }
-fn check_request(raw: &Value) -> AppResult<(String, String, u64)> {
+pub(super) fn check_request(raw: &Value) -> AppResult<(String, String, u64)> {
     let (recipient, id, b) =
         protocol::checked_event(raw, protocol::REQUEST_KIND).map_err(invalid)?;
     let expiry = b["expiresAt"]
@@ -182,6 +184,8 @@ pub async fn approve(
     }
     let data = prepared(&state, auth.user_id, &recipient).await?;
     let parts = protocol::encrypt(secret(&state)?, &recipient, &data).map_err(invalid)?;
+    sqlx::query("insert into trusted_device_peers(user_id,public_key) values($1,$2) on conflict do nothing")
+      .bind(auth.user_id).bind(&recipient).execute(&state.db).await?;
     Ok(ok(protocol::sign(secret(&state)?,protocol::RESPONSE_KIND,&json!({"protocol":protocol::PROTOCOL,"recipient":recipient,"requestId":id,"expiresAt":expiry,"parts":parts})).map_err(invalid)?))
 }
 #[derive(Deserialize)]
@@ -296,6 +300,26 @@ pub async fn accept(
         return Err(invalid("Приглашение уже использовано или истекло"));
     }
     if input.supplement {
+        // Admit a new key only when an existing approved key has actually
+        // delegated to this signer. A signed response by itself proves no trust.
+        let mut trusted=sqlx::query_scalar::<_,bool>(
+            "select exists(select 1 from trusted_device_peers where user_id=$1 and public_key=$2)")
+            .bind(remote.user.id).bind(&sender).fetch_one(&mut *tx).await?;
+        if !trusted {
+            for (_,_,root,_,_) in &verified {
+                if root==&recipient {trusted=true;break;}
+                trusted=sqlx::query_scalar::<_,bool>(r#"
+                    select exists(select 1 from trusted_device_peers where user_id=$1 and public_key=$2)
+                    or exists(select 1 from roaming_device_grants g join boards b on b.id=g.board_id
+                      join workspaces w on w.id=b.workspace_id where g.user_id=$1 and g.root_key=$2
+                      and g.epoch=w.access_epoch and w.owner_user_id=$1 and w.deleted_at is null)
+                "#).bind(remote.user.id).bind(root).fetch_one(&mut *tx).await?;
+                if trusted {break;}
+            }
+        }
+        if !trusted {return Err(AppError::forbidden("Нет подтверждённого доверия к устройству отправителя"));}
+        sqlx::query("insert into trusted_device_peers(user_id,public_key) values($1,$2) on conflict do nothing")
+            .bind(remote.user.id).bind(&sender).execute(&mut *tx).await?;
         let added = super::device_supplement::import_missing(&mut tx, &remote, &verified).await?;
         sqlx::query("update device_link_challenges set consumed_at=now() where id=$1").bind(id).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -310,6 +334,7 @@ pub async fn accept(
         .await?;
     pairing::import_board_capabilities(&mut tx, &remote.board_capabilities).await?;
     pairing::import_card_tombstones(&mut tx, &remote.card_tombstones).await?;
+    let verified_roots:Vec<String>=verified.iter().map(|(_,_,root,_,_)|root.clone()).collect();
     for (board, workspace, root, epoch, chain) in verified {
         sqlx::query("update workspaces set access_epoch=$2 where id=$1")
             .bind(workspace)
@@ -324,6 +349,11 @@ pub async fn accept(
         sqlx::query("insert into roaming_device_grants(board_id,user_id,root_key,chain_json,epoch) values($1,$2,$3,$4,$5)").bind(board).bind(remote.user.id).bind(&root).bind(serde_json::to_value(chain).map_err(invalid)?).bind(epoch).execute(&mut *tx).await?;
         sqlx::query("insert into roaming_board_authorizations(id,workspace_id,board_id,user_id,author_public_key,role,capability_epoch) values($1,$2,$3,$4,$5,'owner',$6)").bind(Uuid::now_v7()).bind(workspace).bind(board).bind(remote.user.id).bind(&root).bind(epoch).execute(&mut *tx).await?;
     }
+    for root in &verified_roots {
+        sqlx::query("insert into trusted_device_peers(user_id,public_key) values($1,$2) on conflict do nothing")
+            .bind(remote.user.id).bind(root).execute(&mut *tx).await?;
+    }
+    sqlx::query("insert into trusted_device_peers(user_id,public_key) values($1,$2) on conflict do nothing").bind(remote.user.id).bind(&sender).execute(&mut *tx).await?;
     sqlx::query("update device_link_challenges set consumed_at=now() where id=$1")
         .bind(id)
         .execute(&mut *tx)
@@ -338,4 +368,9 @@ pub async fn accept(
         session.payload,
         &[session.refresh_cookie, session.device_cookie],
     )
+}
+pub async fn lan_pending_request(State(state):State<AppState>)->AppResult<Json<ApiEnvelope<Value>>>{
+    let row=sqlx::query_scalar::<_,Value>("select request_json from device_link_challenges where consumed_at is null and expires_at>$1 order by created_at desc limit 1")
+      .bind(protocol::now() as i64).fetch_optional(&state.db).await?;
+    Ok(ok(json!({"request":row})))
 }

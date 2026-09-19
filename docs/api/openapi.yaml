@@ -3497,6 +3497,68 @@ components:
         mode:
           type: string
 paths:
+  /auth/device-link/lan/connect:
+    post:
+      tags: [auth]
+      summary: Локальное подтверждение устройства
+      responses:
+        "200":
+          description: Подписанный запрос или зашифрованный ответ
+  /auth/device-link/lan/inbox:
+    get:
+      tags: [auth]
+      summary: Локальное подтверждение устройства
+      responses:
+        "200":
+          description: Подписанный запрос или зашифрованный ответ
+    post:
+      tags: [auth]
+      summary: Локальное подтверждение устройства
+      responses:
+        "200":
+          description: Подписанный запрос или зашифрованный ответ
+  /auth/device-link/lan/approve:
+    post:
+      tags: [auth]
+      summary: Локальное подтверждение устройства
+      responses:
+        "200":
+          description: Подписанный запрос или зашифрованный ответ
+  /auth/device-link/lan/result/{id}:
+    get:
+      tags: [auth]
+      summary: Локальное подтверждение устройства
+      responses:
+        "200":
+          description: Подписанный запрос или зашифрованный ответ
+  /auth/device-link/lan/poll/{id}:
+    get:
+      tags: [auth]
+      summary: Локальное подтверждение устройства
+      responses:
+        "200":
+          description: Подписанный запрос или зашифрованный ответ
+  /auth/device-link/lan/mobile-result:
+    post:
+      tags: [auth]
+      summary: Локальное подтверждение устройства
+      responses:
+        "200":
+          description: Подписанный запрос или зашифрованный ответ
+  /auth/device-link/lan/mobile-poll/{id}:
+    get:
+      tags: [auth]
+      summary: Локальное подтверждение устройства
+      responses:
+        "200":
+          description: Подписанный запрос или зашифрованный ответ
+  /auth/device-link/lan/pending-request:
+    get:
+      tags: [auth]
+      summary: Локальное подтверждение устройства
+      responses:
+        "200":
+          description: Подписанный запрос или зашифрованный ответ
   /auth/sign-up:
     post:
       tags:

@@ -12,6 +12,7 @@ import { Icon } from '@/shared/ui/Icon';
 import { getBackendVersion } from '@/features/system/api/version';
 import { webClientVersion } from '@/shared/version';
 import { SourceUpdateSurface } from '@/features/system/components/SourceUpdateSurface';
+import { apiRequest } from '@/shared/api/client';
 
 const NAV_COLLAPSED_KEY = 'p2pkanban:navigation-collapsed';
 
@@ -29,6 +30,12 @@ export function MainLayout() {
     queryFn: getBackendVersion,
     staleTime: Number.POSITIVE_INFINITY,
     retry: 1,
+  });
+  const incomingQuery = useQuery({
+    queryKey: ['device-link-lan-inbox'],
+    queryFn: () => apiRequest<Array<{ id: string }>>('/auth/device-link/lan/inbox'),
+    refetchInterval: 5000,
+    retry: 0,
   });
   const [isNavigationCollapsed, setNavigationCollapsed] = useState(
     () => window.localStorage.getItem(NAV_COLLAPSED_KEY) === 'true',
@@ -116,6 +123,9 @@ export function MainLayout() {
             <Icon name="settings" size={15} />
           </summary>
           <nav className="nav-list">
+            <NavLink to={paths.network} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}>
+              <span>Сеть и устройства {incomingQuery.data?.length ? `· запросов: ${incomingQuery.data.length}` : ''}</span>
+            </NavLink>
             <NavLink to={paths.userAppearance} className={({ isActive }) => `nav-list__item ${isActive ? 'is-active' : ''}`}>
               <span>Вид приложения</span>
             </NavLink>
@@ -170,6 +180,9 @@ export function MainLayout() {
         </header>
 
         <main className="content-area" data-testid="route-outlet">
+          {incomingQuery.data?.length ? <p role="status" className="panel">
+            Поступил запрос на подключение устройства. <NavLink to={paths.network}>Открыть сетевые настройки</NavLink>
+          </p> : null}
           <Outlet />
         </main>
       </div>

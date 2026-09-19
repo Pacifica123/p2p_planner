@@ -50,8 +50,8 @@ def load_json(relative: str) -> dict:
 
 def check_versions() -> None:
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    if version != "2.0.0":
-        fail(f"VERSION={version!r}, для этой линии ожидалось '2.0.0'")
+    if version != "2.1.0":
+        fail(f"VERSION={version!r}, для этой линии ожидалось '2.1.0'")
     if version != EXPECTED_VERSION:
         fail(f"VERSION={version!r}, ожидалось {EXPECTED_VERSION!r}")
 

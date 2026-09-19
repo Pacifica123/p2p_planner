@@ -1,20 +1,7 @@
-# Relay replica recovery
+# Восстановление реплики через relay
 
-An enrolled PC or Android device is a peer. It reads and edits its local board
-replica; another personal device is not an acknowledgement service or source of
-truth.
+Подключённые ПК и Android остаются равноправными участниками. Каждый читает и изменяет собственную локальную реплику. Другому персональному устройству не нужно подтверждать операцию и работать в роли исходного сервера.
 
-For a board already known to a peer, signed encrypted board events and durable
-baselines are enough to recover and converge through the configured Nostr
-relays. A signed baseline from a newly enrolled node also announces that node's
-public key. Trusted nodes retain that workspace-scoped authorization and send
-new board metadata, columns, capability and delegation to it as a direct NIP-44
-catalog event. The recipient creates the local board shell, then fills it from
-the ordinary encrypted board baseline and journal.
+Для уже известной доски подписанные зашифрованные события и долговечные базовые снимки позволяют восстановление через настроенные Nostr relay. Подписанный базовый снимок сообщает публичный ключ нового участника. Доверенные узлы сохраняют полномочия в рамках пространства и отправляют метаданные новых досок, колонок, ключи и делегирование адресным зашифрованным событием каталога. Получатель создаёт оболочку доски и затем восстанавливает данные из обычного снимка и журнала.
 
-The source must reach a relay at least once after creating/importing a board or
-making a change. Relay retention and reachability remain transport constraints.
-The roaming journal currently converges cards, card order, checklists, card
-deletions and board appearance. Comments, labels and later column mutations are
-not yet independent multi-writer roaming entities; a catalog carries the
-columns that existed when the board was admitted.
+Создателю доски необходимо хотя бы один раз связаться с relay после создания, импорта или редактирования. Доступность relay и хранение истории остаются свойствами транспорта. Сейчас между самостоятельными узлами сходятся карточки, их порядок, чек-листы, удаления карточек и оформление доски. Комментарии, метки и позднейшие изменения колонок пока не являются полноценными независимыми сущностями многопользовательской синхронизации. Каталог переносит колонки в том виде, в каком они существовали при добавлении доски.

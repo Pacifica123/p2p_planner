@@ -1,3 +1,4 @@
+import { NetworkConnect } from '@/features/deviceLink/NetworkConnect';
 import {DeviceLinkPanel} from '@/features/deviceLink/DeviceLinkPanel';
 import { FormEvent, useMemo, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
@@ -58,6 +59,7 @@ export function AuthPage() {
 
   return (
     <div className="content-stack" data-testid="auth-page" style={{ maxWidth: 560, margin: '40px auto' }}>
+      <NetworkConnect first />
       <DeviceLinkPanel destination/>
       <Panel title="p2pKanban" description="Ваши доски в собственном локальном окружении.">
         <div className="toolbar">

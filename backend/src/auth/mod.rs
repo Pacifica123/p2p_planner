@@ -1,6 +1,8 @@
 #[cfg(feature="nostr-shadow")]
 pub mod device_link;
 #[cfg(feature="nostr-shadow")]
+mod lan_link;
+#[cfg(feature="nostr-shadow")]
 mod device_supplement;
 pub mod dto;
 pub mod handler;
@@ -35,6 +37,14 @@ pub fn router() -> Router<AppState> {
     let router=router.route("/auth/device-link/request",post(device_link::request))
     .route("/auth/device-link/prepare",post(device_link::prepare)).route("/auth/device-link/approve",post(device_link::approve))
     .route("/auth/device-link/accept",post(device_link::accept))
-    .route("/auth/device-link/supplement-request",post(device_link::supplement_request));
+    .route("/auth/device-link/supplement-request",post(device_link::supplement_request))
+    .route("/auth/device-link/lan/connect",post(lan_link::connect))
+    .route("/auth/device-link/lan/inbox",get(lan_link::inbox).post(lan_link::receive))
+    .route("/auth/device-link/lan/approve",post(lan_link::approve))
+    .route("/auth/device-link/lan/result/{id}",get(lan_link::result))
+    .route("/auth/device-link/lan/poll/{id}",get(lan_link::poll))
+    .route("/auth/device-link/lan/mobile-result",post(lan_link::mobile_result))
+    .route("/auth/device-link/lan/mobile-poll/{id}",get(lan_link::mobile_poll))
+    .route("/auth/device-link/lan/pending-request",get(lan_link::pending_request));
     router.layer(axum::extract::DefaultBodyLimit::max(16*1024*1024))
 }
