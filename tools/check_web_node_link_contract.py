@@ -25,8 +25,9 @@ def require(relative: str, *needles: str) -> None:
 def main() -> None:
     version = read("VERSION").strip()
     frontend = json.loads(read("frontend/package.json"))
-    if version != "1.0.0" or frontend.get("version") != version:
-        raise SystemExit("FAIL: v1 versions are not aligned")
+    backend_manifest = tomllib.loads(read("backend/Cargo.toml"))
+    if frontend.get("version") != version or backend_manifest["package"]["version"] != version:
+        raise SystemExit("FAIL: current frontend/backend/VERSION are not aligned")
 
     cargo_lock = tomllib.loads(read("backend/Cargo.lock"))
     backend_package = next(
@@ -53,7 +54,7 @@ def main() -> None:
     )
     require(
         "backend/src/transports/roaming.rs",
-        "node_replica_id",
+        "local_node_identity",
         "publish_roaming_with_board_key",
         "recover_roaming_with_board_key",
     )

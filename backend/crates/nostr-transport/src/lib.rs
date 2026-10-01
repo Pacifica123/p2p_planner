@@ -451,7 +451,7 @@ impl NostrTransport {
             self.config
                 .event_kind
                 .saturating_add(DEVICE_CATALOG_KIND_OFFSET),
-        ));
+        )).pubkey(self.keys.public_key());
         let events = self
             .client
             .fetch_events(filter, self.config.fetch_timeout)

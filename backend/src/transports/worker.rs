@@ -31,8 +31,12 @@ pub fn spawn_roaming_worker(settings: Arc<Settings>, db: PgPool) {
         return;
     }
     tokio::spawn(async move {
-        if let Err(error) = super::roaming::run(settings, db).await {
-            tracing::error!(error = %error, "roaming board worker stopped");
+        // Startup DB/relay errors must not disable replication until process restart.
+        loop {
+            if let Err(error) = super::roaming::run(settings.clone(), db.clone()).await {
+                tracing::warn!(error = %error, "roaming worker will retry in 5 seconds");
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
 }

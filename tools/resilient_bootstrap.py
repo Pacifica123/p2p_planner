@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 NETWORK = re.compile(r'tls:|TLS handshake|ECONNRESET|ETIMEDOUT|EAI_AGAIN|unexpected EOF|connection reset|i/o timeout|temporary failure|no such host|too many requests|429|503|504|network is unreachable', re.I)
-PERMANENT = re.compile(r'EUSAGE|ERESOLVE|EINTEGRITY|no space left|permission denied|unauthorized|denied:|manifest unknown|no matching manifest', re.I)
+PERMANENT = re.compile(r'EUSAGE|ERESOLVE|EINTEGRITY|no space left|permission denied|unauthorized|denied:|manifest unknown|no matching manifest|error\[E[0-9]+\]|could not compile|failed to run custom build command|error: the lock file|failed to compile', re.I)
 
 def retryable(text):
     return not PERMANENT.search(text) and bool(NETWORK.search(text))
