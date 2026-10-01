@@ -25,6 +25,7 @@ const BOARD_FEED_KINDS: &[&str] = &[
     "column.deleted",
     "column.reordered",
     "card.created",
+    "card.updated",
     "card.moved",
     "card.reordered",
     "card.archived",

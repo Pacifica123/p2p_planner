@@ -1,9 +1,9 @@
-# Fix reqwest JSON build and roaming catalog recovery
+# Replicate common activity and repair versioned checklist snapshots
 
-Base: supplied snapshot `ec0ea8c`.
+Base: supplied snapshot `ab2d2a8`.
 
-Fixes the network-recovery path using the supplied 2.1.0 sources. Web enables reqwest JSON and retains its updated Cargo.lock, rejects compile errors as retryable network failures, supervises roaming worker startup and filters catalogs by recipient. Android polls catalogs independently of HTTP/type of network, merges discovered boards into the visible list, permits scoped introductions from trusted peers, applies only the newest authenticated catalog, refuses stale epochs/key changes and invalid relay quorums, and validates received relay filter scope. Provisioned board reads no longer wait for a private HTTP endpoint.
+Adds encrypted common activity delivery via immutable board.activity events, retained original activity ids/timestamps, canonical mutation history deduplication, historical backfill and per-epoch delivery receipts. Android activity metadata is ingested from existing mutation events; retained common history can be republished once per node/epoch. HTTP history now also includes card.updated. History-only publication does not add unsupported comment/label state replication.
 
-No schema or wire-protocol change, profile reset, session clearing or re-import. Documentation contains update order and explicit cross-network/offline acceptance. devctl gates stay dependency-download-free; compiled/typechecked/Jest evidence is separate. Real smartphone/Docker/PostgreSQL/ISP testing is pending.
+Adds migration 0023 (existing migrations untouched), which permits compacted field stamps before their original event arrives and merges checklist snapshots under original per-field versions, including explicit lifecycle deletion. No event is falsely marked applied merely to store a snapshot stamp. Adds PostgreSQL-engine regression probe and tests. Documentation includes all-node update order and a concrete stable-identity/catalog/RPC/Iroh reachability design; that future service is not implemented/deployed by this patch.
 
-Rollback: devctl source rollback. User data/keys/queues are not bundled or erased. Existing pending journal is retained when relay quorum is unavailable.
+Backend build/unit tests and PostgreSQL-engine scenarios pass locally. Docker, physical Android/ISP/real relay retention acceptance remain separate. Upgrade every participating web node then Android. No profile reset/re-pairing. Source rollback after migration 0023 is not database rollback: use a forward fix or a verified matching database backup for a downgrade.

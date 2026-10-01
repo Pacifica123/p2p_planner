@@ -151,6 +151,7 @@ pub async fn run(settings: std::sync::Arc<Settings>, db: PgPool) -> anyhow::Resu
             ingest_device_catalogs(&db, &transport),
             ingest_remote(&db, &transport),
             publish_baselines(&db, &transport),
+            super::roaming_history::publish(&db,&transport,settings.transports.batch_size),
             publish_device_catalogs(&db, &transport, &settings),
         );
         tokio::time::sleep(poll).await;
@@ -583,7 +584,15 @@ async fn ingest_remote(pool: &PgPool, transport: &NostrTransport) {
             }
         };
         for recovered in events {
-            if let Err(error) = apply_remote_event(pool, workspace_id, &recovered).await {
+            let applied = apply_remote_event(pool, workspace_id, &recovered).await;
+            if applied.is_ok() && recovered.event.operation != "board.activity" && recovered.event.payload.get("activity").is_some() {
+                if let Ok(actor) = roaming_event_actor(pool,workspace_id,board_id,&recovered).await {
+                    if let Err(error) = super::roaming_history::ingest(pool,&recovered,actor).await {
+                        tracing::debug!(%error,"common activity awaits dependency recovery");
+                    }
+                }
+            }
+            if let Err(error) = applied {
                 tracing::warn!(
                     event_id = %recovered.event.event_id,
                     %error,
@@ -1960,6 +1969,10 @@ async fn apply_remote_board_snapshot(
       if let Some(parent)=card.get("parentCardId").and_then(Value::as_str){parents.push((card_id,Uuid::parse_str(parent)?));}
       if let Some(checklists)=checklist_map.get(&card_id.to_string()) { apply_checklist_bundle(&mut tx,card_id,checklists).await?; }
     }
+    sqlx::query("select merge_roaming_checklist_versions($1,$2,$3,$4)")
+      .bind(workspace_id).bind(board_id).bind(snapshot)
+      .bind(event.payload.get("fieldVersions").cloned().unwrap_or_else(||json!({})))
+      .execute(&mut *tx).await?;
     for(card,parent) in parents {
       sqlx::query("update cards set parent_card_id=$2 where id=$1 and board_id=$3 and exists(select 1 from cards p where p.id=$2 and p.board_id=$3)")
         .bind(card).bind(parent).bind(board_id).execute(&mut *tx).await?;
@@ -1988,6 +2001,10 @@ async fn apply_remote_event(
     .fetch_one(pool)
     .await?;
     if exists {
+        if event.payload.get("activity").is_some() {
+            let actor = roaming_event_actor(pool,workspace_id,board_id,recovered).await?;
+            super::roaming_history::ingest(pool,recovered,actor).await?;
+        }
         return Ok(());
     }
     let board_matches = sqlx::query_scalar::<_, bool>(
@@ -2020,6 +2037,15 @@ async fn apply_remote_event(
     // Re-evaluate old authorization rejections after enrollment semantics changed.
     sqlx::query("delete from roaming_board_events where event_id=$1 and status='rejected'")
         .bind(event_id).execute(pool).await?;
+
+    if event.operation == "board.activity" {
+        anyhow::ensure!(event.entity_type=="board" && entity_id==board_id,"activity event scope mismatch");
+        super::roaming_history::ingest(pool,recovered,actor_user_id).await?;
+        sqlx::query("insert into roaming_board_events(event_id,nostr_event_id,author_public_key,workspace_id,board_id,replica_id,replica_seq,logical_clock,entity_id,operation,status,capability_epoch,actor_user_id,applied_at) values($1,$2,$3,$4,$5,$6,$7,$8,$5,'board.activity','applied',$9,$10,now()) on conflict do nothing")
+          .bind(event_id).bind(&recovered.nostr_event_id).bind(&recovered.author_public_key).bind(workspace_id).bind(board_id)
+          .bind(replica_id).bind(event.replica_seq).bind(event.logical_clock).bind(event.capability_epoch).bind(actor_user_id).execute(pool).await?;
+        return Ok(());
+    }
 
     if event.operation == "board.snapshot" {
         if event.entity_type!="board"||entity_id!=board_id{anyhow::bail!("unsupported snapshot event shape");}
